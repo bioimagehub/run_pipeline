@@ -1,0 +1,22 @@
+Experiment info:
+  ELNID: Please fill in your lab book ID
+  cell line:
+    Name: Please fill in a description of your cell line
+    ID: Please fill in cell line ID e.g 1
+Image metadata:
+  Size (kb): 7
+  Image dimensions:
+    "T": 10 
+    "C": 3
+    "Z": 9 
+    "Y": 512
+    "X": 512
+  Physical dimensions:
+    T_ms: 100  
+    Z_um: 0.8 
+    Y_um: 0.2
+    X_um: 0.2
+  Channels:
+    - Name: Please fill in e.g. DAPI
+    - Name: Please fill in e.g. Aktin-GFP
+    - Name: Please fill in e.g. Tubulin-RFP
