@@ -1,0 +1,37 @@
+run:
+  - name: get name of base conda environment
+    environment: base
+    commands:
+      - python
+      - C:\git\run_pipeline\test_code\get_env_name.py
+    file_extension: null
+    input_dir: null
+    output_dir: null
+
+  - name: get name of conda environment
+    environment: bioformats
+    commands:
+      - python
+      - C:\git\run_pipeline\test_code\get_env_name.py
+    file_extension: null
+    input_dir: null
+    output_dir: null
+
+  - name: run hello_args script in base environment
+    environment: base
+    commands:
+      - python
+      - C:\git\run_pipeline\test_code\hello_args.py
+      - Alice
+      - --greeting: "Welcome to the test"
+
+  - name: run hello_args script in bioformats environment
+    environment: bioformats
+    commands:
+      - python
+      - C:\git\run_pipeline\test_code\hello_args.py
+      - Bob
+      - -g: "Bioformats environment active"
+env:
+  ANACONDA_PATH: C:\Users\oodegard\anaconda3
+  MAX_CORES: 8
