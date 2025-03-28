@@ -1,8 +1,7 @@
 import nd2
 import numpy as np
 import yaml
-import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
+
 
 def parse_roi_circles(nd2_file, metadata_parsed):
     """
