@@ -1,0 +1,13 @@
+run:
+  - name: get name of base conda environment
+    environment: image
+    commands:
+      - python
+      - E:\Oyvind\OF_git\run_pipeline\standard_code\extract_metadata.py
+    file_extension: null
+    input_dir: null
+    output_dir: null
+
+env:
+  ANACONDA_PATH: C:\Users\oodegard\anaconda3
+  MAX_CORES: 8
