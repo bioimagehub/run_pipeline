@@ -1,0 +1,14 @@
+name: bioio
+channels:
+  - conda-forge
+  - anaconda
+dependencies:
+  - python=3.10
+  - scyjava
+  - pyyaml  # Conda package from anaconda
+  - tqdm
+  - nd2  # Conda package from conda-forge
+  - pip  # Ensure pip is installed in the environment
+  - pip:
+      - bioio #
+      - bioio-bioformats  # Pip package

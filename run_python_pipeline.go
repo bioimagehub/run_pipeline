@@ -117,6 +117,10 @@ func main() {
 		err = cmd.Run()
 		if err != nil {
 			fmt.Printf("Error executing command: %v\n", err)
+			reader := bufio.NewReader(os.Stdin)
+			_, _ = reader.ReadString('\n') // Wait for user input
+			log.Fatalf("Error")
+
 		}
 	}
 

@@ -1,0 +1,22 @@
+run:
+  - name: Extract metadata and move files 
+    environment: bioio
+    commands:
+      - python
+      - E:\Oyvind\OF_git\run_pipeline\standard_code\extract_metadata.py
+      - -p: 'Z:\Schink\Oyvind\colaboration_user_data\20250124 - Viola\Input'
+      - -e: .ims
+      - --search-subfolders
+      - --convert-and-save-tif
+      - --collapse-delimiter: __
+    file_extension: null
+    input_dir: null
+    output_dir: null
+  - name: Get help from cellpose
+    environment: cellpose
+    commands:
+      - cellpose
+      - -h
+    file_extension: null
+    input_dir: null
+    output_dir: null

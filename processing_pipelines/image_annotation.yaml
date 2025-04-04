@@ -7,7 +7,3 @@ run:
     file_extension: null
     input_dir: null
     output_dir: null
-
-env:
-  ANACONDA_PATH: C:\Users\oodegard\anaconda3
-  MAX_CORES: 8
