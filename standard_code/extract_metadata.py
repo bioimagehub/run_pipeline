@@ -6,10 +6,21 @@ import nd2  #conda install -c conda-forge nd2
 import argparse
 from tqdm import tqdm
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO  # for capturing output
 
 # tested for python 3.10
 # used un conda environment called bioio
 
+def suppress_output(func, *args, **kwargs):
+    """
+    Run the given function while suppressing its output.
+    """
+    f = StringIO()  # StringIO to capture output
+    with redirect_stdout(f), redirect_stderr(f):
+        return func(*args, **kwargs)
+    
 def get_metadata(file_path, return_image = False):
     """
     Loads image from file, processes it, and writes metadata to a YAML file.
@@ -119,12 +130,36 @@ def collapse_filename(file_path, base_folder, delimiter):
     collapsed = delimiter.join(rel_path.split(os.sep))
     return collapsed
 
+def process_file(file_path, folder_path, convert_and_save_tif, metadata_extension, collapse_delimiter):
+    """
+    Process a single file and return the file paths for saved metadata and TIF (if applicable).
+    """
+    if convert_and_save_tif:
+        img, metadata = suppress_output(get_metadata, file_path, True)
+        collapsed_filename = collapse_filename(file_path, folder_path, collapse_delimiter)
+        collapsed_filename = os.path.splitext(collapsed_filename)[0] + ".tif"
+        
+        tif_file_path = os.path.join(folder_path + "_tif", collapsed_filename)
+
+        # Save image as TIFF using the BioImage class
+        suppress_output(img.save, tif_file_path)  # Suppress output of the save method
+        print(f"Saved TIF file: {tif_file_path}")
+        
+        # Define the yaml file path
+        yaml_file_path = os.path.splitext(tif_file_path)[0] + metadata_extension
+    else:
+        _, metadata = suppress_output(get_metadata, file_path)
+        yaml_file_path = os.path.splitext(file_path)[0] + metadata_extension
+
+    # Save metadata
+    with open(yaml_file_path, 'w') as yaml_file:
+        yaml.dump(metadata, yaml_file, sort_keys=False)
+
+    return yaml_file_path, tif_file_path if convert_and_save_tif else None
 
 def process_folder(folder_path, extension, metadata_extension, search_subfolders, convert_and_save_tif, collapse_delimiter):
     """
-    Process all files in folder with the specified extension and save the processed data.
-    
-    If any file contains the collapse_delimiter in its name, print a warning and stop execution.
+    Process all files in folder with the specified extension and save the processed data in parallel.
     """
     destination_folder = folder_path + "_tif"
     if convert_and_save_tif:
@@ -134,45 +169,31 @@ def process_folder(folder_path, extension, metadata_extension, search_subfolders
     files_to_process = []
 
     if search_subfolders:
-        # Use os.walk to traverse subfolders
         for dirpath, _, filenames in os.walk(folder_path):
             for filename in filenames:
                 if filename.endswith(extension):
                     files_to_process.append(os.path.join(dirpath, filename))
     else:
-        # Use os.scandir to list files in the specified directory
         with os.scandir(folder_path) as it:
             for entry in it:
                 if entry.is_file() and entry.name.endswith(extension):
                     files_to_process.append(entry.path)
-    
-    
 
-    # Loop through each file with a progress bar
-    for file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-        print(f"Processing file: {file_path}")
-        # Determine the output file path
-        if convert_and_save_tif:
-            img , metadata = get_metadata(file_path, True)
-            collapsed_filename = collapse_filename(file_path, folder_path, collapse_delimiter)
-            collapsed_filename = os.path.splitext(collapsed_filename)[0] + ".tif"
-            
-            tif_file_path = os.path.join(destination_folder, collapsed_filename)
+    # Process files in parallel
+    with ProcessPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(process_file, file_path, folder_path, convert_and_save_tif, metadata_extension, collapse_delimiter): file_path
+            for file_path in files_to_process
+        }
 
-            # Save image as TIFF using PIL
-            # Save image using the BioImage class
-            img.save(tif_file_path)
-            print(f"Saved TIF file: {tif_file_path}")
-            
-            # Define the yaml file path
-            yaml_file_path = os.path.splitext(tif_file_path)[0] + metadata_extension
-        else:
-            _ , metadata = get_metadata(file_path)                    
-            yaml_file_path = os.path.splitext(file_path)[0] + metadata_extension
-
-        # Save metadata
-        with open(yaml_file_path, 'w') as yaml_file:
-            yaml.dump(metadata, yaml_file, sort_keys=False)
+        for future in as_completed(futures):
+            file_path = futures[future]
+            try:
+                yaml_file_path, tif_file_path = future.result()
+                print(f"Processed {file_path}, saved yaml to {yaml_file_path}" +
+                      (f" and TIF to {tif_file_path}" if tif_file_path else ""))
+            except Exception as e:
+                print(f"Error processing {file_path}: {e}")
 
 
 
