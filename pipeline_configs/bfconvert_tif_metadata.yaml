@@ -1,13 +1,12 @@
 run:
-  - name: Extract metadata and move files 
+  - name: Convert to tif, flatten folder structure, extract core metadata 
     environment: bioio
     commands:
       - python
-      - E:\Oyvind\OF_git\run_pipeline\standard_code\extract_metadata.py
-      - -p: 'Z:\Schink\Oyvind\colaboration_user_data\20250124 - Viola\Input'
-      - -e: .ims
+      - C:\git\run_pipeline\standard_code\bfconvert_folder.py
+      - --folder_path: 'C:\Users\oodegard\Desktop\bfconvert_example\input'
+      - --extension: .ims
       - --search_subfolders
-      - --convert_and_save_tif
       - --collapse_delimiter: __
     file_extension: null
     input_dir: null

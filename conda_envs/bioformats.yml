@@ -1,0 +1,12 @@
+name: bioformats
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy
+  - pillow
+  - openjdk
+  - javabridge
+  - python-bioformats
