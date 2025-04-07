@@ -14,7 +14,6 @@ def collapse_filename(file_path, base_folder, delimiter):
     collapsed = delimiter.join(rel_path.split(os.sep))
     return collapsed
 
-
 def process_folder(args):
     folder_path = args.folder_path
     extension = args.extension

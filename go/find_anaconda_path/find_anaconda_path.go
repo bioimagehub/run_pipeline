@@ -20,6 +20,7 @@ func FindAnacondaPath() (string, error) {
 // The rest of the helper functions remain the same, prefacing them with lowercase if not intended for export
 
 func findAnacondaPath() (string, error) {
+	fmt.Println("Finding Anaconda path...")
 
 	// Find anaconda using the .env file
 	err := godotenv.Load()
@@ -59,9 +60,10 @@ func findAnacondaPath() (string, error) {
 		return condaPath, nil
 
 	}
-	fmt.Println("Conda not found using CONDA_PREFIX")
+	fmt.Println("Conda not found using CONDA_PREFIX...")
 
 	if isWindows() {
+
 		// For windows only
 
 		// Try where conda in cmd
@@ -85,6 +87,11 @@ func findAnacondaPath() (string, error) {
 			if err == nil {
 				condaPath := extractAnacondaPath(targetPath)
 				if condaPath != "" {
+					// strip away the Scripts and activate partactivate`)
+					condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
+					condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
+					fmt.Print("Found conda path from windws start menu: ", condaPath)
+
 					updateCondaPath(condaPath)
 					return condaPath, nil
 				}
