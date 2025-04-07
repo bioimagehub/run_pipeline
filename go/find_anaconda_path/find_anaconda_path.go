@@ -85,6 +85,10 @@ func findAnacondaPath() (string, error) {
 			if err == nil {
 				condaPath := extractAnacondaPath(targetPath)
 				if condaPath != "" {
+					// replace \ with /
+					condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
+					// remove trailing \Scripts\activate
+					condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
 					updateCondaPath(condaPath)
 					return condaPath, nil
 				}
