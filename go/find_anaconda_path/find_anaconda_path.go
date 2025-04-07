@@ -29,6 +29,10 @@ func findAnacondaPath() (string, error) {
 		condaPath, exists := os.LookupEnv("CONDA_PATH")
 		if exists {
 			// updateCondaPath(condaPath) // DO NOT UPDATE .env if its already there
+			condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
+			// remove trailing \Scripts\activate
+			condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
+
 			return condaPath, nil
 		} else {
 			fmt.Println("CONDA_PATH is not set in .env file")
@@ -55,6 +59,9 @@ func findAnacondaPath() (string, error) {
 		}
 
 		// since envs is not found assume we're already in base env
+		condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
+		// remove trailing \Scripts\activate
+		condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
 		updateCondaPath(condaPath)
 		return condaPath, nil
 

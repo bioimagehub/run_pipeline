@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"run_python_pipeline/go/find_anaconda_path"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -20,29 +21,21 @@ type Segment struct {
 	FileExtension string        `yaml:"file_extension"`
 	InputDir      string        `yaml:"input_dir"`
 	OutputDir     string        `yaml:"output_dir"`
+	LastProcessed string        `yaml:"last_processed,omitempty"` // Add last_processed field
 }
 
 type Config struct {
-	Run []Segment         `yaml:"run"`
-	Env map[string]string `yaml:"env"`
+	Run []Segment `yaml:"run"`
 }
 
 func main() {
-	// Determine the location of the anaconda environment
-	// This should be defined in an .env file in the same folder as the .go or .exe file
-	// But this can also be automatically found with find_anaconda_path
 	anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 	if err != nil {
-		log.Fatalf("Could not find Anaconda please install and define  in .env file: %v", err)
+		log.Fatalf("Could not find Anaconda please install and define in .env file: %v", err)
 	} else {
 		fmt.Printf("Found anaconda base: %v\n", anacondaPath)
 	}
 
-	// All the input for running the program is defined in a .yaml file
-	// See: .\run_pipeline\processing_pipelines for examples
-
-	//
-	// YAML file path handling
 	var yamlPath string
 	if len(os.Args) > 1 {
 		yamlPath = os.Args[1]
@@ -51,7 +44,7 @@ func main() {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Print("Please provide the path to the YAML file: ")
 		yamlPath, err = reader.ReadString('\n')
-		yamlPath = strings.TrimSpace(yamlPath) // Trim whitespace and newline characters
+		yamlPath = strings.TrimSpace(yamlPath)
 		if err != nil {
 			log.Fatalf("Error reading user input: %v", err)
 		}
@@ -68,14 +61,15 @@ func main() {
 		log.Fatalf("error unmarshalling YAML: %v", err)
 	}
 
-	// look for a .env file and check anaconda path
+	for i, segment := range config.Run {
+		if segment.LastProcessed != "" {
+			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segment.LastProcessed)
+			continue
+		}
 
-	for _, segment := range config.Run {
 		fmt.Printf("Processing segment: %s\n", segment.Name)
 
 		cmdArgs := []string{"cmd", "/C"}
-
-		// Activate Anaconda environment
 		if segment.Environment == "base" {
 			cmdArgs = append(cmdArgs,
 				anacondaPath+"\\Scripts\\activate.bat",
@@ -117,14 +111,24 @@ func main() {
 		err = cmd.Run()
 		if err != nil {
 			fmt.Printf("Error executing command: %v\n", err)
-			reader := bufio.NewReader(os.Stdin)
-			_, _ = reader.ReadString('\n') // Wait for user input
 			log.Fatalf("Error")
-
 		}
+
+		// Update last_processed with current date if command was successful
+		config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
 	}
 
-	// Ask the user to press Enter to exit
+	// Write the updated configuration back to the YAML file
+	data, err = yaml.Marshal(&config)
+	if err != nil {
+		log.Fatalf("error marshalling updated YAML: %v", err)
+	}
+
+	err = os.WriteFile(yamlPath, data, 0644)
+	if err != nil {
+		log.Fatalf("error writing YAML file: %v", err)
+	}
+
 	fmt.Print("Processing complete. Press Enter to exit...")
 	reader := bufio.NewReader(os.Stdin)
 	_, _ = reader.ReadString('\n') // Wait for user input

@@ -8,14 +8,8 @@ run:
       - --extension: .ims
       - --search_subfolders
       - --collapse_delimiter: __
-    file_extension: null
-    input_dir: null
-    output_dir: null
   - name: Get help from cellpose
     environment: cellpose
     commands:
       - cellpose
       - -h
-    file_extension: null
-    input_dir: null
-    output_dir: null
