@@ -3,8 +3,8 @@ run:
     environment: bioio
     commands:
       - python
-      - C:\git\run_pipeline\standard_code\bfconvert_folder.py
-      - --folder_path: 'C:\Users\oodegard\Desktop\bfconvert_example\input'
+      - E:/Oyvind/OF_git/run_pipeline/standard_code/bfconvert_folder.py
+      - --folder_path: Z:/Schink/Oyvind/colaboration_user_data/20250124_Viola/Input
       - --extension: .ims
       - --search_subfolders
       - --collapse_delimiter: __
