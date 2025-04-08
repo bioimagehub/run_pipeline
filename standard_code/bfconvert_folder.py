@@ -56,11 +56,11 @@ def process_folder(args):
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         # Print the output and errors for troubleshooting
-        if result.returncode == 0:
-            print(f"Successfully processed: {collapsed_filename}")
-            print(f"Output: {result.stdout.decode()}")  # Print standard output
-        else:
-            print(f"Error processing {file_path}: {result.stderr.decode()}")  # Print standard error
+        # if result.returncode == 0:
+        #     print(f"Successfully processed: {collapsed_filename}")
+        #     print(f"Output: {result.stdout.decode()}")  # Print standard output
+        # else:
+        #     print(f"Error processing {file_path}: {result.stderr.decode()}")  # Print standard error
 
 
 def main():
