@@ -1,5 +1,6 @@
 from bioio import BioImage
 import bioio_bioformats
+from bioio.writers import OmeTiffWriter
 import yaml
 import os
 import argparse
@@ -28,9 +29,9 @@ def process_image(input_file_path, output_file_path):
 
     # Image
     output_file_path_tif = os.path.splitext(output_file_path)[0] + ".tif" 
-    imp = BioImage(input_file_path, reader=bioio_bioformats.Reader)
-    imp.save(output_file_path_tif)
-    
+    img = BioImage(input_file_path, reader=bioio_bioformats.Reader)
+    OmeTiffWriter.save(img.data, output_file_path_tif, dim_order=img.dims.order, physical_pixel_sizes=img.physical_pixel_sizes, metadata=img.metadata)
+
     # metadata
     output_file_path_yaml = os.path.splitext(output_file_path)[0] + "_metadata.yaml"
     metadata = get_metadata(imp)
