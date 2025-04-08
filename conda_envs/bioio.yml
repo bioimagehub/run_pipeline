@@ -11,5 +11,6 @@ dependencies:
   - nd2  # Conda package from conda-forge
   - pip  # Ensure pip is installed in the environment
   - pip:
-      - bioio #
-      - bioio-bioformats  # Pip package
+      - bioio
+      - bioio-bioformats
+      - bioio-base

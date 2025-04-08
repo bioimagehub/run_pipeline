@@ -1,57 +1,65 @@
 from bioio import BioImage
 import bioio_bioformats
-from bioio.writers import OmeTiffWriter
-import yaml
-import os
 import argparse
+import os
+import numpy as np
+from bioio.writers.timeseries_writer import TimeseriesWriter
 
-def get_metadata(img):
-    # Image dimensions
-    t, c, z, y, x = img.dims.T, img.dims.C, img.dims.Z, img.dims.Y, img.dims.X
+def process_image(input_file_path, output_file_path=None, fps=24):
+    # Set output file path
+    if output_file_path is None:
+        output_file_path = os.path.splitext(input_file_path)[0] + ".mp4"
+    else:
+        if not output_file_path.endswith(".mp4"):
+            raise ValueError("Output file must have .mp4 extension")
 
-    # Physical dimensions
-    z_um, y_um, x_um = img.physical_pixel_sizes.Z, img.physical_pixel_sizes.Y, img.physical_pixel_sizes.X
-
-    # Channel info
-    channel_info = [str(n) for n in img.channel_names]
-
-    # Extract metadata
-    image_metadata = {
-        'Image metadata': {
-            'Channels': [{'Name': f'Please fill in e.g. {name}'} for name in channel_info],
-            'Image dimensions': {'C': c, 'T': t, 'X': x, 'Y': y, 'Z': z},
-            'Physical dimensions': {'T_ms': None, 'X_um': x_um, 'Y_um': y_um, 'Z_um': None},
-        }
-    }
-    return image_metadata
-
-def process_image(input_file_path, output_file_path):
-
-    # Image
-    output_file_path_tif = os.path.splitext(output_file_path)[0] + ".tif" 
+    # Load image data
     img = BioImage(input_file_path, reader=bioio_bioformats.Reader)
-    OmeTiffWriter.save(img.data, output_file_path_tif, dim_order=img.dims.order, physical_pixel_sizes=img.physical_pixel_sizes, metadata=img.metadata)
+    
+    # Get the image dimensions
+    dims = img.dims  # Dimensions object
+    print(f"Image dimensions: {dims}")  # Debugging output
+    # dim_order = dims.order  # e.g. "TCZYX"
 
-    # metadata
-    output_file_path_yaml = os.path.splitext(output_file_path)[0] + "_metadata.yaml"
-    metadata = get_metadata(imp)
-    with open(output_file_path_yaml, 'w') as yaml_file:
-        yaml.dump(metadata, yaml_file, sort_keys=False)
+    # Convert to numpy array
+    img_array = img.data  # This is expected to be a numpy array
+    img_array = np.transpose(img_array, (0, 2, 3, 1))  # Default to (T, Z, Y, X, C)
 
+    # Perform maximum projection along the Z dimension (axis=1)
+    if 'Z' in dim_order:
+        img_array = np.max(img_array, axis=1)  # Maximum projection
+        img_array = np.squeeze(img_array)  # Remove singleton dimensions if necessary
 
-# path = r"C:\Users\oodegard\Desktop\bfconvert_example\input\230705_mNG-DFCP1_LT_LC3_CM_chol_2h.ims"
-# out =  r"C:\Users\oodegard\Desktop\bfconvert_example\input\230705_mNG-DFCP1_LT_LC3_CM_chol_2h.tif"
-# process_image(path, out)
-
+    # Handle single-channel (greyscale) and multi-channel (RGB)
+    channels = img_array.shape[-1]  # Number of channels (C)
+    
+    if channels == 1:
+        # Greyscale image
+        print("Processing as greyscale image.")
+        img_array = np.squeeze(img_array)  # Remove channel dimension
+        dim_order = "TYX"  # Set dimension order for greyscale
+    elif channels == 3:
+        # RGB image
+        print("Processing as RGB image.")
+        dim_order = "TYX"  # Set dimension order for RGB
+    elif channels > 3:
+        # More than 3 channels
+        print("Warning: More than 3 channels detected. Processing only the first three channels.")
+        img_array = img_array[..., :3]  # Only take the first three channels
+        dim_order = "TYX"  # Set dimension order for RGB
+    
+    # Save the data using TimeseriesWriter
+    TimeseriesWriter.save(img_array, output_file_path, dim_order=dim_order, fps=fps)
 
 def main():
     parser = argparse.ArgumentParser()
-    # Arguments for folder processing (default mode)
-    parser.add_argument("-i", "--input_file", type=str, help="Path file to be processed")
-    parser.add_argument("-o", "--output_file", type=str, default=None, help="Path to the output file")
+    parser.add_argument("-i", "--input_file", type=str, required=True, help="Path to the file to be processed")
+    parser.add_argument("-o", "--output_file", type=str, help="Path for the output MP4 file")
+    parser.add_argument("--fps", type=int, default=24, help="Frames per second for output video")
+
     args = parser.parse_args()
 
-    process_image(args.input_file, args.output_file)
+    process_image(args.input_file, args.output_file, args.fps)
 
 if __name__ == "__main__":
     main()
