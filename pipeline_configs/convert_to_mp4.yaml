@@ -1,8 +1,10 @@
 run:
-  - name: Convert file to mp4
-    environment: bioio
-    commands:
-      - python
-      - ./standard_code/convert_to_mp4.py
-      - -i: Z:\Schink\Oyvind\collection_of_different_file_formats\input_nd2\1.nd2
-      #- -o: path to output mp4 
+- name: Convert file to mp4
+  environment: bioio
+  commands:
+  - python
+  - ./standard_code/convert_to_mp4.py
+  - -i: Z:\Schink\Oyvind\collection_of_different_file_formats\input_nd2\1.nd2
+  file_extension: ""
+  input_dir: ""
+  output_dir: ""
