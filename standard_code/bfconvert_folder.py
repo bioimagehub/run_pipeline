@@ -6,7 +6,7 @@ import argparse
 import subprocess
 from tqdm import tqdm
 
-def collapse_filename(file_path, base_folder, delimiter):
+def collapse_filename(file_path: str, base_folder: str, delimiter: str = "__") -> str:
     """
     Collapse the file path into a single filename, preserving directory info.
     """
@@ -14,11 +14,13 @@ def collapse_filename(file_path, base_folder, delimiter):
     collapsed = delimiter.join(rel_path.split(os.sep))
     return collapsed
 
-def process_folder(args):
+def process_folder(args: argparse.Namespace):
     folder_path = args.folder_path
     extension = args.extension
     search_subfolders = args.search_subfolders
     collapse_delimiter = args.collapse_delimiter
+    script_path = args.script_path
+
 
     # Gather files (search subfolders if requested)
     files_to_process = []
@@ -44,23 +46,14 @@ def process_folder(args):
         # Command to run the external script
         cmd = [
             "python",  # Ensure the right Python interpreter is chosen
-            os.path.join(os.getcwd(), "standard_code",  "bfconvert_file.py"),
+            os.path.join(os.getcwd(), "standard_code",  script_path),
             "-i", file_path,
             "-o", tif_file_path,
         ]
         
-        # Print the command for troubleshooting
-        # print(f"Processing command: {cmd}")
-
         # Run the command
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        # Print the output and errors for troubleshooting
-        # if result.returncode == 0:
-        #     print(f"Successfully processed: {collapsed_filename}")
-        #     print(f"Output: {result.stdout.decode()}")  # Print standard output
-        # else:
-        #     print(f"Error processing {file_path}: {result.stderr.decode()}")  # Print standard error
+        return result
 
 
 def main():
@@ -70,6 +63,8 @@ def main():
     parser.add_argument("-e", "--extension", type=str, default=None, help="File extension to filter files in folder")
     parser.add_argument("-R", "--search_subfolders", action="store_true", help="Search for files in subfolders")
     parser.add_argument("--collapse_delimiter", type=str, default="__", help="Delimiter used to collapse file paths")
+    parser.add_argument("-s", "--process_file_script_path", type=str, required=True, help="Path to the script to execute on each file")
+
     args = parser.parse_args()
 
     # Ensure the user provides a valid folder path

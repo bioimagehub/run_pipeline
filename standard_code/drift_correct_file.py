@@ -5,14 +5,24 @@ from scipy.ndimage import shift
 from dask import delayed, compute
 from dask.diagnostics import ProgressBar
 import multiprocessing
+from tqdm import tqdm  # Make sure to import tqdm correctly
+from concurrent.futures import ProcessPoolExecutor
 
-def get_frame_shift(reference_frame, target_frame, upsample_factor=10, space='real', disambiguate=False, overlap_ratio=0.8):
+
+def get_frame_shift(reference_frame: np.ndarray,
+                    target_frame: np.ndarray,
+                    upsample_factor: int = 10,
+                    space: str = 'real',
+                    disambiguate: bool = False,
+                    overlap_ratio: float = 0.8
+                    ) -> np.ndarray:
     """
     Must be 3D frames (Z, Y, X).
     Register the target frame to the reference frame using phase cross-correlation.
     Returns the shift in Z, Y, X coordinates.
     """
     # Ensure that reference_frame and target_frame are 3D arrays not dask arrays
+    # This is not necessary anymore since defined in function definition
     if isinstance(reference_frame, da.Array):
         reference_frame = reference_frame.compute()
     if isinstance(target_frame, da.Array):
@@ -29,12 +39,16 @@ def get_frame_shift(reference_frame, target_frame, upsample_factor=10, space='re
     return shift
 
 
-def get_frame_shifts(image, upsample_factor=10, space='real', disambiguate=False, overlap_ratio=0.8):
+def get_frame_shifts(image: da.Array,
+                     upsample_factor: int=10,
+                     space: str = 'real',
+                     disambiguate: bool = False,
+                     overlap_ratio:float  = 0.8
+                     ) -> np.ndarray:
     """
     Fast parallel computation of cumulative shifts for a 4D image stack (T, Z, Y, X).
     Returns a NumPy array of shape (T, 3).
     """
-
     frames = image.shape[0]
     
     # First shift is zero
@@ -59,9 +73,13 @@ def get_frame_shifts(image, upsample_factor=10, space='real', disambiguate=False
 
     return np.cumsum(np.stack(computed_shifts), axis=0)
 
-
-
-def get_image_shifts(image, drift_correct_channel, upsample_factor=10, space='real', disambiguate=False, overlap_ratio=0.8):
+def get_image_shifts(image: da.Array, 
+                     drift_correct_channel: int, 
+                     upsample_factor: int = 10,
+                     space: str = 'real', 
+                     disambiguate: bool = False, 
+                     overlap_ratio: float = 0.8
+                     ) -> np.ndarray:
     """
     Register an image stack with the dimensions T, C, Z, Y, X.
 
@@ -78,24 +96,52 @@ def get_image_shifts(image, drift_correct_channel, upsample_factor=10, space='re
 
     return shifts
 
-def register_image(image, drift_correct_channel, upsample_factor=10, space='real', disambiguate=False, overlap_ratio=0.8):
+
+def apply_shift_to_frame(args):
+    # Unpack the arguments
+    frame, shift_t = args
+    return shift(frame, shift_t)
+
+def register_image(image: np.ndarray, 
+                   drift_correct_channel: int, 
+                   upsample_factor: int = 10,
+                   space: str = 'real', 
+                   disambiguate: bool = False, 
+                   overlap_ratio: float = 0.8
+                   ) -> tuple[np.ndarray, np.ndarray]:
     """
     Register an image stack with the dimensions T, C, Z, Y, X.
     Calculate shifts on one channel, then apply shifts to all channels.
     Apply shifts to the image stack and return the registered image.
     """
     shifts = get_image_shifts(image, drift_correct_channel, upsample_factor=upsample_factor, space=space, disambiguate=disambiguate, overlap_ratio=overlap_ratio)
+    print("Shifts:")
+    print(shifts)
+
+    # Prepare the registered image array
+    T, C, Z, Y, X = image.shape
+    registered_image = np.zeros_like(image)
+
+    # Prepare arguments for parallel processing
+    tasks = []
     
-    # Convert image to NumPy (if it's still Dask)
-    image_np = image.compute() if isinstance(image, da.Array) else image
-    registered_image = np.zeros_like(image_np)
-
-    T, C, Z, Y, X = image_np.shape
-
-    for t in range(T):
+    for t in tqdm(range(T), desc="Processing Timepoints"):
         shift_t = shifts[t]  # shape: (4,) -> [C, Z, Y, X]; we skip C (==0)
         for c in range(C):
             registered_image[t, c] = shift(image_np[t, c], shift_t)
+
+    print(f"Applying shifts to {T} frames and {C} channels...")
+
+    # Use ProcessPoolExecutor to apply shifts in parallel
+    with ProcessPoolExecutor() as executor:
+        # Use tqdm to visualize progress
+        results = list(tqdm(executor.map(apply_shift_to_frame, tasks), total=len(tasks), desc="Processing Frames"))
+
+    # Store the results back into the registered_image array
+    for index, result in enumerate(results):
+        t = index // C
+        c = index % C
+        registered_image[t, c] = result
 
     return registered_image, shifts
 
@@ -121,15 +167,7 @@ if __name__ == "__main__":
     # ed in this snippet)
     # save_image(registered_image, args.output_file)
 
-
-
-
-
-
-
 def test_drift():
-
-
     # Define dimensions
     T, C, Z, Y, X = 4, 2, 3, 4, 4
 

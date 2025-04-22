@@ -1,4 +1,5 @@
 from bioio import BioImage
+import yaml
 
 
 def get_metadata(img):
@@ -20,3 +21,24 @@ def get_metadata(img):
         }
     }
     return image_metadata
+
+
+if __name__ == "__main__":
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description="Extract metadata from a BioImage file.")
+    parser.add_argument("-i", "--input_file", type=str, required=True, help="Path to the input BioImage file")
+    parser.add_argument("-o", "--output_file", type=str, required=True, help="Path to save the metadata YAML file")
+
+    args = parser.parse_args()
+
+    # Load the image
+    img = BioImage(args.input_file)
+
+    # Get metadata
+    metadata = get_metadata(img)
+
+    # Save metadata to YAML file
+    with open(args.output_file, 'w') as f:
+        yaml.dump(metadata, f)

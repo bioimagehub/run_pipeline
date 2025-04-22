@@ -3,9 +3,8 @@ import bioio_bioformats
 import argparse
 import os
 import numpy as np
-from bioio.writers.timeseries_writer import TimeseriesWriter
 
-def process_image(input_file_path, output_file_path=None, fps=24):
+def process_image(input_file_path: str, output_file_path:str = None, fps: int =24):
     # Set output file path
     if output_file_path is None:
         output_file_path = os.path.splitext(input_file_path)[0] + ".mp4"
@@ -16,13 +15,13 @@ def process_image(input_file_path, output_file_path=None, fps=24):
     # Load image data
     img = BioImage(input_file_path, reader=bioio_bioformats.Reader)
     
-    # Get the image dimensions
-    dims = img.dims  # Dimensions object
-    print(f"Image dimensions: {dims}")  # Debugging output
+    # # Get the image dimensions
+    # dims = img.dims  # Dimensions object
+    # print(f"Image dimensions: {dims}")  # Debugging output
     # dim_order = dims.order  # e.g. "TCZYX"
 
     # Convert to numpy array
-    img_array = img.data  # This is expected to be a numpy array
+    img_array: np.ndarray = img.data  # This is expected to be a numpy array
     img_array = np.transpose(img_array, (0, 2, 3, 1))  # Default to (T, Z, Y, X, C)
 
     # Perform maximum projection along the Z dimension (axis=1)
@@ -55,7 +54,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input_file", type=str, required=True, help="Path to the file to be processed")
     parser.add_argument("-o", "--output_file", type=str, help="Path for the output MP4 file")
-    parser.add_argument("--fps", type=int, default=24, help="Frames per second for output video")
 
     args = parser.parse_args()
 
