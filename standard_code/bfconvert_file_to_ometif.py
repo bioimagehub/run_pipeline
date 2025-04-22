@@ -9,10 +9,9 @@ import extract_metadata as meta
 import yaml
 import json
 
-
 def process_image(args: argparse.Namespace):
-    input_file_path: str = args.input_file
 
+    input_file_path: str = args.input_file
     # Set output file path
     if args.output_file is None:
         output_folder_path = os.path.dirname(input_file_path) + "_tif"
@@ -36,7 +35,7 @@ def process_image(args: argparse.Namespace):
     if drift_correction_args is None:
         img.save(output_file_path)  # Save the image to the specified output file path
     else:  # Drift correction is requested
-        from drift_correct_file import register_image  # Import only if needed
+        from drift_correct_file_in_RAM import register_image  # Import only if needed
         
         if drift_correction_args == "":  # Use default values if empty string
             drift_correction_args = '{"drift_correct_channel":1,"upsample_factor":20,"space":"real","disambiguate":true,"overlap_ratio":0.9}'

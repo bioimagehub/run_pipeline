@@ -98,9 +98,8 @@ def get_image_shifts(image: da.Array,
 
 
 def apply_shift_to_frame(args):
-    # Unpack the arguments
-    frame, shift_t = args
-    return shift(frame, shift_t)
+    t, c, frame, shift_t = args
+    return t, c, shift(frame, shift_t)
 
 def register_image(image: np.ndarray, 
                    drift_correct_channel: int, 
@@ -114,36 +113,32 @@ def register_image(image: np.ndarray,
     Calculate shifts on one channel, then apply shifts to all channels.
     Apply shifts to the image stack and return the registered image.
     """
-    shifts = get_image_shifts(image, drift_correct_channel, upsample_factor=upsample_factor, space=space, disambiguate=disambiguate, overlap_ratio=overlap_ratio)
-    print("Shifts:")
-    print(shifts)
+    shifts = get_image_shifts(image, drift_correct_channel,
+                               upsample_factor=upsample_factor, 
+                               space=space, 
+                               disambiguate=disambiguate, 
+                               overlap_ratio=overlap_ratio)
 
-    # Prepare the registered image array
     T, C, Z, Y, X = image.shape
     registered_image = np.zeros_like(image)
 
-    # Prepare arguments for parallel processing
-    tasks = []
-    
-    for t in tqdm(range(T), desc="Processing Timepoints"):
-        shift_t = shifts[t]  # shape: (4,) -> [C, Z, Y, X]; we skip C (==0)
-        for c in range(C):
-            registered_image[t, c] = shift(image_np[t, c], shift_t)
+    # Prepare tasks
+    tasks = [(t, c, image[t, c], shifts[t]) for t in range(T) for c in range(C)]
 
     print(f"Applying shifts to {T} frames and {C} channels...")
 
     # Use ProcessPoolExecutor to apply shifts in parallel
     with ProcessPoolExecutor() as executor:
-        # Use tqdm to visualize progress
-        results = list(tqdm(executor.map(apply_shift_to_frame, tasks), total=len(tasks), desc="Processing Frames"))
+        results = list(tqdm(executor.map(apply_shift_to_frame, tasks), 
+                            total=len(tasks), 
+                            desc="Applying Shifts"))
 
-    # Store the results back into the registered_image array
-    for index, result in enumerate(results):
-        t = index // C
-        c = index % C
-        registered_image[t, c] = result
+    # Store results
+    for t, c, shifted in results:
+        registered_image[t, c] = shifted
 
     return registered_image, shifts
+
 
 
 if __name__ == "__main__":
@@ -157,15 +152,26 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    # Load the image (this part is not implemented in this snippet)
-    # image = load_image(args.input_file)
+    from bioio import BioImage
+    import bioio_bioformats
+    from bioio.writers import OmeTiffWriter
 
-    # Perform drift correction
-    # registered_image, shifts = register_image(image, args.drift_correct_channel)
 
-    # Save the registered image (this part is not implement
-    # ed in this snippet)
-    # save_image(registered_image, args.output_file)
+    img = BioImage(args.input_file, reader=bioio_bioformats.Reader)
+    image = img.data
+
+    reg_imgage, shifts = register_image(image, args.drift_correct_channel)    
+    print("Shifts:")
+    print(shifts)
+    print("Registered image shape:")
+    print(reg_imgage) 
+
+
+    OmeTiffWriter.save(reg_imgage, args.output_file, dim_order="TCZYX")
+
+
+
+
 
 def test_drift():
     # Define dimensions
