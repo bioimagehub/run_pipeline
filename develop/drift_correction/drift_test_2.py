@@ -45,10 +45,11 @@ def drift_correct(video, drift_correct_channel=0, gaussian_blur=-1):
         ref_stack = gaussian(ref_stack, sigma=(0, gaussian_blur, gaussian_blur))
 
     # Register max projections over time
-    tmats = sr.register_stack(ref_stack, reference='previous')
+    print("Finding shifts")
+    tmats = sr.register_stack(ref_stack, reference='previous', verbose=True)
 
     # Apply transformation to all channels and all Z-slices
-    for t in tqdm(range(T), desc="Drift correction", unit="frame"):
+    for t in tqdm(range(T), desc="Applying shifts", unit="frame"):
         for c in range(C):
             for z in range(Z):
                 corrected_video[t, c, z, :, :] = sr.transform(video[t, c, z, :, :], tmats[t])
@@ -144,17 +145,23 @@ if __name__ == "__main__":
 
 
     # Test case 3: Real data 5D stack
+    import time
+    start = time.time()
 
     print("loading images")
     image = test_case_3()
 
     print("correcting drift")
-    tmats, corrected_image,  = drift_correct(image, drift_correct_channel=0, gaussian_blur = -1)
+    tmats, corrected_image,  = drift_correct(image[0:20], drift_correct_channel=0, gaussian_blur = -1)
     print(f"Corrected image shape: {corrected_image.shape}")
     
     path = r"C:\Users\oodegard\Desktop\collection_of_different_file_formats\input_nd2_tif\1_registered.tif"
     OmeTiffWriter.save(corrected_image, path, dim_order="TCZYX")  # Save the image to the specified output file path
     print(f"Saved corrected image to {path}")
+    
+    end = time.time()
+    print(f"Drift correction took {end - start:.2f} seconds.")
+
 
 
 
