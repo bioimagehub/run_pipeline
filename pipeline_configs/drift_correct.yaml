@@ -1,0 +1,15 @@
+run:
+- name: Drift correct images
+  environment: drift
+  commands:
+  - python
+  - ./standard_code/convert_to_tif.py
+  - --folder_path: C:\Users\oodegard\Desktop\collection_of_different_file_formats\input_nd2
+  - --extension: .nd2
+  - --search_subfolders
+  - --collapse_delimiter: __
+  - --drift_correct_channel: 0
+  file_extension: ""
+  input_dir: ""
+  output_dir: ""
+  last_processed: "2025-04-24"

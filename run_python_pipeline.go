@@ -31,7 +31,32 @@ type Config struct {
 	Run []Segment `yaml:"run"` // Slice of segments representing the commands to be processed
 }
 
+// GetBaseDir returns the project root directory.
+// It handles both `go run` (using working dir) and `go build` (using executable path).
+func GetBaseDir() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
+	exeDir := filepath.Dir(exePath)
+
+	// Check if the path includes a Go build cache temp dir (used by `go run`)
+	if strings.Contains(exeDir, "go-build") || strings.Contains(exeDir, os.TempDir()) {
+		// Likely running with `go run`, use the current working directory
+		wd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+		return wd
+	}
+
+	// Otherwise, likely a real executable (from `go build`)
+	return exeDir
+}
+
 func main() {
+	mainProgramDir := GetBaseDir()
+
 	// Find the Anaconda installation path using a helper function
 	anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 	if err != nil {
@@ -57,6 +82,10 @@ func main() {
 		}
 	}
 
+	// TODO Check if the yaml file is inside the main program directory
+	// Suggest to rather copy it to the main folder of the program
+	// Then they can use relative paths to input folder and output folder
+
 	// Read the YAML file contents
 	data, err := os.ReadFile(yamlPath)
 	if err != nil {
@@ -69,13 +98,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("error unmarshalling YAML: %v", err)
 	}
-
-	// Get the directory of the executing binary (main program)
-	executablePath, err := os.Executable()
-	if err != nil {
-		log.Fatalf("error getting executable path: %v", err)
-	}
-	mainProgramDir := filepath.Dir(executablePath) // Directory of the main program executable
 
 	// Get the directory of the YAML file for resolving data paths
 	yamlDir := filepath.Dir(yamlPath)

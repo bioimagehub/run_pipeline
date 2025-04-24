@@ -29,9 +29,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Extract metadata from a BioImage file.")
     parser.add_argument("-i", "--input_file", type=str, required=True, help="Path to the input BioImage file")
-    parser.add_argument("-o", "--output_file", type=str, required=True, help="Path to save the metadata YAML file")
+    parser.add_argument("-o", "--output_file", type=str, required=False, help="Path to save the metadata YAML file")
 
     args = parser.parse_args()
+
+    # Check if output file path is provided, if not set default
+    if args.output_file is None:
+        args.output_file = os.path.splitext(args.input_file)[0] + "_metadata.yaml"
+        
 
     # Load the image
     img = BioImage(args.input_file)

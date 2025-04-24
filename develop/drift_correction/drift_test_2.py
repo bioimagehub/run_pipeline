@@ -3,7 +3,6 @@ from skimage.transform import SimilarityTransform, warp, rotate
 import scipy as sp
 import numpy as np
 from bioio.writers import OmeTiffWriter
-
 from pystackreg import StackReg
 from skimage import io
 from tqdm import tqdm
