@@ -74,7 +74,7 @@ def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_ch
                 
         # Apply drift correction if requested or just save the image as tif
         if drift_correct_channel > -1:
-            output_img, shifts = drift_correct_xy_parallel(img.data[0:5], drift_correct_channel)  # Apply drift correction
+            output_img, shifts = drift_correct_xy_parallel(img.data, drift_correct_channel)  # Apply drift correction
 
             # Save the registered image
             OmeTiffWriter.save(output_img, output_tif_file_path, dim_order="TCZYX",physical_pixel_sizes=physical_pixel_sizes)
