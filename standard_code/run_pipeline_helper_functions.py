@@ -9,8 +9,11 @@ def load_bioio(path: str) -> BioImage:
     :return: A BioImage object.
     """
     # Load the image using the appropriate reader based on the file extension   
-
-    if path.endswith(".nd2"):
+    if path.endswith(".tif"):
+        import bioio_ome_tiff
+        img = BioImage(path, reader=bioio_ome_tiff.Reader)
+        
+    elif path.endswith(".nd2"):
         import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
     
@@ -37,6 +40,9 @@ def get_files_to_process(folder_path: str, extension: str, search_subfolders: bo
             for entry in it:
                 if entry.is_file() and entry.name.endswith(extension):
                     files_to_process.append(entry.path)
+    
+    # replace \ wit h / in the file paths
+    files_to_process = [file_path.replace("\\", "/") for file_path in files_to_process]
     return files_to_process
 
 

@@ -100,17 +100,17 @@ def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_ch
 def process_folder(args: argparse.Namespace):
     
     # Find files to process
-    files_to_process = rp.get_files_to_process(args.folder_path, args.extension, args.search_subfolders)
+    files_to_process = rp.get_files_to_process(args.input_folder, args.extension, args.search_subfolders)
 
     # Make output folder
-    destination_folder = args.folder_path + "_tif"
+    destination_folder = args.input_folder + "_tif"
     os.makedirs(destination_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
     # Process each file
     for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
         
         # Define output file name
-        output_tif_file_path:str = rp.collapse_filename(input_file_path, args.folder_path, args.collapse_delimiter)
+        output_tif_file_path:str = rp.collapse_filename(input_file_path, args.input_folder, args.collapse_delimiter)
         output_tif_file_path:str = os.path.splitext(output_tif_file_path)[0] + ".tif"
         output_tif_file_path:str = os.path.join(destination_folder, output_tif_file_path)
         
@@ -119,7 +119,7 @@ def process_folder(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a folder of images and convert them to TIF format with optional drift correction.")
-    parser.add_argument("-p", "--folder_path", type=str, help="Path to the folder to be processed")
+    parser.add_argument("-p", "--input_folder", type=str, help="Path to the folder to be processed")
     parser.add_argument("-e", "--extension", type=str, default=None, help="File extension to filter files in folder")
     parser.add_argument("-R", "--search_subfolders", action="store_true", help="Search for files in subfolders")
     parser.add_argument("--collapse_delimiter", type=str, default="__", help="Delimiter used to collapse file paths")
