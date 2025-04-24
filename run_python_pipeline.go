@@ -17,13 +17,13 @@ import (
 
 // Segment struct defines each segment of the pipeline with relevant attributes
 type Segment struct {
-	Name          string        `yaml:"name"`                     // The name of the segment
-	Environment   string        `yaml:"environment"`              // The Python environment to use
-	Commands      []interface{} `yaml:"commands"`                 // Commands to execute (can be strings or maps)
-	FileExtension string        `yaml:"file_extension"`           // File extension to consider for input files
-	InputDir      string        `yaml:"input_dir"`                // Directory for input files
-	OutputDir     string        `yaml:"output_dir"`               // Directory for output files
-	LastProcessed string        `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
+	Name        string        `yaml:"name"`        // The name of the segment
+	Environment string        `yaml:"environment"` // The Python environment to use
+	Commands    []interface{} `yaml:"commands"`    // Commands to execute (can be strings or maps)
+	//FileExtension string        `yaml:"file_extension"`           // File extension to consider for input files
+	//InputDir      string        `yaml:"input_dir"`                // Directory for input files
+	//OutputDir     string        `yaml:"output_dir"`               // Directory for output files
+	LastProcessed string `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
 }
 
 // Config struct to hold the overall configuration structure
@@ -54,8 +54,26 @@ func GetBaseDir() string {
 	return exeDir
 }
 
+func resolvePath(v string, mainProgramDir, yamlDir string) string {
+	if strings.HasPrefix(v, "./") {
+		v = strings.TrimPrefix(v, "./")
+		if strings.HasSuffix(v, ".py") {
+			return filepath.Join(mainProgramDir, v)
+		}
+		return filepath.Join(yamlDir, v)
+	}
+	return v
+}
+
 func main() {
 	mainProgramDir := GetBaseDir()
+	fmt.Printf("mainProgramDir: %v\n", mainProgramDir)
+
+	// set working directory to the main program directory
+	err := os.Chdir(mainProgramDir)
+	if err != nil {
+		log.Fatalf("Error changing directory: %v", err)
+	}
 
 	// Find the Anaconda installation path using a helper function
 	anacondaPath, err := find_anaconda_path.FindAnacondaPath()
@@ -136,31 +154,23 @@ func main() {
 		// Loop through each command in the segment's command list
 		for _, cmd := range segment.Commands {
 			switch v := cmd.(type) {
-			case string: // If the command is a string
-				// Check if it is a relative path
-				if strings.HasPrefix(v, "./") {
-					if strings.HasSuffix(v, ".py") {
-						// If it's a Python script, resolve it relative to the main program directory
-						v = strings.TrimPrefix(v, "./")      // Remove the './' prefix
-						v = filepath.Join(mainProgramDir, v) // Combine with main program path
-					} else {
-						// Otherwise, it's a data path, resolve it relative to the YAML file directory
-						v = strings.TrimPrefix(v, "./") // Remove the './' prefix
-						v = filepath.Join(yamlDir, v)   // Combine with YAML directory
+			case string:
+				resolved := resolvePath(v, mainProgramDir, yamlDir)
+				cmdArgs = append(cmdArgs, resolved)
+
+			case map[interface{}]interface{}:
+				for flag, value := range v {
+					cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
+
+					if value != nil && value != "null" {
+						valStr := fmt.Sprintf("%v", value)
+						resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+						cmdArgs = append(cmdArgs, resolved)
 					}
 				}
 
-				cmdArgs = append(cmdArgs, v) // Add the resolved path to command arguments
-			case map[interface{}]interface{}: // If the command is a map (for flags and values)
-				// Iterate through the map entries
-				for flag, value := range v {
-					cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag)) // Add flag to command arguments
-					if value != nil && value != "null" {               // Check if value is valid
-						cmdArgs = append(cmdArgs, fmt.Sprintf("%v", value)) // Add value to command arguments
-					}
-				}
 			default:
-				log.Fatalf("unexpected type: %v", reflect.TypeOf(v)) // Handle unexpected types
+				log.Fatalf("unexpected type: %v", reflect.TypeOf(v))
 			}
 		}
 
