@@ -320,10 +320,19 @@ def split_large_labels_with_watershed(mask: np.ndarray, label_info_list: list[La
             mask_out[t_idx, c_idx, z_idx][slice_ == label_info.label_id] = label_info.label_id
     return mask_out, LabelInfo.from_mask(mask_out)
 
+def plot_image_overlays(image, overlays, **kwargs):
+    """Plot image and overlays (bytes) using matplotlib."""
+    fig, ax = plt.subplots()
+    ax.imshow(image, cmap='gray')
+    if not isinstance(overlays, list):
+        overlays = [overlays]
+    for overlay in overlays:
+        roi = ImagejRoi.frombytes(overlay)
+        roi.plot(ax, **kwargs)
+    plt.show()
+
 def mask_to_rois(mask: np.ndarray, label_info_list: list[LabelInfo]) -> list[ImagejRoi]:
-    """Convert labeled 5D mask into a list of ImageJ-compatible ROI objects."""
-    rois = []
-    
+    """Convert labeled 5D mask into a list of ImageJ-compatible ROI objects."""    
     # Iterate through the provided label_info_list
     for label_info in label_info_list:
         # Extract the specific slice for this label
@@ -332,22 +341,17 @@ def mask_to_rois(mask: np.ndarray, label_info_list: list[LabelInfo]) -> list[Ima
         z_idx = label_info.z_plane
         slice = mask[t_idx, c_idx, z_idx]
         label_mask = (slice == label_info.label_id)
-    
-    
-    for t_idx in range(mask.shape[0]):
-        for c_idx in range(mask.shape[1]):
-            for z_idx in range(mask.shape[2]):
-                labeled = mask[t_idx, c_idx, z_idx]
-                
-                # Find contours on the labeled image
-                contours = find_contours(labeled, level=0.5)  # Use 0.5 as the threshold level for binary contours
-                for contour in contours:  # Each contour corresponds to a different labeled region
-                    # Convert the contour to ImageJ ROI
-                    roi = ImagejRoi.frompoints(np.round(contour)[:, ::-1])  # Reverse the order for ImageJ compatibility
-                    rois.append(roi)  # Append ROI objects directly
 
-    return rois
-
+        # segment the image with scikit-image
+        labeled = label(label_mask)
+        segmentation = 1.0 * (labeled > 0)
+        overlays = [
+            ImagejRoi.frompoints(np.round(contour)[:, ::-1]).tobytes()
+            for contour in find_contours(segmentation, level=0.9999)
+            ]        
+        # plot_image_overlays(slice, overlays, lw=5)
+        # print(len(overlays))
+    return overlays
 
 def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
     """Fill holes within each labeled region independently."""
@@ -365,7 +369,6 @@ def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
                     filled[t_idx, c_idx, z_idx][filled_region] = label_id
                     
     return filled
-
 
 def plot_mask(mask: np.ndarray, label_sizes:dict[int, int] ) -> None:
     """Plot the mask with a color map."""
@@ -426,7 +429,7 @@ def process_file(path: str, method: str = "otsu", channels: list = [1], median_f
     OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\06_split_watershed.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
 
     
-    rois = mask_to_rois(mask)
+    rois = mask_to_rois(mask, labelinfo)
     print("ROIs generated:", len(rois))
 
     plot_mask(mask, labelinfo)
