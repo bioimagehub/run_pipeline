@@ -43,6 +43,7 @@ def get_files_to_process(folder_path: str, extension: str, search_subfolders: bo
     
     # replace \ wit h / in the file paths
     files_to_process = [file_path.replace("\\", "/") for file_path in files_to_process]
+    
     return files_to_process
 
 

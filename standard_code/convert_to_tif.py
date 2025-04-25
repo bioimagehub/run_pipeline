@@ -11,7 +11,7 @@ from bioio.writers import OmeTiffWriter
 import run_pipeline_helper_functions  as rp 
 from extract_metadata import get_metadata
 
-def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0, paralell: bool = True) -> tuple[np.ndarray, np.ndarray]:
+def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0, use_parallel: bool = True) -> tuple[np.ndarray, np.ndarray]:
     T, C, Z, Y, X = video.shape    
     corrected_video = np.zeros_like(video)
     
@@ -25,7 +25,7 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0,
     tmats = sr.register_stack(ref_stack, reference='previous', verbose=True)
 
     # Parallel transform function
-    if paralell:
+    if use_parallel:
         def apply_shift(t):
             local_sr = StackReg(StackReg.RIGID_BODY)  # Create separate instance to avoid shared state
             out = np.empty_like(video[t])
@@ -51,9 +51,10 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0,
     return corrected_video, tmats
 
 
-def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_channel:int = -1) -> None:
+def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_channel:int = -1, use_parallel:bool = True, projection_method:str = None) -> None:
         # Define output file names
         input_metadata_file_path:str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
+        
         output_metadata_file_path:str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
         output_shifts_file_path:str = os.path.splitext(output_tif_file_path)[0] + "_shifts.npy"
 
@@ -72,28 +73,57 @@ def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_ch
             with open(input_metadata_file_path, 'w') as f:
                 yaml.dump(metadata, f)
                 
+        # Perform projection if requested
+        if projection_method == "max":
+            img_data = np.max(img.data, axis=2, keepdims=True, dtype=img.data.dtype)
+        elif projection_method == "sum":
+            print("Warning: Using sum projection and with same dtype may cause pixels to saturate.")
+            img_data = np.sum(img.data, axis=2, keepdims=True, dtype=img.data.dtype)
+        elif projection_method == "mean":   
+            img_data = np.mean(img.data, axis=2, keepdims=True, dtype=img.data.dtype)
+        elif projection_method == "median":
+            img_data = np.median(img.data, axis=2, keepdims=True, dtype=img.data.dtype)
+        elif projection_method == "min":
+            img_data = np.min(img.data, axis=2, keepdims=True, dtype=img.data.dtype)
+        elif projection_method == "std":
+            img_data = np.std(img.data, axis=2, keepdims=True, dtype=img.data.dtype)
+        else:
+            img_data = img.data
+        
         # Apply drift correction if requested or just save the image as tif
         if drift_correct_channel > -1:
-            output_img, shifts = drift_correct_xy_parallel(img.data, drift_correct_channel)  # Apply drift correction
+            output_img, shifts = drift_correct_xy_parallel(img_data, drift_correct_channel, use_parallel=use_parallel)  # Apply drift correction
 
             # Save the registered image
             OmeTiffWriter.save(output_img, output_tif_file_path, dim_order="TCZYX",physical_pixel_sizes=physical_pixel_sizes)
             np.save(output_shifts_file_path, shifts)
 
             # Save drift info to metadata
-            metadata["Drift  correction"] = {"Method": "StackReg",
-                                            "Drift_correct_channel": drift_correct_channel,
-                                            "Shifts": os.path.basename(output_shifts_file_path),
-                                            }
+            metadata["Convert to tif"] = {
+                "Drift correction": {
+                    "Method": "StackReg",
+                    "Drift_correct_channel": drift_correct_channel,
+                    "Shifts": os.path.basename(output_shifts_file_path),
+                },
+                "Projection": {
+                    "Method": projection_method,
+                }
+            }   
             # Save metadata to YAML file
             with open(output_metadata_file_path, 'w') as f:
                 yaml.dump(metadata, f)
 
         else:
             # Save the image to the specified output file path
-            OmeTiffWriter.save(img.data, output_tif_file_path, dim_order="TCZYX",physical_pixel_sizes=physical_pixel_sizes)
+            OmeTiffWriter.save(img_data, output_tif_file_path, dim_order="TCZYX",physical_pixel_sizes=physical_pixel_sizes)
 
             # Save metadata to YAML file
+                        # Save drift info to metadata
+            metadata["Convert to tif"] = {
+                "Projection": {
+                    "Method": projection_method,
+                }
+            }   
             with open(output_metadata_file_path, 'w') as f:
                 yaml.dump(metadata, f)
 
@@ -111,11 +141,11 @@ def process_folder(args: argparse.Namespace):
         
         # Define output file name
         output_tif_file_path:str = rp.collapse_filename(input_file_path, args.input_folder, args.collapse_delimiter)
-        output_tif_file_path:str = os.path.splitext(output_tif_file_path)[0] + ".tif"
+        output_tif_file_path:str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path:str = os.path.join(destination_folder, output_tif_file_path)
         
         # process file
-        process_file(input_file_path, output_tif_file_path, args.drift_correct_channel)  # Process each file
+        process_file(input_file_path, output_tif_file_path, args.drift_correct_channel, use_parallel = True, projection_method=args.projection_method)  # Process each file
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a folder of images and convert them to TIF format with optional drift correction.")
@@ -124,6 +154,8 @@ if __name__ == "__main__":
     parser.add_argument("-R", "--search_subfolders", action="store_true", help="Search for files in subfolders")
     parser.add_argument("--collapse_delimiter", type=str, default="__", help="Delimiter used to collapse file paths")
     parser.add_argument("-drift_ch", "--drift_correct_channel", type=int, default=-1, help="Channel to use for drift correction (default: -1, no correction)")
+    parser.add_argument("-pmt", "--projection_method", type=str, default=None, help="Projection method to use (max, sum, mean, median, min, std)")
+    parser.add_argument("-o", "--output_file_name_extension", type=str, default=None, help="Output file name extension (default: None)")
 
     args = parser.parse_args() 
     process_folder(args)
