@@ -441,7 +441,7 @@ def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
                     
     return filled
 
-def save_intermediate(mask: np.ndarray=None, labelinfo=None, path=None, physical_pixel_sizes=None):
+def save_intermediate(mask: np.ndarray=None, labelinfo=None, rois=None, path=None, physical_pixel_sizes=None):
     """Utility function to save the images and label info.
     if mask is None or if labelinfo is {} they willnot be saved    
     """
@@ -450,19 +450,27 @@ def save_intermediate(mask: np.ndarray=None, labelinfo=None, path=None, physical
             OmeTiffWriter.save(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
         if labelinfo is not None:
             LabelInfo.save(labelinfo, path + "_labelinfo.json")
+        if rois is not None:
+            rois_path = path + "_rois.zip"
+            if os.path.exists(rois_path): # Will just append to folder not replace
+                os.remove(rois_path)
+            roiwrite(rois_path, rois)
 
 
-def process_file(path: str, 
+
+
+def process_file(input_path: str, 
+                 output_name:str,
                  channels: list = [1], 
                  median_filter_size: int = 10,
                  method: str = "otsu",   
                  min_size=10_000, max_size=55_000, watershed_large_labels=True,
                  remove_xy_edges=True, remove_z_edges=False,
-                 tmp_output_folder: str = None) -> tuple[np.ndarray, list[ImagejRoi], list[LabelInfo]]:
+                 tmp_output_folder: str = None) -> None:
     """Main function to load image, segment it, and generate ROIs."""
     
     try:
-        img = rp.load_bioio(path)  # To get metadata
+        img = rp.load_bioio(input_path)  # To get metadata
 
         channels_str = "_ch" + "-".join(map(str, channels))
         
@@ -471,150 +479,167 @@ def process_file(path: str,
             os.makedirs(tmp_output_folder, exist_ok=True)
 
         # Median filter
-        tmp_med_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_01_med") if tmp_output_folder is not None else None
-        if os.path.exists(tmp_med_path):
-            mask = rp.load_bioio(tmp_med_path).data
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_01_med") if tmp_output_folder is not None else None
+        if os.path.exists(tmp_path):
+            mask = rp.load_bioio(tmp_path).data
         else:
             mask = apply_median_filter(img.data, size=median_filter_size, channels=channels)
-            save_intermediate(mask, None, tmp_med_path, img.physical_pixel_sizes)
+            save_intermediate(mask=mask, labelinfo=None, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
 
         # Apply thresholding
         # TODO remove min early to keep 8bit binary
-        tmp_thresh_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_02_thresh")
-        if os.path.exists(tmp_thresh_path + ".tif"):
-            mask = rp.load_bioio(tmp_thresh_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_thresh_path + "_labelinfo.json")
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_02_thresh") if tmp_output_folder is not None else None
+        if os.path.exists(tmp_path + ".tif"):
+            mask = rp.load_bioio(tmp_path + ".tif").data
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
         else:
             mask, labelinfo = apply_threshold(mask, method=method, channels=channels)
-            save_intermediate(mask, labelinfo, tmp_thresh_path, img.physical_pixel_sizes)
+            save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
+
 
         # Remove small labels
-        tmp_rm_small_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_03_rm_small")
-        if os.path.exists(tmp_rm_small_path + ".tif"):
-            mask = rp.load_bioio(tmp_rm_small_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_rm_small_path + "_labelinfo.json")
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_03_rm_small") if tmp_output_folder is not None else None
+        if os.path.exists(tmp_path + ".tif"):
+            mask = rp.load_bioio(tmp_path + ".tif").data
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
         else:
             max_size_filter = np.inf if watershed_large_labels else max_size
             mask, labelinfo = remove_small_or_large_labels(mask, labelinfo, min_size=min_size, max_size=max_size_filter)
-            save_intermediate(mask, labelinfo, tmp_rm_small_path, img.physical_pixel_sizes)
+            save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
 
         # Remove cells touching edges
-        tmp_rmedges_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_04_rm_edges")
-        if os.path.exists(tmp_rmedges_path + ".tif"):
-            mask = rp.load_bioio(tmp_rmedges_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_rmedges_path + "_labelinfo.json")
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_04_rm_edges") if tmp_output_folder is not None else None
+        if os.path.exists(tmp_path + ".tif"):
+            mask = rp.load_bioio(tmp_path + ".tif").data
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
         else:
             mask, labelinfo = remove_on_edges(mask, labelinfo, remove_xy_edges=remove_xy_edges, remove_z_edges=remove_z_edges)
-            save_intermediate(mask, labelinfo, tmp_rmedges_path, img.physical_pixel_sizes)
+            save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
 
         # Fill holes in the mask
-        tmp_fillholes_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_05_fill_holes")
-        if not os.path.exists(tmp_fillholes_path + ".tif"):
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_05_fill_holes") if tmp_output_folder is not None else None
+        if not os.path.exists(tmp_path + ".tif"):
             mask = fill_holes_indexed(mask)
-            save_intermediate(mask, {}, tmp_fillholes_path, img.physical_pixel_sizes)
+            save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
 
         # Split large labels with watershed
         if watershed_large_labels and max_size != np.inf:
-            tmp_watershed_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_06_split_watershed")
-            if os.path.exists(tmp_watershed_path + ".tif"):
-                mask = rp.load_bioio(tmp_watershed_path + ".tif").data
-                labelinfo = LabelInfo.load(tmp_watershed_path + "_labelinfo.json")
+            tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_06_split_watershed") if tmp_output_folder is not None else None
+            if os.path.exists(tmp_path + ".tif"):
+                mask = rp.load_bioio(tmp_path + ".tif").data
+                labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
             else:
                 mask, labelinfo = split_large_labels_with_watershed(mask, labelinfo, max_size=max_size)
-                save_intermediate(mask, labelinfo, tmp_watershed_path, img.physical_pixel_sizes)
+                save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
         elif max_size == np.inf:
             print("Warning: max_size is set to np.inf, watershed will not be applied.")
 
         # Generate ROIs
-        tmp_rois_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(path))[0] + f"_{channels_str}_07_rois.zip")
-        if not os.path.exists(tmp_rois_path):   
-            print("Generating ROIs...")
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_07_rois.zip") if tmp_output_folder is not None else None
+        if not os.path.exists(tmp_path):   
+            # print("Generating ROIs...")
             rois = mask_to_rois(mask, labelinfo)
-            print("ROIs generated:", len(rois))
-            if os.path.exists(tmp_rois_path):
-                os.remove(tmp_rois_path)
-            roiwrite(tmp_rois_path, rois)
+            save_intermediate(mask=None, labelinfo=None, rois=rois, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
         else:
-            rois = roiread(tmp_rois_path)
+            rois = roiread(tmp_path)
+        
+        # And then finally save mask, labelinfo and ROIS in the output folder
+        save_intermediate(mask=mask, labelinfo=labelinfo, rois=rois, path=output_name, physical_pixel_sizes=img.physical_pixel_sizes)
 
 
     except Exception as e:
-        print(f"Error processing {path}: {e}")
+        print(f"Error processing {input_path}: {e}")
         return None, None, None
 
     return mask, rois, labelinfo
 
 
-process_file(path= r"//SCHINKLAB-NAS/data1/Schink/Oyvind/colaboration_user_data/20250124_Viola/input_tif/230705_93_mNG-DFCP1_LT_LC3_CMvsLPDS__LPDS__LPDS_NT_30min__2023-07-07__230705_mNG-DFCP1_LT_LC3_LPDS_NT_30min_2.tif", 
-                channels = [3],
-                median_filter_size= 15,
-                method = "otsu",   
-                min_size=10_000,
-                max_size=55_000, 
-                watershed_large_labels = True,
-                remove_xy_edges=True,
-                remove_z_edges=False,
-                tmp_output_folder = r"C:\Users\oodegard\Desktop\del")
+# process_file(path= r"//SCHINKLAB-NAS/data1/Schink/Oyvind/colaboration_user_data/20250124_Viola/input_tif/230705_93_mNG-DFCP1_LT_LC3_CMvsLPDS__LPDS__LPDS_NT_30min__2023-07-07__230705_mNG-DFCP1_LT_LC3_LPDS_NT_30min_2.tif", 
+#                 channels = [3],
+#                 median_filter_size= 15,
+#                 method = "otsu",   
+#                 min_size=10_000,
+#                 max_size=55_000, 
+#                 watershed_large_labels = True,
+#                 remove_xy_edges=True,
+#                 remove_z_edges=False,
+#                 tmp_output_folder = r"C:\Users\oodegard\Desktop\del")
 
 
 
-# def process_folder(args: argparse.Namespace, use_parallel=True) -> None:
-#     # Find files to process
-#     files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
+def process_folder(args: argparse.Namespace, use_parallel=False) -> None: # Paralel not working yet
+    # Find files to process
+    files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
 
-#     # Make output folder
-#     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
+    # Make output folder
+    os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
-#     if use_parallel:  # Process each file in parallel
-#         Parallel(n_jobs=-1)(
-#             delayed(process_file)(
-#                 input_file_path,
-#                 args.median_filter_size,
-#                 args.method,
-#                 args.min_size,
-#                 args.max_size,
-#                 args.watershed_large_labels,
-#                 args.remove_xy_edges,
-#                 args.remove_z_edges,
-#                 os.path.join(args.output_folder, os.path.basename(input_file_path))
-#             )
-#             for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
-#         )
+    if use_parallel:  # Process each file in parallel
+        raise NotImplementedError
+        # Parallel(n_jobs=-1)(
+        #     delayed(process_file)(
+        #         input_file_path,
 
-#     else:  # Process each file sequentially        
-#         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-#             # Define output file name
-#             output_tif_file_path: str = os.path.join(args.output_folder, os.path.basename(input_file_path))
-#             # Process file
-#             try:
-#                 process_file(
-#                     input_file_path,
-#                     args.median_filter_size,
-#                     args.method,
-#                     args.min_size,
-#                     args.max_size,
-#                     args.watershed_large_labels,
-#                     args.remove_xy_edges,
-#                     args.remove_z_edges,
-#                     os.path.join(args.output_folder, os.path.basename(input_file_path))
-#                 )  # Process each file
-#             except Exception as e:
-#                 print(f"Error processing {input_file_path}: {e}")
-#                 continue
+        #         args.channels,
+        #         args.median_filter_size,
+        #         args.method,
+        #         args.min_size,
+        #         args.max_size,
+        #         args.watershed_large_labels,
+        #         args.remove_xy_edges,
+        #         args.remove_z_edges,
+        #         os.path.join(args.output_folder, os.path.basename(input_file_path))
+        #     )
+        #     for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
+        # )
 
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("--input_folder", type=str, help="Input folder containing .tif files")
-#     parser.add_argument("--output_folder", type=str, help="Output folder for processed files")
-#     parser.add_argument("--channels", type=int, nargs='+', default=[0], help="List of channels to process")
-#     parser.add_argument("--median_filter_size", type=int, default=10, help="Size of the median filter")
-#     parser.add_argument("--method", type=str, default="li", help="Thresholding method")
-#     parser.add_argument("--min_size", type=int, default=10_000, help="Minimum size for processing")
-#     parser.add_argument("--max_size", type=int, default=55_000, help="Maximum size for processing")
-#     parser.add_argument("--watershed_large_labels", action="store_true", help="Split large cells with watershed")
-#     parser.add_argument("--remove_xy_edges",action="store_true", help="Remove edges in XY")
-#     parser.add_argument("--remove_z_edges", action="store_true", help="Remove edges in Z")
-#     parser.add_argument("--store_intermediate_steps", action="store_true", help="Should all intermediate steps be stored?")
-#     args = parser.parse_args()
+    else:  # Process each file sequentially        
+        # print(f"Process {len(files_to_process)} file(s) sequentially ")
+        for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
+            # Define output file name
+            output_tif_file_name: str = os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0])
+            # Process file
+            try:
+                '''
+                path: str, 
+                 channels: list = [1], 
+                 median_filter_size: int = 10,
+                 method: str = "otsu",   
+                 min_size=10_000, max_size=55_000, watershed_large_labels=True,
+                 remove_xy_edges=True, remove_z_edges=False,
+                 tmp_output_folder: str = None) -> tuple[np.ndarray, list[ImagejRoi], list[LabelInfo]]:
+                '''
+                process_file(
+                    input_path = input_file_path,
+                    output_name = output_tif_file_name,
+                    channels = args.channels,
+                    median_filter_size = args.median_filter_size,
+                    method = args.method,
+                    min_size = args.min_size,
+                    max_size = args.max_size,
+                    watershed_large_labels = args.watershed_large_labels,
+                    remove_xy_edges = args.remove_xy_edges,
+                    remove_z_edges = args.remove_z_edges,
+                    tmp_output_folder = os.path.join(args.output_folder, "tmp")
+                )  # Process each file
 
-#     process_folder(args)
+            except Exception as e:
+                print(f"Error processing {input_file_path}: {e}")
+                continue
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_folder", type=str, help="Input folder containing .tif files")
+    parser.add_argument("--output_folder", type=str, help="Output folder for processed files")
+    parser.add_argument("--channels", type=int, nargs='+', default=[0], help="List of channels to process")
+    parser.add_argument("--median_filter_size", type=int, default=10, help="Size of the median filter")
+    parser.add_argument("--method", type=str, default="li", help="Thresholding method")
+    parser.add_argument("--min_size", type=int, default=10_000, help="Minimum size for processing")
+    parser.add_argument("--max_size", type=int, default=55_000, help="Maximum size for processing")
+    parser.add_argument("--watershed_large_labels", action="store_true", help="Split large cells with watershed")
+    parser.add_argument("--remove_xy_edges",action="store_true", help="Remove edges in XY")
+    parser.add_argument("--remove_z_edges", action="store_true", help="Remove edges in Z")
+    parser.add_argument("--tmp_output_folder", type=str, help="Save intemediate steps in tmp_output_folder")
+    args = parser.parse_args()
+
+    process_folder(args)
