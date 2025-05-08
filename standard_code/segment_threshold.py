@@ -1,4 +1,7 @@
 import argparse
+import os
+from tqdm import tqdm
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -9,16 +12,18 @@ from skimage.filters import (
     threshold_niblack, threshold_sauvola
 )
 from skimage.measure import label
-
-from scipy.ndimage import binary_fill_holes, median_filter, distance_transform_edt
-
-from roifile import ImagejRoi
-from skimage.measure import find_contours
 from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
 
+from scipy.ndimage import binary_fill_holes, median_filter, distance_transform_edt
+
+from cv2 import findContours, RETR_EXTERNAL, CHAIN_APPROX_NONE
+
+from roifile import ImagejRoi, roiwrite
 
 from bioio.writers import OmeTiffWriter
+
+from joblib import Parallel, delayed
 
 
 # local imports
@@ -49,7 +54,7 @@ class LabelInfo:
         self.z_plane = z_plane
 
     def __repr__(self):
-        return (f"LabelInfo(ID={self.label_id}, "
+        return (f"LabelInfo(label_id={self.label_id}, "
                 f"x_center={self.x_center:.2f}, "
                 f"y_center={self.y_center:.2f}, "
                 f"npixels={self.npixels}, "
@@ -58,16 +63,27 @@ class LabelInfo:
                 f"z_plane={self.z_plane})")
 
     def to_dict(self):
-        """Convert the LabelInfo instance to a dictionary for easier access."""
         return {
-            "ID": self.label_id,
-            "x_center": self.x_center,
-            "y_center": self.y_center,
-            "npixels": self.npixels,
-            "frame": self.frame,
-            "channel": self.channel,
-            "z_plane": self.z_plane
+            "label_id": int(self.label_id),
+            "x_center": float(self.x_center),
+            "y_center": float(self.y_center),
+            "npixels": int(self.npixels),
+            "frame": int(self.frame),
+            "channel": int(self.channel),
+            "z_plane": int(self.z_plane)
         }
+    @staticmethod
+    def save(label_info_list, filepath):
+        data = [label.to_dict() for label in label_info_list]
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+
+    @staticmethod
+    def load(filepath):
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        return [LabelInfo(**item) for item in data]
+
     @classmethod
     def from_mask(cls, mask: np.ndarray) -> list:
         """Create LabelInfo objects from a labeled 5D mask (TCZYX)."""
@@ -251,7 +267,6 @@ def remove_on_edges(mask: np.ndarray, label_info_list: list[LabelInfo], remove_x
 
     return mask_out, LabelInfo.from_mask(mask_out)
 
-
 def split_large_labels_with_watershed(mask: np.ndarray, label_info_list: list[LabelInfo], max_size: int = np.inf) -> tuple[np.ndarray, list[LabelInfo]]:
     """
     Split large labels using the watershed algorithm and return updated label information.
@@ -331,27 +346,97 @@ def plot_image_overlays(image, overlays, **kwargs):
         roi.plot(ax, **kwargs)
     plt.show()
 
+def plot_mask(mask: np.ndarray, label_sizes:dict[int, int] ) -> None:
+    """Plot the mask with a color map."""
+    cmap = ListedColormap(np.vstack((np.array([[1, 1, 1]]),
+                                     np.random.rand(len(label_sizes), 3))))  
+
+    plt.imshow(mask[0, 1, 0], cmap=cmap)  # Plotting the first time point, channel, and z-slice
+    plt.colorbar()
+    plt.title("Mask at T=0, C=1, Z=0")
+    plt.show()
+
+def outlines_list_single(masks):
+    """Get outlines of masks as a list to loop over for plotting.
+
+    Args:
+        masks (ndarray): masks (0=no cells, 1=first cell, 2=second cell,...)
+
+    Returns:
+        list: List of outlines as pixel coordinates.
+
+    """
+    outpix = []
+    for n in np.unique(masks)[1:]:
+        mn = masks == n
+        if mn.sum() > 0:
+            contours = findContours(mn.astype(np.uint8), mode=RETR_EXTERNAL,
+                                        method=CHAIN_APPROX_NONE)
+            contours = contours[-2]
+            cmax = np.argmax([c.shape[0] for c in contours])
+            pix = contours[cmax].astype(int).squeeze()
+            if len(pix) > 4:
+                outpix.append(pix)
+            else:
+                outpix.append(np.zeros((0, 2)))
+    return outpix
+
 def mask_to_rois(mask: np.ndarray, label_info_list: list[LabelInfo]) -> list[ImagejRoi]:
-    """Convert labeled 5D mask into a list of ImageJ-compatible ROI objects."""    
-    # Iterate through the provided label_info_list
+    """Convert labeled 5D mask into a list of ImageJ-compatible ROI objects."""
+
+    outlines = []
+
     for label_info in label_info_list:
         # Extract the specific slice for this label
         t_idx = label_info.frame
         c_idx = label_info.channel
         z_idx = label_info.z_plane
-        slice = mask[t_idx, c_idx, z_idx]
-        label_mask = (slice == label_info.label_id)
+        slice_ = mask[t_idx, c_idx, z_idx]
+        label_mask = (slice_ == label_info.label_id)
 
-        # segment the image with scikit-image
-        labeled = label(label_mask)
-        segmentation = 1.0 * (labeled > 0)
-        overlays = [
-            ImagejRoi.frompoints(np.round(contour)[:, ::-1]).tobytes()
-            for contour in find_contours(segmentation, level=0.9999)
-            ]        
-        # plot_image_overlays(slice, overlays, lw=5)
-        # print(len(overlays))
-    return overlays
+        if label_mask.sum() == 0:
+            continue  # Skip if label has no pixels
+
+        # Find contours
+        contours, _ = findContours(label_mask.astype(np.uint8), mode=RETR_EXTERNAL, method=CHAIN_APPROX_NONE)
+
+        if not contours:
+            outlines.append(np.zeros((0, 2)))
+            continue
+
+        # Take the largest contour by number of points
+        cmax = np.argmax([c.shape[0] for c in contours])
+        pix = contours[cmax].astype(int).squeeze()
+
+        if pix.ndim != 2 or pix.shape[0] <= 4:
+            outlines.append(np.zeros((0, 2)))
+        else:
+            outlines.append(pix)
+
+    # Filter out empty outlines
+    nonempty_outlines = [outline for outline in outlines if outline.shape[0] > 0]
+
+    if len(nonempty_outlines) < len(outlines):
+        print(f"Empty outlines found, saving {len(nonempty_outlines)} ImageJ ROIs to .zip archive.")
+
+    rois = [ImagejRoi.frompoints(outline) for outline in nonempty_outlines]
+
+    return rois
+
+    
+
+
+
+
+
+
+    outlines = outlines_list_single(masks)
+    nonempty_outlines = [outline for outline in outlines if len(outline)!=0]
+    if len(outlines)!=len(nonempty_outlines):
+        print(f"empty outlines found, saving {len(nonempty_outlines)} ImageJ ROIs to .zip archive.")
+    rois = [ImagejRoi.frompoints(outline) for outline in nonempty_outlines]
+
+    return rois
 
 def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
     """Fill holes within each labeled region independently."""
@@ -370,89 +455,178 @@ def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
                     
     return filled
 
-def plot_mask(mask: np.ndarray, label_sizes:dict[int, int] ) -> None:
-    """Plot the mask with a color map."""
-    cmap = ListedColormap(np.vstack((np.array([[1, 1, 1]]),
-                                     np.random.rand(len(label_sizes), 3))))  
-
-    plt.imshow(mask[0, 1, 0], cmap=cmap)  # Plotting the first time point, channel, and z-slice
-    plt.colorbar()
-    plt.title("Mask at T=0, C=1, Z=0")
-    plt.show()
-
-def process_file(path: str, method: str = "otsu", channels: list = [1], median_filter_size: int = 10) -> tuple[np.ndarray, list[ImagejRoi]]:
+def process_file(path: str, channels: list = [1], 
+                median_filter_size: int = 10,
+                method: str = "otsu",   
+                min_size=10_000, max_size=55_000, watershed_large_labels = True,
+                remove_xy_edges=True, remove_z_edges=False,
+                intermediate_file_path_noext:str = None) -> tuple[np.ndarray, list[ImagejRoi]]:
     """Main function to load image, segment it, and generate ROIs."""
-    print("Loading image...")
-    img = rp.load_bioio(path)
-    print("Input image shape:", img.data.shape)  
-
-    if not "debug" == "debug":
-        print("Median filtering...")
-        mask = apply_median_filter(img.data, size=median_filter_size, channels=channels)  
-        # print("Mask shape after filter:", mask.shape)
-        ## OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\01_med.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
-        ## Works OK!
-    else:
-        mask = img.data
-
-    print("Applying threshold...")
-    mask, labelinfo = apply_threshold(mask, method=method, channels=channels) 
-    print("Mask shape affter threshold:", mask.shape)
-    print("ROIs generated initially:", len(labelinfo))
-    # OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\02_thresh.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
-
-    print("Removing small labels...")
-    mask, labelinfo = remove_small_or_large_labels(mask, labelinfo, min_size=10_000, max_size=np.inf)
-    print("Mask shape after removing small labels:", mask.shape)
-    print("ROIs after rm small:", len(labelinfo))
-    #print("ROIs:", labelinfo)
-    #OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\03_rm_small.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
-
-    print("Remove masks that touch xy edges Z is optional")
-    # TODO Implement remove masks that touch xy edges or z edges
-    mask, labelinfo = remove_on_edges(mask, labelinfo, remove_xy_edges=True, remove_z_edges=False)
-    print("Mask shape after removing edges:", mask.shape)
-    print("ROIs after rm edges:", len(labelinfo))
-    #OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\04_rm_edges.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
-
-    # Fill holes in the mask
-    print("Filling holes...")
-    mask = fill_holes_indexed(mask)
-    print("Mask shape after filling holes:", mask.shape)
-    print("ROIs after fill holes:", len(labelinfo))
-    OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\05_fill_holes.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
-
-    print("Split large labels with distance transform and waterhed...")
-    # TODO Implement watershed splitting of large labels
-    mask, labelinfo = split_large_labels_with_watershed(mask, labelinfo, max_size=55_000)
-    print("ROIs after splitting:", len(labelinfo))
-    OmeTiffWriter.save(mask, r"E:\Oyvind\tmp_del\06_split_watershed.tif", dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
-
     
-    rois = mask_to_rois(mask, labelinfo)
-    print("ROIs generated:", len(rois))
+    try:
+        
+        img = rp.load_bioio(path) # To get metadata
+        
+        # Create intermediate file folder
+        if intermediate_file_path_noext is not None:
+            Intermediate_file_folder = os.path.dirname(intermediate_file_path_noext)
+            os.makedirs(Intermediate_file_folder, exist_ok=True)
+        
+        # Median filter
+        tmp_med_path = intermediate_file_path_noext + "_01_med.tif"
+        if not os.path.exists(tmp_med_path):
+            mask = apply_median_filter(img.data, size=median_filter_size, channels=channels)  
+            if intermediate_file_path_noext == None:
+                OmeTiffWriter.save(mask,tmp_med_path , dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
+        else:    
+            mask = rp.load_bioio(tmp_med_path).data
+        
+        # Apply thresholding
+        tmp_thresh_path = intermediate_file_path_noext + "_02_thresh.tif"
+        tmp_thresh_path_labelinfo = tmp_thresh_path.replace(".tif", "_labelinfo.json")
+        if not os.path.exists(tmp_thresh_path) and not os.path.exists(tmp_thresh_path_labelinfo):
+            mask, labelinfo = apply_threshold(mask, method=method, channels=channels) 
+            if intermediate_file_path_noext == None:
+                LabelInfo.save(labelinfo, tmp_thresh_path_labelinfo)
+                OmeTiffWriter.save(mask, tmp_thresh_path , dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
+        else:
+            mask = rp.load_bioio(tmp_thresh_path).data
+            labelinfo = LabelInfo.load(tmp_thresh_path.replace(".tif", "_labelinfo.json"))
 
-    plot_mask(mask, labelinfo)
+        # Remove small labels
+        tmp_rm_small_path = intermediate_file_path_noext + "_03_rm_small.tif"
+        tmp_rm_small_path_labelinfo = tmp_rm_small_path.replace(".tif", "_labelinfo.json")
+        if not os.path.exists(tmp_rm_small_path) and not os.path.exists(tmp_rm_small_path_labelinfo):
+            if watershed_large_labels:
+                max_size_filter = np.inf # will be removed/split in the watershed step insted and not here
+            else:
+                max_size_filter = max_size
+            mask, labelinfo = remove_small_or_large_labels(mask, labelinfo, min_size=min_size, max_size=max_size_filter)
+            if intermediate_file_path_noext == None:
+                OmeTiffWriter.save(mask, tmp_rm_small_path, dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
+                LabelInfo.save(labelinfo, tmp_rm_small_path_labelinfo)
+        else:
+            mask = rp.load_bioio(tmp_rm_small_path).data
+            labelinfo = LabelInfo.load(tmp_rm_small_path_labelinfo)
+        
+        # Remove cells touching edges
+        tmp_rmedges_path = intermediate_file_path_noext + "_04_rm_edges.tif"
+        tmp_rmedges_path_labelinfo = tmp_rmedges_path.replace(".tif", "_labelinfo.json")
+        if not os.path.exists(tmp_rmedges_path) and not os.path.exists(tmp_rmedges_path_labelinfo):
+            mask, labelinfo = remove_on_edges(mask, labelinfo, remove_xy_edges=remove_xy_edges, remove_z_edges=remove_z_edges)
+            if intermediate_file_path_noext == None:
+                OmeTiffWriter.save(mask, tmp_rmedges_path, dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
+                LabelInfo.save(labelinfo, tmp_rmedges_path_labelinfo)
+        else:
+            mask = rp.load_bioio(tmp_rmedges_path).data
+            labelinfo = LabelInfo.load(tmp_rmedges_path_labelinfo)
 
-    return mask, rois
+        # Fill holes in the mask
+        tmp_fillholes_path = intermediate_file_path_noext + "_05_fill_holes.tif"
+        if not os.path.exists(tmp_fillholes_path):
+            # Fill holes in the mask
+            mask = fill_holes_indexed(mask)
+            if intermediate_file_path_noext == None:
+                OmeTiffWriter.save(mask, tmp_fillholes_path, dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
+        else:
+            mask = rp.load_bioio(tmp_fillholes_path).data
 
+        # Split large labels with watershed
+        if not watershed_large_labels:
+            pass
+        elif max_size == np.inf:
+            print("Warning: max_size is set to np.inf, watershed will not be applied.")
+            pass
+        else:    
+            tmp_watershed_path = intermediate_file_path_noext + "_06_split_watershed.tif"
+            tmp_watershed_path_labelinfo = tmp_watershed_path.replace(".tif", "_labelinfo.json")
+            if not os.path.exists(tmp_watershed_path) and not os.path.exists(tmp_watershed_path_labelinfo):
+                mask, labelinfo = split_large_labels_with_watershed(mask, labelinfo, max_size=max_size)
+                if intermediate_file_path_noext == None:
+                    OmeTiffWriter.save(mask,tmp_watershed_path, dim_order="TCZYX", physical_pixel_sizes=img.physical_pixel_sizes)
+                    LabelInfo.save(labelinfo, tmp_watershed_path_labelinfo)
+            else:
+                mask = rp.load_bioio(tmp_watershed_path).data
+                labelinfo = LabelInfo.load(tmp_watershed_path.replace(".tif", "_labelinfo.json"))   
 
-image_path = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_cellpose\230705_93_mNG-DFCP1_LT_LC3_CMvsLPDS__CM__CM_chol_2h__2023-07-07__230705_mNG-DFCP1_LT_LC3_CM_chol_2h_2_input_cellpose.tif"
-masks, rois = process_file(image_path, method="otsu", channels=[1])
-print("Final mask shape:", masks.shape)
+        # generate ROIs
+        tmp_rois_path = intermediate_file_path_noext + "_07_rois.zip"
+        if not os.path.exists(tmp_rois_path):   
+            print("Generating ROIs...")
+            rois = mask_to_rois(mask, labelinfo)
+            print("ROIs generated:", len(rois))
+            
+            # Delete file if it exists; the roifile lib appends to existing zip files.
+            # If the user removed a mask it will still be in the zip file
+            if os.path.exists(tmp_rois_path):
+                os.remove(tmp_rois_path)
+            roiwrite(tmp_rois_path, rois)
+        # else: no need to load rois, at the end of the pipeline
+            #
+    except Exception as e:
+        print(f"Error processing {path}: {e}")
+        return None, None, None
 
-# Uncomment the following lines for command line interface
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("image_path", type=str, help="Path to .npy file containing TCZYX image")
-#     parser.add_argument("--method", type=str, default="otsu", help="Thresholding method")
-#     parser.add_argument("--test", action="store_true", help="Run test panel of all methods")
-#     args = parser.parse_args()
+    return mask, rois, labelinfo
 
-#     image = np.load(args.image_path)
+def process_folder(args: argparse.Namespace, use_parallel=True) -> None:
+    # Find files to process
+    files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
 
-#     if args.test:
-#         test_threshold_methods(image)
-#     else:
-#         mask, roi_zip_path = process_file(args.image_path, method=args.method)  # Ensure function call is accurate
-#         print(f"Segmentation complete. Mask shape: {mask.shape}, ROIs saved to: {roi_zip_path}")
+    # Make output folder
+    os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
+
+    if use_parallel:  # Process each file in parallel
+        Parallel(n_jobs=-1)(
+            delayed(process_file)(
+                input_file_path,
+                args.merge_channels,
+                args.median_filter_size,
+                args.method,
+                args.min_size,
+                args.max_size,
+                args.watershed_large_labels,
+                args.remove_xy_edges,
+                args.remove_z_edges,
+                os.path.join(args.output_folder, os.path.basename(input_file_path))
+            )
+            for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
+        )
+    else:  # Process each file sequentially        
+        for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
+            # Define output file name
+            output_tif_file_path: str = os.path.join(args.output_folder, os.path.basename(input_file_path))
+            # Process file
+            try:
+                process_file(
+                    input_file_path,
+                    args.merge_channels,
+                    args.median_filter_size,
+                    args.method,
+                    args.min_size,
+                    args.max_size,
+                    args.watershed_large_labels,
+                    args.remove_xy_edges,
+                    args.remove_z_edges,
+                    output_tif_file_path
+                )  # Process each file
+            except Exception as e:
+                print(f"Error processing {input_file_path}: {e}")
+                continue
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_folder", type=str, help="Input folder containing .tif files")
+    parser.add_argument("--output_folder", type=str, help="Output folder for processed files")
+    parser.add_argument("--channels", type=int, nargs='+', default=[0], help="List of channels to process")
+    parser.add_argument("--median_filter_size", type=int, default=10, help="Size of the median filter")
+    parser.add_argument("--method", type=str, default="li", help="Thresholding method")
+    parser.add_argument("--min_size", type=int, default=10_000, help="Minimum size for processing")
+    parser.add_argument("--max_size", type=int, default=55_000, help="Maximum size for processing")
+    parser.add_argument("--watershed_large_labels", action="store_true", help="Split large cells with watershed")
+    parser.add_argument("--remove_xy_edges",action="store_true", help="Remove edges in XY")
+    parser.add_argument("--remove_z_edges", action="store_true", help="Remove edges in Z")
+    parser.add_argument("--store_intermediate_steps", action="store_true", help="Should all intermediate steps be stored?")
+    args = parser.parse_args()
+
+    process_folder(args)

@@ -6,6 +6,7 @@ dependencies:
   - python=3.12
   - scikit-image
   - numpy
+  - opencv
   - matplotlib
   - tqdm
   - joblib
