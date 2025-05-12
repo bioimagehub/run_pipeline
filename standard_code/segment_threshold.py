@@ -445,16 +445,17 @@ def save_intermediate(mask: np.ndarray=None, labelinfo=None, rois=None, path=Non
     """Utility function to save the images and label info.
     if mask is None or if labelinfo is {} they willnot be saved    
     """
-    if path is not None:
-        if mask is not None:
-            OmeTiffWriter.save(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
-        if labelinfo is not None:
-            LabelInfo.save(labelinfo, path + "_labelinfo.json")
-        if rois is not None:
-            rois_path = path + "_rois.zip"
-            if os.path.exists(rois_path): # Will just append to folder not replace
-                os.remove(rois_path)
-            roiwrite(rois_path, rois)
+    if not isinstance(path, str):
+        return
+    if mask is not None:
+        OmeTiffWriter.save(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
+    if labelinfo is not None:
+        LabelInfo.save(labelinfo, path + "_labelinfo.json")
+    if rois is not None:
+        rois_path = path + "_rois.zip"
+        if os.path.exists(rois_path): # Will just append to folder not replace
+            os.remove(rois_path)
+        roiwrite(rois_path, rois)
 
 
 
@@ -471,61 +472,76 @@ def process_file(input_path: str,
     
     try:
         img = rp.load_bioio(input_path)  # To get metadata
-
         channels_str = "_ch" + "-".join(map(str, channels))
-        
         # Create intermediate file folder
         if tmp_output_folder is not None:
-            os.makedirs(tmp_output_folder, exist_ok=True)
+            os.makedirs(tmp_output_folder, exist_ok=True)    
+    except Exception as e:
+        print(f"Error Loading {input_path}: {e}")
 
-        # Median filter
+    try: # Median filter
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_01_med") if tmp_output_folder is not None else None
-        if os.path.exists(tmp_path):
+        if tmp_path is not None and os.path.exists(tmp_path):
             mask = rp.load_bioio(tmp_path).data
         else:
             mask = apply_median_filter(img.data, size=median_filter_size, channels=channels)
             save_intermediate(mask=mask, labelinfo=None, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
+    except Exception as e:
+        print(f"Error Median filter {input_path}: {e}")
 
-        # Apply thresholding
+
+    try: # Apply thresholding
         # TODO remove min early to keep 8bit binary
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_02_thresh") if tmp_output_folder is not None else None
-        if os.path.exists(tmp_path + ".tif"):
+        if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
             labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
         else:
             mask, labelinfo = apply_threshold(mask, method=method, channels=channels)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
+    except Exception as e:
+        print(f"Error thresholding {input_path}: {e}")
 
-
-        # Remove small labels
+    try: # Remove small labels
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_03_rm_small") if tmp_output_folder is not None else None
-        if os.path.exists(tmp_path + ".tif"):
+        if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
             labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
         else:
             max_size_filter = np.inf if watershed_large_labels else max_size
             mask, labelinfo = remove_small_or_large_labels(mask, labelinfo, min_size=min_size, max_size=max_size_filter)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
-
-        # Remove cells touching edges
+    except Exception as e:
+            print(f"Error Remove small labels {input_path}: {e}")
+    
+    try: # Remove cells touching edges
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_04_rm_edges") if tmp_output_folder is not None else None
-        if os.path.exists(tmp_path + ".tif"):
+        if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
             labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
         else:
             mask, labelinfo = remove_on_edges(mask, labelinfo, remove_xy_edges=remove_xy_edges, remove_z_edges=remove_z_edges)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
+    except Exception as e:
+                print(f"Error Remove cells touching edges {input_path}: {e}")
 
-        # Fill holes in the mask
+    try: # Fill holes in the mask
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_05_fill_holes") if tmp_output_folder is not None else None
-        if not os.path.exists(tmp_path + ".tif"):
+        if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
+            mask = rp.load_bioio(tmp_path + ".tif").data
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
+        
+        else:
             mask = fill_holes_indexed(mask)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
-
-        # Split large labels with watershed
+    except Exception as e:
+                    print(f"Error Remove cells touching edges {input_path}: {e}")
+            
+        
+    try: # Split large labels with watershed
         if watershed_large_labels and max_size != np.inf:
             tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_06_split_watershed") if tmp_output_folder is not None else None
-            if os.path.exists(tmp_path + ".tif"):
+            if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
                 mask = rp.load_bioio(tmp_path + ".tif").data
                 labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
             else:
@@ -533,23 +549,23 @@ def process_file(input_path: str,
                 save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
         elif max_size == np.inf:
             print("Warning: max_size is set to np.inf, watershed will not be applied.")
+    except Exception as e:
+                    print(f"Error Watershed {input_path}: {e}")
 
-        # Generate ROIs
+    try: # Generate ROIs
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_07_rois.zip") if tmp_output_folder is not None else None
-        if not os.path.exists(tmp_path):   
-            # print("Generating ROIs...")
+        if tmp_path is not None and os.path.exists(tmp_path):   
+            rois = roiread(tmp_path)
+        else:
             rois = mask_to_rois(mask, labelinfo)
             save_intermediate(mask=None, labelinfo=None, rois=rois, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
-        else:
-            rois = roiread(tmp_path)
-        
-        # And then finally save mask, labelinfo and ROIS in the output folder
-        save_intermediate(mask=mask, labelinfo=labelinfo, rois=rois, path=output_name, physical_pixel_sizes=img.physical_pixel_sizes)
-
-
+            
     except Exception as e:
-        print(f"Error processing {input_path}: {e}")
-        return None, None, None
+            print(f"Error Generate ROIs {input_path}: {e}")
+        
+    # And then finally save mask, labelinfo and ROIS in the output folder
+    save_intermediate(mask=mask, labelinfo=labelinfo, rois=rois, path=output_name, physical_pixel_sizes=img.physical_pixel_sizes)
+
 
     return mask, rois, labelinfo
 
@@ -567,7 +583,7 @@ def process_file(input_path: str,
 
 
 
-def process_folder(args: argparse.Namespace, use_parallel=False) -> None: # Paralel not working yet
+def process_folder(args: argparse.Namespace, use_parallel=True) -> None: # Paralel not working yet
     # Find files to process
     files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
 
@@ -575,23 +591,23 @@ def process_folder(args: argparse.Namespace, use_parallel=False) -> None: # Para
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
     if use_parallel:  # Process each file in parallel
-        raise NotImplementedError
-        # Parallel(n_jobs=-1)(
-        #     delayed(process_file)(
-        #         input_file_path,
-
-        #         args.channels,
-        #         args.median_filter_size,
-        #         args.method,
-        #         args.min_size,
-        #         args.max_size,
-        #         args.watershed_large_labels,
-        #         args.remove_xy_edges,
-        #         args.remove_z_edges,
-        #         os.path.join(args.output_folder, os.path.basename(input_file_path))
-        #     )
-        #     for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
-        # )
+        # raise NotImplementedError
+        Parallel(n_jobs=-1)(
+            delayed(process_file)(
+                input_path = input_file_path,
+                output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0]),
+                channels = args.channels,
+                median_filter_size = args.median_filter_size,
+                method = args.method,
+                min_size = args.min_size,
+                max_size = args.max_size,
+                watershed_large_labels = args.watershed_large_labels,
+                remove_xy_edges = args.remove_xy_edges,
+                remove_z_edges = args.remove_z_edges,
+                tmp_output_folder = args.tmp_output_folder
+            )
+            for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
+        )
 
     else:  # Process each file sequentially        
         # print(f"Process {len(files_to_process)} file(s) sequentially ")
@@ -620,7 +636,7 @@ def process_folder(args: argparse.Namespace, use_parallel=False) -> None: # Para
                     watershed_large_labels = args.watershed_large_labels,
                     remove_xy_edges = args.remove_xy_edges,
                     remove_z_edges = args.remove_z_edges,
-                    tmp_output_folder = os.path.join(args.output_folder, "tmp")
+                    tmp_output_folder = args.tmp_output_folder
                 )  # Process each file
 
             except Exception as e:

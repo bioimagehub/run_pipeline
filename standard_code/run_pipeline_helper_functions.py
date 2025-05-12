@@ -10,12 +10,36 @@ def load_bioio(path: str) -> BioImage:
     """
     # Load the image using the appropriate reader based on the file extension   
     if path.endswith(".tif"):
-        import bioio_ome_tiff
-        img = BioImage(path, reader=bioio_ome_tiff.Reader)
         
+        try: # Will work for ometif
+            import bioio_ome_tiff
+            img = BioImage(path, reader=bioio_ome_tiff.Reader)
+            return img
+        except Exception as e:
+            ...
+            # print(f"Failed to load image as OME-TIF: {e}")
+
+        try: 
+            import bioio_tifffile
+            img = BioImage(path, reader=bioio_tifffile.Reader)
+            return img
+        except Exception as e:
+            ...
+            # print(f"Failed to load image as generic TIF: {e}")
+        
+        try: 
+            img = BioImage(path)
+            return img
+        except Exception as e:
+            ...
+            # print(f"Failed to load image as generic TIF: {e}")
+
     elif path.endswith(".nd2"):
         import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
+    
+    
+    
     
     # TODO Add more readers here if needed
     else:

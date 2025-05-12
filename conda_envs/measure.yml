@@ -1,0 +1,21 @@
+name: measure
+channels:
+  - conda-forge
+  - anaconda
+dependencies:
+  - python=3.12
+  - scikit-image
+  - numpy
+  - opencv
+  - matplotlib
+  - tifffile
+  - tqdm
+  - joblib
+  - pip
+  - pip:
+      - bioio
+      - bioio-bioformats
+      - bioio_ome_tiff
+      - bioio-tifffile
+      - bioio_nd2
+      - "roifile[all]"
