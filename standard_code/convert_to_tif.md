@@ -25,7 +25,7 @@ conda env create -f bioio.yml
 To run the script, use the following command line syntax:
 
 ```bash
-python script_name.py -p <input_folder> [-e <file_extension>] [-R] [--collapse_delimiter <delimiter>] [-drift_ch <channel>] [-pmt <projection_method>] [-o <output_file_extension>]
+python convert_to_tif.py -p <input_folder> [-e <file_extension>] [-R] [--collapse_delimiter <delimiter>] [-drift_ch <channel>] [-pmt <projection_method>] [-o <output_file_extension>]
 ```
 or run it using the run_pipeline.exe pipeline manager
 
