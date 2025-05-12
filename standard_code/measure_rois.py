@@ -147,7 +147,9 @@ def get_masks(image_basename:str, mask_folders:str, mask_suffixes:str, mask_name
     return combined_masks, mask_info  # Now returns masks of shape (T, total_channels, Z, Y, X)
 
         
-def measure_masks(masks, mask_infolist):
+def measure_masks(img_path, masks, mask_infolist):
+    # measure on original image
+    img = rp.load_bioio(img_path) #TCZYX
     
     T, C,_, _, _ = masks.shape
 
@@ -174,17 +176,15 @@ def measure_masks(masks, mask_infolist):
             # loop over each 3D object
             for mask_id in mask_values[mask_values > 0]:  # Filter out non-positive values               
                 mask_binary_slice = (mask_indexed_slice == mask_id)
+                
+                # Measurements on binary mask
                 mask_size_pix = np.sum(mask_binary_slice)
                 min_z, min_y, min_x, max_z, max_y, max_x = compute_bounding_box(mask_binary_slice)
                 center_of_mass_z, center_of_mass_y, center_of_mass_x  = center_of_mass(mask_binary_slice)
                 eigenvalues, eigenvectors = compute_principal_axes(mask_binary_slice)
                 eigenvalues_1, eigenvalues_2, eigenvalues_3 = eigenvalues 
-                print(eigenvectors)
-                [","]
-
-
-                results.append({
-                    'mask_path': "./" + os.path.basename(mask_info[0]),
+                results_tmp = {
+                    'mask_folder': mask_info[0],
                     'mask_suffix': mask_info[1],
                     'mask_name':  mask_info[2],
                     'frame': t,
@@ -203,12 +203,34 @@ def measure_masks(masks, mask_infolist):
                     'eigenvalues_1': eigenvalues_1,
                     'eigenvalues_2': eigenvalues_2,
                     'eigenvalues_3': eigenvalues_3,
-                    'eigenvectors': ''.join(['(' + ','.join(map(str, ev)) + ')' for ev in eigenvectors])
-                })
-    return pd.DataFrame(results)
+                    'eigenvectors': ''.join(['(' + ','.join(map(str, ev)) + ')' for ev in eigenvectors]),
 
-def measure_original_image(img):
-    raise NotImplementedError
+                    # Image channel statistics initialized to NaN
+                    **{f'img_ch_{img_c}_min': np.nan for img_c in range(img.dims.C)},
+                    **{f'img_ch_{img_c}_mean': np.nan for img_c in range(img.dims.C)},
+                    **{f'img_ch_{img_c}_median': np.nan for img_c in range(img.dims.C)},
+                    **{f'img_ch_{img_c}_max': np.nan for img_c in range(img.dims.C)},
+                    **{f'img_ch_{img_c}_std': np.nan for img_c in range(img.dims.C)},
+                    **{f'img_ch_{img_c}_var': np.nan for img_c in range(img.dims.C)},
+                    **{f'img_ch_{img_c}_sum': np.nan for img_c in range(img.dims.C)},
+                }
+               
+
+                # match img T with T from mask
+                # Loop over all Cs in image for each C in mask
+                # So that for example nuc in ch 3 in mask will measure values in all channels in input img.
+                for img_c in range(img.dims.C):
+                    values = img.data[t, img_c][mask_binary_slice] # -> ZYX
+                    if values.size > 0:
+                        results_tmp[f'img_ch_{img_c}_min'] = np.min(values)
+                        results_tmp[f'img_ch_{img_c}_mean'] = np.mean(values)
+                        results_tmp[f'img_ch_{img_c}_median'] = np.median(values)                    
+                        results_tmp[f'img_ch_{img_c}_max'] = np.max(values)
+                        results_tmp[f'img_ch_{img_c}_std'] = np.std(values)
+                        results_tmp[f'img_ch_{img_c}_var'] = np.var(values)
+                        results_tmp[f'img_ch_{img_c}_sum'] = np.sum(values)
+                results.append(results_tmp)
+    return pd.DataFrame(results)
 
 def is_indexed_binary(mask):
     mask_values = np.unique(mask)
@@ -232,24 +254,30 @@ def label_5d_mask(binary_mask):
         for c in range(C):
             for z in range(Z):
                 indexed_mask[t,c,z] = label(binary_mask[t,c,z])
-    return indexed_mask
-
-    
+    return indexed_mask 
 
 def process_file(img_path:str,  mask_folders:str, mask_suffixes:str, mask_names:str, results_file_path:str) -> None:
+
+    # Process binary mask
+    if os.path.exists(results_file_path): 
+        os.remove(results_file_path) # TODO Remove after testing
 
     if not os.path.exists(results_file_path): 
         # Make a pandas table with the IDs of all the masks
         combined_masks, mask_info = get_masks(image_basename=os.path.basename(img_path), mask_folders=mask_folders, mask_suffixes=mask_suffixes, mask_names=mask_names)
 
         # Do measurements on the binary masks
-        results = measure_masks(combined_masks, mask_info)
-
-        # TODO save pandas file as tsv
+        results = measure_masks(img_path, combined_masks, mask_info)
         results.to_csv(results_file_path, sep = '\t', encoding='utf-8', index=False)   
         
     else:
         results = pd.read_csv(results_file_path, sep='\t', header=0)
+
+
+
+
+
+
 
     
     print(results)
@@ -261,5 +289,4 @@ results_file_path = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\out
 mask_suffix_list = [".tif", "_cp_masks.tif"]
 mask_names = ["threshold", "cytoplasm"]
 
-process_file(img_path, mask_folders, mask_suffix_list, mask_names, results_file_path)
 process_file(img_path=img_path, mask_folders=mask_folders, mask_suffixes=mask_suffix_list, mask_names= mask_names, results_file_path=results_file_path)
