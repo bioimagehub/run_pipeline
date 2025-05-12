@@ -13,12 +13,8 @@ You can also skip the drift correction to just convert all your images to OME-TI
 - [Requirements](#requirements)
 
 ## Installation
-To use this script, ensure you have the necessary Python packages installed. You can install them using the `bioio.yml` found in `./run_pipeline/conda_envs` :
-
-```bash
-cd ./run_pipeline/conda_envs folder
-conda env create -f bioio.yml
-```
+To use this script, ensure you have anaconda/miniconda installed, and a compatible conda environment see [Requirements](#requirements).
+You can download the file manually, but you will need both `run_pipeline_helper_functions.py` and `convert_to_tif.py` (in the same folder).
 
 ## Usage
 
@@ -86,11 +82,24 @@ Users have the option to project the data across the Z-dimension using:
 If no projection method is specified, the original data is used.
 
 ## Requirements
-This script requires Python 3.x but is tested on python 3.10 (in the next release it will upgraded 3.12)
-It requires the following libraries:
-- `numpy`
-- `pystackreg`
-- `tqdm`
-- `joblib`
-- `pyyaml`
-- `bioio`
+This script requires Python 3.x but is tested on python 3.12. You also need `standard_code/run_pipeline_helper_functions.py`
+```
+name: drift
+channels:
+  - conda-forge
+  - anaconda
+dependencies:
+  - python=3.12
+  - pystackreg
+  - numpy
+  - matplotlib
+  - scyjava
+  - tqdm
+  - joblib
+  - pip
+  - pip:
+      - bioio
+      - bioio-ome-tiff
+      - bioio-nd2
+      - bioio-bioformats
+```
