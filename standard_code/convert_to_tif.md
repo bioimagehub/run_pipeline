@@ -27,7 +27,21 @@ To run the script, use the following command line syntax:
 ```bash
 python convert_to_tif.py -p <input_folder> [-e <file_extension>] [-R] [--collapse_delimiter <delimiter>] [-drift_ch <channel>] [-pmt <projection_method>] [-o <output_file_extension>]
 ```
-or run it using the run_pipeline.exe pipeline manager
+or run it using the run_pipeline.exe pipeline manager with this config file
+```bash
+run:
+- name: Convert to tif and collapse folder structure
+  environment: drift
+  commands:
+  - python
+  - ./standard_code/convert_to_tif.py # Paths that start with ./ and ends with .py are relative to the root folder of run_python_pipeline.exe
+  - --folder_path: ./input # This can be the ./ in  ./input means that its relative to the config file. You can also use full paths
+  - --extension: .nd2 # must include the dot
+  - --search_subfolders # This is a flag, so it can be omitted to only search the top folder
+  - --collapse_delimiter: __ # If you are searching in subfolders / will be replaced with double underscores as a default so folder/subfolder/image1.nd2 will become folder__subfolder__image1.tif in the output folder
+  - --drift_correct_channel: 0 # zero means ch 1 [-1 means no drift correction (can also be omitted)]
+```
+Then you can simply run `run_python_pipeline.exe path/to/your/config_file.yaml`
 
 ### Arguments
 - `-p` or `--input_folder`: Path to the folder containing images to be processed (required).
