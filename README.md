@@ -48,7 +48,7 @@ run:
   - --watershed_large_labels
   - --remove_xy_edges
 ```
-save this 
+save this as a .yaml file in your experiment forder next to your folder with your images like this:
 ```bash
 Experiment Folder
 │   pipeline_config.yaml
