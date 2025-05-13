@@ -273,12 +273,6 @@ def process_file(img_path:str,  mask_folders:str, mask_suffixes:str, mask_names:
     else:
         results = pd.read_csv(results_file_path, sep='\t', header=0)
 
-
-
-
-
-
-
     
     print(results)
 

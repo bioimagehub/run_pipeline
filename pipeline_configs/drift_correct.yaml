@@ -3,7 +3,7 @@ run:
   environment: drift
   commands:
   - python
-  - ./standard_code/convert_to_tif.py
+  - ./standard_code/python/convert_to_tif.py
   - --folder_path: C:\Users\oodegard\Desktop\collection_of_different_file_formats\input_nd2
   - --extension: .nd2
   - --search_subfolders
