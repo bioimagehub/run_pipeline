@@ -191,17 +191,17 @@ func main() {
 
 		// Update last_processed with the current date if the command was successful
 		config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
-	}
 
-	// Write the updated configuration back to the YAML file
-	data, err = yaml.Marshal(&config) // Marshal the updated config struct
-	if err != nil {
-		log.Fatalf("error marshalling updated YAML: %v", err)
-	}
+		// Write the updated configuration back to the YAML file
+		data, err = yaml.Marshal(&config) // Marshal the updated config struct
+		if err != nil {
+			log.Fatalf("error marshalling updated YAML: %v", err)
+		}
 
-	err = os.WriteFile(yamlPath, data, 0644) // Write it to the YAML path
-	if err != nil {
-		log.Fatalf("error writing YAML file: %v", err)
+		err = os.WriteFile(yamlPath, data, 0644) // Write it to the YAML path
+		if err != nil {
+			log.Fatalf("error writing YAML file: %v", err)
+		}
 	}
 
 	// Prompt the user that processing is complete and wait for input
