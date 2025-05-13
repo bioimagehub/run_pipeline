@@ -1,8 +1,21 @@
 run:
-- name: Run hello world example
+- name: Run hello world example in base python environment
+  environment: base
+  commands:
+  - python
+  - ./standard_code/python/test_python.py
+  - --name: BIPHUB
+  last_processed: "2025-05-13"
+- name: Run hello world example in python in a segment environment
   environment: segment
   commands:
   - python
   - ./standard_code/python/test_python.py
   - --name: BIPHUB
+  last_processed: "2025-05-13"
+- name: Run hello world example imageJ
+  environment: imageJ
+  commands:
+  - ./standard_code/imageJ/test_imageJ.ijm
+  - name: BIPHUB
   last_processed: "2025-05-13"

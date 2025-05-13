@@ -63,6 +63,13 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 		if strings.HasSuffix(v, ".py") {
 			return filepath.Join(mainProgramDir, v)
 		}
+		if strings.HasSuffix(v, ".ijm") {
+			return filepath.Join(mainProgramDir, v)
+		}
+		if strings.HasSuffix(v, ".exe") {
+			return filepath.Join(mainProgramDir, v)
+		}
+
 		return filepath.Join(yamlDir, v)
 	}
 	return v
@@ -87,7 +94,7 @@ func askForAnacondaPath() string {
 			// Run a simple test command
 			if testPythonExecution(anacondaPath) {
 				fmt.Printf("Valid Anaconda installation found at: %v\n", anacondaPath)
-				saveToEnvFile(anacondaPath)
+				saveToEnvFile("CONDA_PATH", anacondaPath)
 				valid = true
 			} else {
 				fmt.Println("Python execution failed. Please check the path or installation.")
@@ -98,6 +105,62 @@ func askForAnacondaPath() string {
 	}
 
 	return anacondaPath
+}
+
+// findImageJPath searches for the ImageJ path in the .env file.
+// It returns the path if found, or an error if the file does not exist or the key is not found.
+func findImageJPath() (string, error) {
+	envFilePath := filepath.Join(GetBaseDir(), ".env")
+	file, err := os.ReadFile(envFilePath)
+	if err != nil {
+		return "", fmt.Errorf("error reading .env file: %v", err)
+	}
+
+	// Split the file content into lines
+	lines := strings.Split(string(file), "\n")
+
+	// Look for the IMAGEJ_PATH entry
+	for _, line := range lines {
+		if strings.HasPrefix(line, "IMAGEJ_PATH=") {
+			// Return the path, stripping the key and any surrounding whitespace
+			return strings.TrimSpace(strings.TrimPrefix(line, "IMAGEJ_PATH=")), nil
+		}
+	}
+
+	return "", fmt.Errorf("IMAGEJ_PATH not found in .env file")
+}
+
+// isValidImageJExecutable checks if the specified path points to a valid ImageJ executable.
+func isValidImageJExecutable(path string) bool {
+	return isFile(path) // Check if the provided path is a valid file
+}
+
+// askForImageJPath prompts the user for the path to the ImageJ executable and validates it.
+func askForImageJPath() string {
+	reader := bufio.NewReader(os.Stdin)
+	var imageJPath string
+	valid := false
+
+	for !valid {
+		fmt.Print("Please provide the path to the ImageJ executable (ImageJ.exe): ")
+		inputPath, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("Error reading user input: %v", err)
+		}
+		imageJPath = strings.TrimSpace(inputPath)
+
+		// Validate the path to the ImageJ executable
+		if isValidImageJExecutable(imageJPath) {
+			fmt.Printf("Valid ImageJ executable found at: %v\n", imageJPath)
+			valid = true
+			// Save valid ImageJ path to the .env file
+			saveToEnvFile("IMAGEJ_PATH", imageJPath)
+		} else {
+			fmt.Println("Invalid path. Please ensure it points to 'ImageJ.exe'.")
+		}
+	}
+
+	return imageJPath
 }
 
 // isValidAnacondaPath checks if the specified path is a valid Anaconda installation.
@@ -132,8 +195,8 @@ func testPythonExecution(anacondaPath string) bool {
 	return true
 }
 
-// saveToEnvFile saves the Anaconda path to a .env file.
-func saveToEnvFile(path string) {
+// saveToEnvFile saves the specified key-value pair to the .env file.
+func saveToEnvFile(key, value string) {
 	envFilePath := filepath.Join(GetBaseDir(), ".env")
 	file, err := os.OpenFile(envFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -141,10 +204,11 @@ func saveToEnvFile(path string) {
 	}
 	defer file.Close()
 
-	if _, err := file.WriteString(fmt.Sprintf("CONDA_PATH=%s\n", path)); err != nil {
+	// Write the key-value pair to the .env file
+	if _, err := file.WriteString(fmt.Sprintf("%s=%s\n", key, value)); err != nil {
 		log.Fatalf("Error writing to .env file: %v", err)
 	}
-	fmt.Println("Conda path saved to .env file.")
+	fmt.Printf("%s path saved to .env file.\n", key)
 }
 
 // Function to prepare command arguments for Python execution
@@ -196,11 +260,35 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 	return cmdArgs
 }
 
-// Empty function for ImageJ command preparation
-func makeImageJCommand(segment Segment) []string {
-	// Still to implement
-	fmt.Printf("segment: %v\n", segment)
-	return nil
+// Function to prepare command arguments for ImageJ execution
+func makeImageJCommand(segment Segment, imageJPath, mainProgramDir, yamlDir string) []string {
+	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"} // Initialize command arguments
+
+	// Loop through each command in the segment's command list
+	for _, cmd := range segment.Commands {
+		switch v := cmd.(type) {
+		case string:
+			// Resolve paths for string commands and add to cmdArgs with proper encapsulation
+			resolved := resolvePath(v, mainProgramDir, yamlDir)
+			cmdArgs = append(cmdArgs, "--run", fmt.Sprintf("\"%s\"", resolved))
+
+		case map[interface{}]interface{}:
+			// For map commands, loop through entries
+			for flag, value := range v {
+				// Append the flag in the required format
+				if value != nil && value != "null" {
+					valStr := fmt.Sprintf("%v", value) // Convert value to string
+					// Append it in the required format as "key='value'"
+					cmdArgs = append(cmdArgs, fmt.Sprintf("\"%s='%s'\"", flag, valStr))
+				}
+			}
+
+		default:
+			log.Fatalf("unexpected type %v", reflect.TypeOf(v)) // Handle unexpected command types
+		}
+	}
+
+	return cmdArgs
 }
 
 func main() {
@@ -215,22 +303,32 @@ func main() {
 
 	// Initialize a variable to hold the path to the YAML configuration file
 	var yamlPath string
+	forceReprocessing := false // Initialize the force reprocessing flag
 
 	// Check if a path is passed as a command-line argument
-	if len(os.Args) > 1 {
-		yamlPath = os.Args[1]
-		fmt.Printf("Using YAML path from argument: %v\n", yamlPath)
-	} else {
-		// If not provided, prompt the user for the path
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Please provide the path to the YAML file: ")
-		yamlPath, err = reader.ReadString('\n')
-		yamlPath = strings.TrimSpace(yamlPath) // Remove any trailing newline characters
-		if err != nil {
-			log.Fatalf("Error reading user input: %v", err)
+	for _, arg := range os.Args[1:] {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("Usage:")
+			fmt.Println("  your_program [options] <path_to_yaml>")
+			fmt.Println()
+			fmt.Println("Options:")
+			fmt.Println("  --force_reprocessing  Process segments even if they have been previously processed.")
+			fmt.Println("  -h, --help            Show help information.")
+			fmt.Println("")
+			fmt.Println("Arguments:")
+			fmt.Println("  <path_to_yaml>       The path to the YAML configuration file.")
+			os.Exit(0)
+		} else if arg == "--force_reprocessing" {
+			forceReprocessing = true
+		} else {
+			yamlPath = arg // Assume the next argument is the YAML file path
+
+			// Check if the YAML file path is valid
+			if !isFile(yamlPath) {
+				log.Fatalf("The specified YAML path is not a valid file: %v", yamlPath)
+			}
 		}
 	}
-
 	// TODO Check if the yaml file is inside the main program directory
 	// Suggest to rather copy it to the main folder of the program
 	// Then they can use relative paths to input folder and output folder
@@ -254,9 +352,10 @@ func main() {
 	// Iterate over each segment defined in the configuration
 	for i, segment := range config.Run {
 		// Check if this segment has already been processed
-		if segment.LastProcessed != "" {
+		if !forceReprocessing && segment.LastProcessed != "" {
 			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segment.LastProcessed)
-			continue // Skip to the next segment if already processed
+			fmt.Println()
+			continue // Skip to the next segment if already processed and not forcing reprocessing
 		}
 
 		fmt.Printf("Processing segment: %s\n", segment.Name)
@@ -265,9 +364,17 @@ func main() {
 		var cmdArgs []string // Declare cmdArgs here
 
 		// Determine if the environment is going to be imageJ or Python
-		if strings.ToLower(segment.Environment) == "iamgej" {
-			cmdArgs = makeImageJCommand(segment)
-			// TODO: Process the ImageJ commands
+		fmt.Println(segment.Environment)
+		if strings.ToLower(segment.Environment) == "imagej" {
+			fmt.Println("running imageJ")
+			imageJPath, err := findImageJPath()
+			if err != nil {
+				imageJPath = askForImageJPath()
+			} else {
+				fmt.Printf("Found ImageJ.exe: %v\n", imageJPath)
+			}
+
+			cmdArgs = makeImageJCommand(segment, imageJPath, mainProgramDir, yamlDir)
 		} else {
 			anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 			if err != nil {
@@ -278,7 +385,6 @@ func main() {
 
 			cmdArgs = makePythonCommand(segment, anacondaPath, mainProgramDir, yamlDir)
 
-			// ... existing code ...
 		}
 		// Print the constructed command arguments for debugging
 		fmt.Printf("Constructed command: %v\n", cmdArgs)
