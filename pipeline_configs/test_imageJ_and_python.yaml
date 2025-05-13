@@ -1,0 +1,8 @@
+run:
+- name: Run hello world example
+  environment: segment
+  commands:
+  - python
+  - ./standard_code/python/test_python.py
+  - --name: BIPHUB
+  last_processed: "2025-05-13"

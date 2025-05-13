@@ -15,6 +15,9 @@ import (
 	"gopkg.in/yaml.v2" // YAML processing
 )
 
+// Requested Features
+// Add a force reprocess tag
+
 // Segment struct defines each segment of the pipeline with relevant attributes
 type Segment struct {
 	Name        string        `yaml:"name"`        // The name of the segment
@@ -65,6 +68,141 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 	return v
 }
 
+// askForAnacondaPath prompts the user for the Anaconda installation path and validates it.
+func askForAnacondaPath() string {
+	reader := bufio.NewReader(os.Stdin)
+	var anacondaPath string
+	valid := false
+
+	for !valid {
+		fmt.Print("Please provide the path to your Anaconda installation: ")
+		inputPath, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("Error reading user input: %v", err)
+		}
+		anacondaPath = strings.TrimSpace(inputPath)
+
+		// Validate the installation directory
+		if isValidAnacondaPath(anacondaPath) {
+			// Run a simple test command
+			if testPythonExecution(anacondaPath) {
+				fmt.Printf("Valid Anaconda installation found at: %v\n", anacondaPath)
+				saveToEnvFile(anacondaPath)
+				valid = true
+			} else {
+				fmt.Println("Python execution failed. Please check the path or installation.")
+			}
+		} else {
+			fmt.Println("Invalid path. Please ensure it contains the 'envs' directory and 'python.exe'.")
+		}
+	}
+
+	return anacondaPath
+}
+
+// isValidAnacondaPath checks if the specified path is a valid Anaconda installation.
+func isValidAnacondaPath(path string) bool {
+	envsPath := filepath.Join(path, "envs")
+	pythonPath := filepath.Join(path, "python.exe")
+	return isDirectory(envsPath) && isFile(pythonPath)
+}
+
+// isDirectory checks if the specified path is a directory.
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// isFile checks if the specified path is a file.
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// testPythonExecution runs a simple Python command to check if Python is functional.
+func testPythonExecution(anacondaPath string) bool {
+	cmd := exec.Command(filepath.Join(anacondaPath, "python.exe"), "-c", "print('Hello from Python')")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Error executing Python: %v\n", err)
+		return false
+	}
+
+	fmt.Printf("Python output: %s\n", output)
+	return true
+}
+
+// saveToEnvFile saves the Anaconda path to a .env file.
+func saveToEnvFile(path string) {
+	envFilePath := filepath.Join(GetBaseDir(), ".env")
+	file, err := os.OpenFile(envFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Error opening .env file: %v", err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(fmt.Sprintf("CONDA_PATH=%s\n", path)); err != nil {
+		log.Fatalf("Error writing to .env file: %v", err)
+	}
+	fmt.Println("Conda path saved to .env file.")
+}
+
+// Function to prepare command arguments for Python execution
+func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir string) []string {
+	cmdArgs := []string{"cmd", "/C"} // Windows command line execution prefix
+
+	// Determine which environment to activate for Python
+	if strings.ToLower(segment.Environment) == "base" {
+		// If the environment is base, activate it directly
+		cmdArgs = append(cmdArgs,
+			anacondaPath+"\\Scripts\\activate.bat", // Script to activate Anaconda
+			anacondaPath,
+			"&&", // Use '&&' to chain commands together
+		)
+	} else {
+		// For named environments, activate that environment
+		cmdArgs = append(cmdArgs,
+			anacondaPath+"\\Scripts\\activate.bat", // Script to activate Anaconda
+			anacondaPath,
+			"&&",
+			"conda", "activate", segment.Environment, // Activate the specified conda environment
+			"&&",
+		)
+	}
+
+	// Loop through each command in the segment's command list
+	for _, cmd := range segment.Commands {
+		switch v := cmd.(type) {
+		case string:
+			resolved := resolvePath(v, mainProgramDir, yamlDir)
+			cmdArgs = append(cmdArgs, resolved)
+
+		case map[interface{}]interface{}:
+			for flag, value := range v {
+				cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
+
+				if value != nil && value != "null" {
+					valStr := fmt.Sprintf("%v", value)
+					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+					cmdArgs = append(cmdArgs, resolved)
+				}
+			}
+
+		default:
+			log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+		}
+	}
+
+	return cmdArgs
+}
+
+// Empty function for ImageJ command preparation
+func makeImageJCommand(segment Segment) []string {
+	// Still to implement
+	fmt.Printf("segment: %v\n", segment)
+	return nil
+}
+
 func main() {
 	mainProgramDir := GetBaseDir()
 	fmt.Printf("mainProgramDir: %v\n", mainProgramDir)
@@ -75,16 +213,9 @@ func main() {
 		log.Fatalf("Error changing directory: %v", err)
 	}
 
-	// Find the Anaconda installation path using a helper function
-	anacondaPath, err := find_anaconda_path.FindAnacondaPath()
-	if err != nil {
-		log.Fatalf("Could not find Anaconda, please install and define in .env file: %v", err)
-	} else {
-		fmt.Printf("Found Anaconda base: %v\n", anacondaPath)
-	}
-
 	// Initialize a variable to hold the path to the YAML configuration file
 	var yamlPath string
+
 	// Check if a path is passed as a command-line argument
 	if len(os.Args) > 1 {
 		yamlPath = os.Args[1]
@@ -131,49 +262,24 @@ func main() {
 		fmt.Printf("Processing segment: %s\n", segment.Name)
 
 		// Prepare command arguments for executing the environment and subsequent commands
-		cmdArgs := []string{"cmd", "/C"} // Windows command line execution prefix
-		// Determine which environment to activate for Python
-		if segment.Environment == "base" {
-			// If the environment is base, activate it directly
-			cmdArgs = append(cmdArgs,
-				anacondaPath+"\\Scripts\\activate.bat", // Script to activate Anaconda
-				anacondaPath,
-				"&&", // Use '&&' to chain commands together
-			)
+		var cmdArgs []string // Declare cmdArgs here
+
+		// Determine if the environment is going to be imageJ or Python
+		if strings.ToLower(segment.Environment) == "iamgej" {
+			cmdArgs = makeImageJCommand(segment)
+			// TODO: Process the ImageJ commands
 		} else {
-			// For named environments, activate that environment
-			cmdArgs = append(cmdArgs,
-				anacondaPath+"\\Scripts\\activate.bat", // Script to activate Anaconda
-				anacondaPath,
-				"&&",
-				"conda", "activate", segment.Environment, // Activate the specified conda environment
-				"&&",
-			)
-		}
-
-		// Loop through each command in the segment's command list
-		for _, cmd := range segment.Commands {
-			switch v := cmd.(type) {
-			case string:
-				resolved := resolvePath(v, mainProgramDir, yamlDir)
-				cmdArgs = append(cmdArgs, resolved)
-
-			case map[interface{}]interface{}:
-				for flag, value := range v {
-					cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
-
-					if value != nil && value != "null" {
-						valStr := fmt.Sprintf("%v", value)
-						resolved := resolvePath(valStr, mainProgramDir, yamlDir)
-						cmdArgs = append(cmdArgs, resolved)
-					}
-				}
-
-			default:
-				log.Fatalf("unexpected type: %v", reflect.TypeOf(v))
+			anacondaPath, err := find_anaconda_path.FindAnacondaPath()
+			if err != nil {
+				anacondaPath = askForAnacondaPath()
+			} else {
+				fmt.Printf("Found Anaconda base: %v\n", anacondaPath)
 			}
-		}
 
+			cmdArgs = makePythonCommand(segment, anacondaPath, mainProgramDir, yamlDir)
+
+			// ... existing code ...
+		}
 		// Print the constructed command arguments for debugging
 		fmt.Printf("Constructed command: %v\n", cmdArgs)
 
@@ -202,6 +308,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("error writing YAML file: %v", err)
 		}
+		fmt.Println("") // Add some space between the segment prints
+		fmt.Println("") // Add some space between the segment prints
 	}
 
 	// Prompt the user that processing is complete and wait for input
