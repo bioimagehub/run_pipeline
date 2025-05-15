@@ -463,24 +463,25 @@ def process_file(input_path: str,
                  channels: list = [1],
                  tracking_channel:int = None, 
                  median_filter_size: int = 10,
-                 method: str = "otsu",   
-                 min_size=10_000, max_size=55_000, watershed_large_labels=True,
-                 remove_xy_edges=True, remove_z_edges=False,
+                 threshold_method: str = "otsu",   
+                 min_size: int=10_000, max_size: int=55_000, watershed_large_labels: bool = True,
+                 remove_xy_edges:bool = True, remove_z_edges:bool = False,
                  tmp_output_folder: str = None) -> None:
     """Main function to load image, segment it, and generate ROIs."""
     
 
     # Validate tracking_channel
     if tracking_channel is not None:
-        if args.tracking_channel not in channels:
-            print(f"Error: tracking_channel must be one of the specified channels: {args.channels}.")
+        if(tracking_channel == -1):
+            pass # keep as -1 and skip tracking
+        elif tracking_channel not in channels:
+            print(f"Error: tracking_channel must be one of the specified channels: {channels}.")
             exit(1)
-    elif(args.tracking_channel == -1):
-        pass # keep as -1 and skip tracking
+    
     else:
         # Set default to the first channel if tracking_channel is not provided
-        tracking_channel = args.channels[0]
-        print(f"Warning: No tracking channel set, using args.channels[0] ={args.channels[0]} use --tracking_channel=-1 to skip tracking or provide a valid input (args.tracking_channel in args.channels)")
+        tracking_channel = channels[0]
+        print(f"Warning: No tracking channel set, using args.channels[0] ={channels[0]} use --tracking_channel=-1 to skip tracking or provide a valid input (args.tracking_channel in args.channels)")
 
 
 
@@ -513,7 +514,7 @@ def process_file(input_path: str,
             mask = rp.load_bioio(tmp_path + ".tif").data
             labelinfo = LabelInfo.load(tmp_path + "_labelinfo.yaml")
         else:
-            mask, labelinfo = apply_threshold(mask, method=method, channels=channels)
+            mask, labelinfo = apply_threshold(mask, method=threshold_method, channels=channels)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
     except Exception as e:
         print(f"Error thresholding {input_path}: {e}")
@@ -614,20 +615,21 @@ def process_file(input_path: str,
 
 def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
     # Find files to process
-    files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
+    files_to_process = rp.get_files_to_process(args.input_file_or_folder, ".tif", search_subfolders=False)
 
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
     if args.use_parallel:  # Process each file in parallel
         # raise NotImplementedError
+        
         Parallel(n_jobs=-1)(
             delayed(process_file)(
                 input_path = input_file_path,
                 output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0]),
                 channels = args.channels,
                 median_filter_size = args.median_filter_size,
-                method = args.method,
+                threshold_method = args.threshold_method,
                 min_size = args.min_size,
                 max_size = args.max_size,
                 watershed_large_labels = args.watershed_large_labels,
@@ -660,7 +662,7 @@ def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
                     channels = args.channels,
                     tracking_channel = args.tracking_channel,
                     median_filter_size = args.median_filter_size,
-                    method = args.method,
+                    threshold_method = args.threshold_method,
                     min_size = args.min_size,
                     max_size = args.max_size,
                     watershed_large_labels = args.watershed_large_labels,
@@ -672,23 +674,47 @@ def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
             except Exception as e:
                 print(f"Error processing {input_file_path}: {e}")
                 continue
-
+def main(parsed_args: argparse.Namespace):
+    
+    # Check if the input is a file or a folder
+    if os.path.isfile(parsed_args.input_file_or_folder):
+        print(f"Processing single file: {parsed_args.input_file_or_folder}")
+        output_file_name = os.path.splitext(os.path.basename(parsed_args.input_folder))[0] + ".processed.tif"  # Example output naming
+        output_file_path = os.path.join(parsed_args.output_folder, output_file_name)
+        process_file(input_path = parsed_args.input_file_or_folder,
+                 output_name = output_file_path,
+                 channels = parsed_args.channels,
+                 tracking_channel = parsed_args.tracking_channel, 
+                 median_filter_size = parsed_args.median_filter_size,
+                 threshold_method = parsed_args.threshold_method,   
+                 min_size = parsed_args.min_size, max_size = parsed_args.max_size, watershed_large_labels = parsed_args.watershed_large_labels,
+                 remove_xy_edges = parsed_args.remove_xy_edges, remove_z_edges = parsed_args.remove_z_edges,
+                 tmp_output_folder = parsed_args.mp_output_folder)
+        
+    elif os.path.isdir(parsed_args.input_file_or_folder):
+        print(f"Processing folder: {parsed_args.input_file_or_folder}")
+        process_folder(parsed_args)
+        
+    else:
+        print("Error: The specified path is neither a file nor a folder.")
+        return
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_folder", type=str, help="Input folder containing .tif files")
-    parser.add_argument("--output_folder", type=str, help="Output folder for processed files")
+    parser.add_argument("--input-file-or-folder", type=str, help="Path to the file or folder to be processed.")
+    parser.add_argument("--output-folder", type=str, help="Output folder for processed files")
     parser.add_argument("--channels", type=int, nargs='+', default=[0], help="List of channels to process")
-    parser.add_argument("--tracking_channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")
-    parser.add_argument("--median_filter_size", type=int, default=10, help="Size of the median filter")
-    parser.add_argument("--method", type=str, default="li", help="Thresholding method")
-    parser.add_argument("--min_size", type=int, default=10_000, help="Minimum size for processing")
-    parser.add_argument("--max_size", type=int, default=55_000, help="Maximum size for processing")
-    parser.add_argument("--watershed_large_labels", action="store_true", help="Split large cells with watershed")
-    parser.add_argument("--remove_xy_edges",action="store_true", help="Remove edges in XY")
-    parser.add_argument("--remove_z_edges", action="store_true", help="Remove edges in Z")
-    parser.add_argument("--tmp_output_folder", type=str, help="Save intemediate steps in tmp_output_folder")
-    parser.add_argument("--use_parallel", action="store_true", help="Split large cells with watershed")
+    parser.add_argument("--tracking-channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")
+    parser.add_argument("--median-filter-size", type=int, default=10, help="Size of the median filter")
+    parser.add_argument("--threshold-method", type=str, default="li", help="Thresholding method")
+    parser.add_argument("--min-size", type=int, default=10_000, help="Minimum size for processing")
+    parser.add_argument("--max-size", type=int, default=55_000, help="Maximum size for processing")
+    parser.add_argument("--watershed-large-labels", action="store_true", help="Split large cells with watershed")
+    parser.add_argument("--remove-xy-edges",action="store_true", help="Remove edges in XY")
+    parser.add_argument("--remove-z-edges", action="store_true", help="Remove edges in Z")
+    parser.add_argument("--tmp-output-folder", type=str, help="Save intemediate steps in tmp_output_folder")
+    parser.add_argument("--use-parallel", action="store_true", help="Split large cells with watershed")
 
-    args = parser.parse_args()
+    parsed_args = parser.parse_args()
 
-    process_folder(args)
+    main(parsed_args)

@@ -1,0 +1,30 @@
+run:
+- name: Convert folder to tif and collapse folder structure
+  environment: convert_to_tif
+  commands:
+  - python
+  - ./standard_code/python/convert_to_tif.py
+  - --input_file_or_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\input_tif
+  - --extension: .tif
+  - --search_subfolders
+  - --collapse_delimiter: __
+  - --drift_correct_channel: -1
+  - --projection_method: max
+  - --output_file_name_extension: _max
+  last_processed: "2025-05-15"
+- name: Find objects with threshold
+  environment: segment_threshold
+  commands:
+  - python
+  - ./standard_code/python/segment_threshold.py
+  - --input_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\input_tif
+  - --output_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\output_object_mask
+  - --tmp_output_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\output_object_mask/tmp
+  - --channels: 0
+  - --tracking_channel: -1
+  - --median_filter_size: 8
+  - --method: li
+  - --min_size: 0
+  - --watershed_large_labels
+  - --remove_xy_edges
+  last_processed: "2025-05-15"

@@ -1,6 +1,6 @@
 from bioio import BioImage
 import os
-
+import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_bioformats
 
 def load_bioio(path: str) -> BioImage:
     """
@@ -12,7 +12,7 @@ def load_bioio(path: str) -> BioImage:
     if path.endswith(".tif"):
         
         try: # Will work for ometif
-            import bioio_ome_tiff
+            # import bioio_ome_tiff
             img = BioImage(path, reader=bioio_ome_tiff.Reader)
             return img
         except Exception as e:
@@ -20,7 +20,7 @@ def load_bioio(path: str) -> BioImage:
             # print(f"Failed to load image as OME-TIF: {e}")
 
         try: 
-            import bioio_tifffile
+            # import bioio_tifffile
             img = BioImage(path, reader=bioio_tifffile.Reader)
             return img
         except Exception as e:
@@ -35,16 +35,14 @@ def load_bioio(path: str) -> BioImage:
             # print(f"Failed to load image as generic TIF: {e}")
 
     elif path.endswith(".nd2"):
-        import bioio_nd2
+        # import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
-    
-    
     
     
     # TODO Add more readers here if needed
     else:
         # Bioformats has this annoying printout so I prefer to use a different reader 
-        import bioio_bioformats
+        # import bioio_bioformats
         img = BioImage(path, reader=bioio_bioformats.Reader)
     
     return img

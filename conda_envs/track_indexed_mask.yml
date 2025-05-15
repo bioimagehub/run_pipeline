@@ -1,16 +1,13 @@
-name: convert_to_tif
+name: track_indexed_mask
 channels:
   - conda-forge
   - anaconda
 dependencies:
   - python=3.12
-  - pystackreg
-  - numpy
-  - matplotlib
-  - scyjava
   - tqdm
-  - joblib
-  - nd2reader
+  - numpy
+  - trackpy
+  - scipy 
   - pip
   - pip:
       - bioio
@@ -18,3 +15,5 @@ dependencies:
       - bioio_ome_tiff
       - bioio-tifffile
       - bioio_nd2
+      - "roifile[all]"
+      - trackpy

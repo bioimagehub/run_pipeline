@@ -1,16 +1,12 @@
-name: convert_to_tif
+name: merge_channels
 channels:
   - conda-forge
-  - anaconda
 dependencies:
-  - python=3.12
-  - pystackreg
+  - python=3.12  # Specify your desired Python version
   - numpy
-  - matplotlib
-  - scyjava
   - tqdm
+  - pyyaml  # For the yaml import
   - joblib
-  - nd2reader
   - pip
   - pip:
       - bioio

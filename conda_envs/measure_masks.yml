@@ -1,12 +1,12 @@
-name: segment
+name: measure_mask
 channels:
   - conda-forge
   - anaconda
 dependencies:
   - python=3.12
   - scikit-image
+  - scipy
   - numpy
-  - opencv
   - matplotlib
   - tifffile
   - tqdm
@@ -14,6 +14,8 @@ dependencies:
   - pip
   - pip:
       - bioio
+      - bioio-bioformats
       - bioio_ome_tiff
+      - bioio-tifffile
+      - bioio_nd2
       - "roifile[all]"
-      - trackpy

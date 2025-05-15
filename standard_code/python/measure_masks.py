@@ -1,286 +1,315 @@
 # from roifile import roiread
-import os
 import numpy as np
+# from skimage.morphology import skeletonize
 from skimage.measure import label
-from skimage import measure, morphology
-# from skimage.draw import polygon  # For rasterizing the polygons
-
-from scipy.ndimage import center_of_mass
-from scipy.spatial import ConvexHull
-
-import numpy as np
-import pandas as pd
-
+from scipy.ndimage import distance_transform_edt
 import run_pipeline_helper_functions as rp
 
-def imagej_roi_to_indexed_mask(mask_path, shape):
-    raise NotImplementedError
-    # rois = roiread(mask_path)
-    # num_rois = len(rois)
-    # indexed_mask = np.zeros((num_rois, *shape), dtype=np.int32)
+import yaml
+import os
+import matplotlib.pyplot as plt
 
-    # for idx, roi in enumerate(rois):
 
-    #     '''from roifile.py
-    #         POLYGON = 0
-    #         RECT = 1
-    #         OVAL = 2
-    #         LINE = 3
-    #         FREELINE = 4
-    #         POLYLINE = 5
-    #         NOROI = 6
-    #         FREEHAND = 7
-    #         TRACED = 8
-    #         ANGLE = 9
-    #         POINT = 10        
-    #     '''
-        
-    #     if roi.roitype == 7:
-    #         # Assuming roi has an attribute 'integer_coordinates' or similar for freehand
-    #         coord = roi.integer_coordinates
-    #         rr, cc = coord[:, 0], coord[:, 1]  # Get x and y coordinates
-            
-    #         # Ensure coordinates are within bounds
-    #         rr, cc = np.clip(rr, 0, shape[0] - 1), np.clip(cc, 0, shape[1] - 1)
+from matplotlib.patches import Ellipse
 
-    #         # Use polygon function for filling the region
-    #         rr_poly, cc_poly = polygon(rr, cc, shape)
-    #         indexed_mask[idx, rr_poly, cc_poly] = idx + 1  # +1 to avoid zero indexing
+import numpy as np
+from collections import deque
+import warnings
+from scipy.ndimage import binary_erosion
 
-    #     elif roi.roitype == "ROI_TYPE.POLYGON":
-    #         raise NotImplementedError("This has not been tested")
-    #         # If there are polygons, handle them similarly to freehand
-    #         # for polygon in roi.polygons:  # Ensure this is correctly defined in your roi object
-    #         #     rr, cc = polygon.integer_coordinates[:, 0], polygon.integer_coordinates[:, 1]
-    #         #     rr, cc = np.clip(rr, 0, shape[0] - 1), np.clip(cc, 0, shape[1] - 1)
 
-    #         #     rr_poly, cc_poly = polygon(rr, cc, shape)
-    #         #     indexed_mask[idx, rr_poly, cc_poly] = idx + 1
-    #     else:
-    #         print(f"ROI type '{roi.roitype}' not handled.")
-
-    # # Combine into a single 2D mask
-    # final_mask = np.max(indexed_mask, axis=0)  # Get the maximum value per pixel
-    # return final_mask.astype(np.int32)  # Convert final mask to int32
-
-# Note: Make sure to replace `roiread` with your actual function to read the ROIs
-
-def compute_volume(mask: np.ndarray) -> int:
+def plot_masks(*args, metadata=None):
     """
-    Compute the volume (number of foreground voxels) of the binary mask.
-    
-    Args:
-        mask (np.ndarray): 3D binary numpy array.
-    
-    Returns:
-        int: Volume (number of voxels).
+    Plots a variable number of masks with their corresponding titles and optionally overlays ROI metadata.
+
+    Parameters:
+    - args: A sequence of tuples, where each tuple is (mask, title).
+    - metadata: Optional dict containing ROI information under ['Image metadata']['ROIs'].
     """
-    return np.sum(mask)
+    num_masks = len(args)
+    fig, ax = plt.subplots(1, num_masks, figsize=(num_masks * 6, 6))
 
-def compute_bounding_box(mask: np.ndarray) -> tuple:
-    """
-    Get the bounding box of the binary mask.
+    if num_masks == 1:
+        ax = [ax]  # Make iterable if only one subplot
+
+    for i, (mask, title) in enumerate(args):
+        ax[i].imshow(mask, cmap='gray' if i == 0 else 'plasma')
+        ax[i].set_title(title)
+        ax[i].axis('off')
+
+        if metadata is not None:
+            try:
+                rois = metadata.get("Image metadata", {}).get("ROIs", [])
+                for roi in rois:
+                    roi_data = roi.get("Roi", {})
+                    pos = roi_data.get("Positions", {})
+                    size = roi_data.get("Size", {})
+
+                    x = pos.get("x", None)
+                    y = pos.get("y", None)
+                    sx = size.get("x", None)
+                    sy = size.get("y", None)
+
+                    if None not in (x, y, sx, sy):
+                        ellipse = Ellipse(
+                            (x, y),
+                            width=sx,
+                            height=sy,
+                            edgecolor='red',
+                            facecolor='none',
+                            linewidth=2
+                        )
+                        ax[i].add_patch(ellipse)
+
+            except Exception as e:
+                print(f"Error drawing ROIs: {e}")
+
+    # plt.tight_layout()
+    plt.show()
+
+
+
+def compute_distance_to_edge(indexed_mask_2d: np.ndarray) -> np.ndarray:
+
+    # Create an output array initialized to the same shape as mask_2d
+    distance_mask = np.ones_like(indexed_mask_2d) * np.nan  # Initialize with NaNs for unexplored pixels
     
-    Args:
-        mask (np.ndarray): 3D binary numpy array.
+    obj_ids =  np.unique(indexed_mask_2d)
+    obj_ids = obj_ids[obj_ids>0]
+
+
+    for obj_id in obj_ids:
+        # Create a mask for the current object
+        object_mask = (indexed_mask_2d == obj_id)
+
+        # Compute the distance transform (distance to the nearest edge)
+        dist_transform = distance_transform_edt(object_mask)  # Invert to get distance from background
+
+        # Assign the distance values to the distance mask where the object is
+        distance_mask[object_mask] = dist_transform[object_mask]
+
+    return distance_mask
+
+def compute_distance_to_rois(indexed_mask_2d: np.ndarray, metadata: dict) -> np.ndarray:
+    # TODO Remove objects that do not have a point
+    # Start with a mask full of NaNs
+    distance_to_point_mask = np.full(indexed_mask_2d.shape, np.nan)
+
+    # Make a binary mask of the objects
+    object_mask = indexed_mask_2d > 0
+
+    # Get the list of ROIs
+    rois = metadata.get("Image metadata", {}).get("ROIs", [])
+
+    if not rois:
+        return distance_to_point_mask  # No ROIs, return all-NaN
+
+    # Create a mask with zeros where ROI centers are, and inf elsewhere
+    roi_centers_mask = np.full(indexed_mask_2d.shape, np.inf)
+
+    for roi in rois:
+        try:
+            x = int(round(roi["Roi"]["Positions"].get("x", -1)))
+            y = int(round(roi["Roi"]["Positions"].get("y", -1)))
+
+            if 0 <= x < indexed_mask_2d.shape[1] and 0 <= y < indexed_mask_2d.shape[0]:
+                roi_centers_mask[y, x] = 0  # mark the center of the ROI
+            else:
+                print(f"Invalid ROI position: ({x}, {y}). Skipping.")
+
+        except (KeyError, TypeError) as e:
+            print(f"Error processing ROI: {e}")
+
+    # Compute Euclidean distance to nearest ROI center
+    distance_map = distance_transform_edt(roi_centers_mask)
+
+    # Keep distances only inside labeled objects
+    distance_to_point_mask[object_mask] = distance_map[object_mask]
+
+    return distance_to_point_mask
+
+import numpy as np
+from scipy.ndimage import distance_transform_edt
+from skimage.draw import disk
+from collections import deque
+import warnings
+
+def compute_distance_along_edge_to_point_mask(indexed_mask_2d: np.ndarray, metadata: dict, edge_mask: np.ndarray) -> np.ndarray:
+    output_mask = np.full(indexed_mask_2d.shape, np.nan)
+    rois = metadata.get("Image metadata", {}).get("ROIs", [])
     
-    Returns:
-        tuple: Min and max coordinates (min_z, min_y, min_x, max_z, max_y, max_x).
-    """
-    coord = np.argwhere(mask)
-    min_coords = coord.min(axis=0)
-    max_coords = coord.max(axis=0)
-    return (*min_coords, *max_coords)
+    if not rois:
+        return output_mask
 
-def compute_principal_axes(mask: np.ndarray) -> tuple:
-    """
-    Compute the principal axes using eigenvalues and eigenvectors.
+    # Precompute labeled object mask
+    object_ids = np.unique(indexed_mask_2d)
+    object_ids = object_ids[object_ids > 0]
+
+    # Map object ID to ROI (should be one per object)
+    roi_by_object = {}
+
+    for roi in rois:
+        pos = roi.get("Roi", {}).get("Positions", {})
+        size = roi.get("Roi", {}).get("Size", {})
+        x, y = int(round(pos.get("x", -1))), int(round(pos.get("y", -1)))
+        r_x, r_y = size.get("x", 0) / 2, size.get("y", 0) / 2
+        avg_radius = int(round((r_x + r_y) / 2))
+
+        if x < 0 or y < 0 or y >= indexed_mask_2d.shape[0] or x >= indexed_mask_2d.shape[1]:
+            print(f"Invalid ROI position: ({x}, {y}). Skipping.")
+            continue
+
+        obj_id = indexed_mask_2d[y, x]
+        if obj_id == 0:
+            print(f"ROI at ({x}, {y}) not inside an object. Skipping.")
+            continue
+
+        if obj_id in roi_by_object:
+            warnings.warn(f"Multiple ROIs for object {obj_id} — skipping this object.", category=UserWarning)
+            continue
+
+        roi_by_object[obj_id] = {
+            "center": (x, y),
+            "radius": avg_radius
+        }
+
+    for obj_id, roi in roi_by_object.items():
+        object_edge = (indexed_mask_2d == obj_id) & ~np.isnan(edge_mask)
+
+        if not np.any(object_edge):
+            continue
+
+        x, y = roi["center"]
+        radius = roi["radius"]
+
+        # Create circular disk around ROI center
+        rr, cc = disk((y, x), radius, shape=indexed_mask_2d.shape)
+        roi_mask = np.zeros_like(indexed_mask_2d, dtype=bool)
+        roi_mask[rr, cc] = True
+
+        # The edge-pixels of the object that are in contact with the ROI
+        start_mask = roi_mask & object_edge
+        if not np.any(start_mask):
+            print(f"No edge pixels found overlapping ROI for object {obj_id}. Skipping.")
+            continue
+
+        distance_map = np.full(indexed_mask_2d.shape, np.nan)
+        visited = np.zeros_like(indexed_mask_2d, dtype=bool)
+
+        # Breadth-First Search queue: each entry is (y, x, distance)
+        queue = deque([(yy, xx, 0) for yy, xx in zip(*np.where(start_mask))])
+        for yy, xx in zip(*np.where(start_mask)):
+            visited[yy, xx] = True
+            distance_map[yy, xx] = 0
+
+        # 4-connected neighbors
+        neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+        while queue:
+            y0, x0, dist = queue.popleft()
+            for dy, dx in neighbors:
+                y1, x1 = y0 + dy, x0 + dx
+                if (
+                    0 <= y1 < indexed_mask_2d.shape[0] and
+                    0 <= x1 < indexed_mask_2d.shape[1] and
+                    not visited[y1, x1] and
+                    object_edge[y1, x1]
+                ):
+                    visited[y1, x1] = True
+                    distance_map[y1, x1] = dist + 1
+                    queue.append((y1, x1, dist + 1))
+
+        # Write result to output
+        output_mask[object_edge] = distance_map[object_edge]
+
+    return output_mask
+
+
+
+def process_rois(metadata: dict, mask_2d: np.ndarray) -> dict:
+    try:
+        rois = metadata.get("Image metadata", {}).get("ROIs", [])
+        print(f"Found {len(rois)} rois")
+
+        # Check if mask data is accessible
+        if mask_2d.size == 0:
+            print("Mask data is empty.")
+            return metadata
+
+        for roi in rois:
+            try:
+                # Extract ROI positions safely
+                x = int(roi["Roi"]["Positions"].get("x", -1))
+                y = int(roi["Roi"]["Positions"].get("y", -1))
+
+                # Check if coordinates are valid
+                if x < 0 or y < 0 or y >= mask_2d.shape[0] or x >= mask_2d.shape[1]:
+                    print(f"Invalid ROI position: ({x}, {y}). Skipping.")
+                    continue
+
+                # Get nucleus ID
+                nucleus_id = mask_2d[y, x]
+
+                # Store the object ID back in the ROI
+                roi['object_id_in_mask'] = int(nucleus_id)
+                # print(f"Stored object_id {nucleus_id} for ROI at ({x}, {y})")
+
+            except (KeyError, IndexError) as e:
+                print(f"Error processing ROI: {e}")
+
+    except Exception as e:
+        print(f"Error processing ROIs: {e}")
+
+    return metadata
+
+
+
+def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
+
+    # TODO find a way to define this
+    mask_initial_frame = 0
+    mask_channel = 3   
+    mask_z = 0
+
+    img = rp.load_bioio(img_path)
+    print(img.shape)
+    with open(yaml_path, 'r') as f:
+        metadata = yaml.safe_load(f)
+    # print(metadata)
+    mask = rp.load_bioio(mask_path)
+    print(mask.shape)
+
+    # Find the ID of this nucleus in the roi metadata
+    mask_2d = mask.data[mask_initial_frame, mask_channel, mask_z, :, :]  # Adjust this slicing as necessary  
     
-    Args:
-        mask (np.ndarray): 3D binary numpy array.
+    updated_metadata = process_rois(metadata, mask_2d)
+
+    # Make a distance matrix that tells how far it is to the nearest edge of the object
+    distance_to_edge_mask = compute_distance_to_edge(mask_2d)
     
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: Eigenvalues and eigenvectors.
-    """
-    coords = np.argwhere(mask)
-    cov_matrix = np.cov(coords.T)
-    eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-    order = np.argsort(eigenvalues)[::-1]
-    return eigenvalues[order], eigenvectors[:, order]
-
-def get_masks(image_basename:str, mask_folders:str, mask_suffixes:str, mask_names:str = ""):
-    # TODO Check that dtype is handled
-    # TODO Check that diferent shapes    
+    edge_mask = np.where(distance_to_edge_mask <= 3, distance_to_edge_mask, np.nan)
     
-    if not len(mask_folders) == len(mask_suffixes):
-        raise ValueError("mask_folders, mask_suffixes and mask_names must be of equal length")
-    if mask_names == "":
-        mask_names = [""] * len(mask_folders)
+    distance_to_point_along_edge = compute_distance_along_edge_to_point_mask(mask_2d, metadata, edge_mask)
 
+    distance_to_point_mask = compute_distance_to_rois(mask_2d, metadata)
 
-    # Normalize inputs to lists if they are not already
-    if isinstance(mask_folders, str):
-        mask_folders = [mask_folders]
-    if isinstance(mask_suffixes, str):
-        mask_suffixes = [mask_suffixes]
-    if isinstance(mask_names, str):
-        mask_names = [mask_names]
+    # distance_along_edge_to_point_mask = compute_distance_along_edge_to_point_mask(mask_2d, metadata)
     
-    # Loop over all masks
-    mask_channels  = [] #T_ZYX  where each list is a C
-    mask_info = []
-    for mask_folder, mask_suffix, mask_name in zip(mask_folders, mask_suffixes, mask_names):
-        mask_path = os.path.join(mask_folder, os.path.splitext(image_basename)[0] + mask_suffix) 
-        mask = rp.load_bioio(mask_path).data # Add this to masks as a new channel
-        for ch in range(mask.shape[1]):
-            mask_channels.append(mask[:,ch,:,:,:])
-            mask_info.append([mask_folder, mask_suffix, mask_name])
     
-    first_mask_shape = mask_channels[0].shape
-    total_channels = len(mask_channels)
-    combined_masks = np.zeros((first_mask_shape[0], total_channels, first_mask_shape[1], first_mask_shape[2], first_mask_shape[3]), dtype=mask_channels[0].dtype)
-
-    for idx, single_mask in enumerate(mask_channels):
-        combined_masks[:, idx, :, :, :] = single_mask  # Place TZYX into C dimension
-        
-        
-    return combined_masks, mask_info  # Now returns masks of shape (T, total_channels, Z, Y, X)
-
-        
-def measure_masks(img_path, masks, mask_infolist):
-    # measure on original image
-    img = rp.load_bioio(img_path) #TCZYX
-    
-    T, C,_, _, _ = masks.shape
-
-    if len(mask_infolist) != C:
-        raise ValueError(f"Wrong dimensions beween len(mask_infolist) != {len(mask_infolist)}, {C}")
-               
-    # Ensure that mask is a indexed binary file
-    if not is_indexed_binary(masks):
-        mask_indexed = label_5d_mask(masks)
-        print(np.unique(masks))
-    else:
-        mask_indexed = masks
-
-    # process mask
-    
-
-    results = []    
-    for t in range(T):
-        for c in range(C):
-            mask_indexed_slice = mask_indexed[t,c] # ZYX numpy array
-            mask_values = np.unique(mask_indexed_slice)
-            mask_info = mask_infolist[c]
-            
-            # loop over each 3D object
-            for mask_id in mask_values[mask_values > 0]:  # Filter out non-positive values               
-                mask_binary_slice = (mask_indexed_slice == mask_id)
-                
-                # Measurements on binary mask
-                mask_size_pix = np.sum(mask_binary_slice)
-                min_z, min_y, min_x, max_z, max_y, max_x = compute_bounding_box(mask_binary_slice)
-                center_of_mass_z, center_of_mass_y, center_of_mass_x  = center_of_mass(mask_binary_slice)
-                eigenvalues, eigenvectors = compute_principal_axes(mask_binary_slice)
-                eigenvalues_1, eigenvalues_2, eigenvalues_3 = eigenvalues 
-                results_tmp = {
-                    'mask_folder': mask_info[0],
-                    'mask_suffix': mask_info[1],
-                    'mask_name':  mask_info[2],
-                    'frame': t,
-                    'channel': c,
-                    'mask_id': mask_id,
-                    'mask_size': mask_size_pix,
-                    'bounding_box_min_z': min_z, 
-                    'bounding_box_min_y': min_y,
-                    'bounding_box_min_x': min_x,
-                    'bounding_box_max_z': max_z,
-                    'bounding_box_max_y': max_y,
-                    'bounding_box_max_x': max_x,
-                    'center_of_mass_z': center_of_mass_z,
-                    'center_of_mass_y': center_of_mass_y,
-                    'center_of_mass_x': center_of_mass_x,
-                    'eigenvalues_1': eigenvalues_1,
-                    'eigenvalues_2': eigenvalues_2,
-                    'eigenvalues_3': eigenvalues_3,
-                    'eigenvectors': ''.join(['(' + ','.join(map(str, ev)) + ')' for ev in eigenvectors]),
-
-                    # Image channel statistics initialized to NaN
-                    **{f'img_ch_{img_c}_min': np.nan for img_c in range(img.dims.C)},
-                    **{f'img_ch_{img_c}_mean': np.nan for img_c in range(img.dims.C)},
-                    **{f'img_ch_{img_c}_median': np.nan for img_c in range(img.dims.C)},
-                    **{f'img_ch_{img_c}_max': np.nan for img_c in range(img.dims.C)},
-                    **{f'img_ch_{img_c}_std': np.nan for img_c in range(img.dims.C)},
-                    **{f'img_ch_{img_c}_var': np.nan for img_c in range(img.dims.C)},
-                    **{f'img_ch_{img_c}_sum': np.nan for img_c in range(img.dims.C)},
-                }
-               
-
-                # match img T with T from mask
-                # Loop over all Cs in image for each C in mask
-                # So that for example nuc in ch 3 in mask will measure values in all channels in input img.
-                for img_c in range(img.dims.C):
-                    values = img.data[t, img_c][mask_binary_slice] # -> ZYX
-                    if values.size > 0:
-                        results_tmp[f'img_ch_{img_c}_min'] = np.min(values)
-                        results_tmp[f'img_ch_{img_c}_mean'] = np.mean(values)
-                        results_tmp[f'img_ch_{img_c}_median'] = np.median(values)                    
-                        results_tmp[f'img_ch_{img_c}_max'] = np.max(values)
-                        results_tmp[f'img_ch_{img_c}_std'] = np.std(values)
-                        results_tmp[f'img_ch_{img_c}_var'] = np.var(values)
-                        results_tmp[f'img_ch_{img_c}_sum'] = np.sum(values)
-                results.append(results_tmp)
-    return pd.DataFrame(results)
-
-def is_indexed_binary(mask):
-    mask_values = np.unique(mask)
-    
-    # catch empty image
-    if len(mask_values) == 1:
-        return False
-    
-    # catch  if only two values
-    # then its binary or only one mask and can be sent for indexing
-    if len(mask_values) == 2:
-        return False
-    
-    # 
-    return True
-
-def label_5d_mask(binary_mask):
-    indexed_mask = np.zeros(binary_mask.shape)
-    T, C,Z, _, _ = binary_mask.shape
-    for t in range(T):
-        for c in range(C):
-            for z in range(Z):
-                indexed_mask[t,c,z] = label(binary_mask[t,c,z])
-    return indexed_mask 
-
-def process_file(img_path:str,  mask_folders:str, mask_suffixes:str, mask_names:str, results_file_path:str) -> None:
-
-    # Process binary mask
-    if os.path.exists(results_file_path): 
-        os.remove(results_file_path) # TODO Remove after testing
-
-    if not os.path.exists(results_file_path): 
-        # Make a pandas table with the IDs of all the masks
-        combined_masks, mask_info = get_masks(image_basename=os.path.basename(img_path), mask_folders=mask_folders, mask_suffixes=mask_suffixes, mask_names=mask_names)
-
-        # Do measurements on the binary masks
-        results = measure_masks(img_path, combined_masks, mask_info)
-        results.to_csv(results_file_path, sep = '\t', encoding='utf-8', index=False)   
-        
-    else:
-        results = pd.read_csv(results_file_path, sep='\t', header=0)
-
-    
-    print(results)
+    # Call the plotting function with multiple masks and titles
+    plot_masks(
+    (mask_2d, 'Original Mask'), 
+    (distance_to_edge_mask, 'Distance to Edge'),
+    (distance_to_point_mask, "Distance to Point"),
+    (edge_mask, "Edge"),
+    (distance_to_point_along_edge, "Distance along Edge"),
+    metadata=updated_metadata
+     )    
 
 
-img_path = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\input_tif\230705_93_mNG-DFCP1_LT_LC3_CMvsLPDS__CM__CM_chol_2h__2023-07-07__230705_mNG-DFCP1_LT_LC3_CM_chol_2h_2.tif"
-mask_folders = [r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_nuc_mask", r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_cellpose"]
-results_file_path = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output.tsv"
-mask_suffix_list = [".tif", "_cp_masks.tif"]
-mask_names = ["threshold", "cytoplasm"]
+img_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input\LDC20250314_1321N1_BANF1-V5-mEos4b_WT001.nd2"
+yaml_path = os.path.splitext(img_path)[0] + "_metadata.yaml"
 
-process_file(img_path=img_path, mask_folders=mask_folders, mask_suffixes=mask_suffix_list, mask_names= mask_names, results_file_path=results_file_path)
+mask_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\output_nuc_mask\LDC20250314_1321N1_BANF1-V5-mEos4b_WT001.tif"
+
+process_file(img_path=img_path, yaml_path=yaml_path, mask_path=mask_path)

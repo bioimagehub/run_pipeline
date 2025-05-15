@@ -1,3 +1,5 @@
+import argparse
+import os
 from bioio import BioImage
 import yaml
 
@@ -98,8 +100,7 @@ def get_all_metadata(input_file, output_file = None):
     return metadata
 
 if __name__ == "__main__":
-    import argparse
-    import os
+
 
     parser = argparse.ArgumentParser(description="Extract metadata from a BioImage file.")
     parser.add_argument("-i", "--input_file", type=str, required=True, help="Path to the input BioImage file")

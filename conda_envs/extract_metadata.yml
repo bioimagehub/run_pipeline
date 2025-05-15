@@ -1,16 +1,11 @@
-name: measure
+name: extract_metadata
 channels:
   - conda-forge
   - anaconda
 dependencies:
   - python=3.12
-  - scikit-image
   - numpy
-  - opencv
-  - matplotlib
-  - tifffile
-  - tqdm
-  - joblib
+  - nd2reader
   - pip
   - pip:
       - bioio
@@ -18,4 +13,3 @@ dependencies:
       - bioio_ome_tiff
       - bioio-tifffile
       - bioio_nd2
-      - "roifile[all]"

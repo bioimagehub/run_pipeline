@@ -1,16 +1,18 @@
-name: convert_to_tif
+name: segment_threshold
 channels:
   - conda-forge
   - anaconda
 dependencies:
   - python=3.12
-  - pystackreg
+  - scikit-image
+  - scipy
   - numpy
+  - opencv
   - matplotlib
-  - scyjava
+  - tifffile
   - tqdm
   - joblib
-  - nd2reader
+  - pyyaml
   - pip
   - pip:
       - bioio
@@ -18,3 +20,5 @@ dependencies:
       - bioio_ome_tiff
       - bioio-tifffile
       - bioio_nd2
+      - "roifile[all]"
+      - trackpy

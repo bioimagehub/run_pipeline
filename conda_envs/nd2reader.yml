@@ -1,8 +1,0 @@
-name: nd2reader
-channels:
-  - conda-forge
-  - anaconda
-dependencies:
-  - python=3.12
-  - numpy
-  - nd2reader

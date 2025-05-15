@@ -1,10 +1,10 @@
 run:
 - name: Convert to tif and collapse folder structure
-  environment: convert_to_tif
+  environment: extract_metadata
   commands:
   - python
   - ./standard_code/python/convert_to_tif.py # Paths that start with ./ and ends with .py are relative to the root folder of run_python_pipeline.go
-  - --input_folder: ./input # This can be ./input_nd2 if yaml file is in root folder 
+  - --input_folder: ./input_nd2 #
   - --extension: .nd2 # must include the dot
   - --search_subfolders # This is a flag, so it can be omitted to only search the top folder
   - --collapse_delimiter: __

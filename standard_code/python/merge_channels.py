@@ -1,5 +1,4 @@
 import argparse
-from bioio import BioImage
 from tqdm import tqdm
 import json
 import numpy as np
@@ -10,7 +9,7 @@ import yaml
 
 # local imports
 import run_pipeline_helper_functions  as rp  
-from extract_metadata import get_metadata
+from extract_metadata import get_all_metadata
 
 
 
@@ -26,7 +25,7 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
             with open(input_metadata_file_path, 'r') as f:
                 metadata = yaml.safe_load(f)
         else:
-            metadata = get_metadata(img)
+            metadata = get_all_metadata(img)
             #TODO Prompt the user to fill in the channel names etc
             # This is the core metadata without drift correction info
             with open(input_metadata_file_path, 'w') as f:
