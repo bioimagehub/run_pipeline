@@ -16,3 +16,4 @@ dependencies:
       - bioio
       - bioio_ome_tiff
       - "roifile[all]"
+      - trackpy

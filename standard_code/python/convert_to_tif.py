@@ -9,7 +9,7 @@ from bioio.writers import OmeTiffWriter
 
 # Local impots
 import run_pipeline_helper_functions  as rp 
-from extract_metadata import get_metadata
+from extract_metadata import get_all_metadata
 
 def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0, use_parallel: bool = True) -> tuple[np.ndarray, np.ndarray]:
     T, C, Z, Y, X = video.shape    
@@ -18,11 +18,11 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0,
     sr = StackReg(StackReg.RIGID_BODY)
 
     # Max-projection along Z for drift correction
-    ref_stack = np.max(video[:, drift_correct_channel, :, :, :], axis=1)  # shape: (T, Y, X)
-
+    ref_stack = np.max(video[:, drift_correct_channel, :, :, :], axis=1)  # shape: (T, Y, X) axis=1 is now Z (after subset C)  -> max projection in z
+    # print(ref_stack.shape)
     # Register max projections over time
     print("\nFinding shifts:")
-    tmats = sr.register_stack(ref_stack, reference='previous', verbose=True)
+    tmats = sr.register_stack(ref_stack, reference='previous', verbose=False, axis=0) # set to axis=0 -> Time
 
     # Parallel transform function
     if use_parallel:
@@ -38,7 +38,6 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0,
         corrected_list = Parallel(n_jobs=-1)(
             delayed(apply_shift)(t) for t in tqdm(range(T), desc="Applying shifts")
         )
-
         corrected_video = np.stack(corrected_list)
     else:
             # Apply transformation to all channels and all Z-slices
@@ -46,10 +45,7 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0,
             for c in range(C):
                 for z in range(Z):
                     corrected_video[t, c, z, :, :] = sr.transform(video[t, c, z, :, :], tmats[t])
-
-
     return corrected_video, tmats
-
 
 def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_channel:int = -1, use_parallel:bool = True, projection_method:str = None) -> None:
         # Define output file names
@@ -67,7 +63,7 @@ def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_ch
             with open(input_metadata_file_path, 'r') as f:
                 metadata = yaml.safe_load(f)
         else:
-            metadata = get_metadata(img)
+            metadata = get_all_metadata(input_file_path)
             #TODO Prompt the user to fill in the channel names etc
             # This is the core metadata without drift correction info
             with open(input_metadata_file_path, 'w') as f:
@@ -92,6 +88,7 @@ def process_file(input_file_path:str, output_tif_file_path:str, drift_correct_ch
         
         # Apply drift correction if requested or just save the image as tif
         if drift_correct_channel > -1:
+
             output_img, shifts = drift_correct_xy_parallel(img_data, drift_correct_channel, use_parallel=use_parallel)  # Apply drift correction
 
             # Save the registered image
@@ -150,12 +147,12 @@ def process_folder(args: argparse.Namespace):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a folder of images and convert them to TIF format with optional drift correction.")
     parser.add_argument("-p", "--input_folder", type=str, help="Path to the folder to be processed")
-    parser.add_argument("-e", "--extension", type=str, default=None, help="File extension to filter files in folder")
+    parser.add_argument("-e", "--extension", type=str, help="File extension to filter files in folder")
     parser.add_argument("-R", "--search_subfolders", action="store_true", help="Search for files in subfolders")
     parser.add_argument("--collapse_delimiter", type=str, default="__", help="Delimiter used to collapse file paths")
     parser.add_argument("-drift_ch", "--drift_correct_channel", type=int, default=-1, help="Channel to use for drift correction (default: -1, no correction)")
-    parser.add_argument("-pmt", "--projection_method", type=str, default=None, help="Projection method to use (max, sum, mean, median, min, std)")
-    parser.add_argument("-o", "--output_file_name_extension", type=str, default=None, help="Output file name extension (default: None)")
+    parser.add_argument("-pmt", "--projection_method" , type=str, default=None, help="Projection method to use (max, sum, mean, median, min, std)")
+    parser.add_argument("-o", "--output_file_name_extension", type=str, default="", help="Output file name extension (default: None, E.g _max [do not include .tif])")
 
     args = parser.parse_args() 
     process_folder(args)

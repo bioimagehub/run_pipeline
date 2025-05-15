@@ -1,7 +1,7 @@
 import argparse
 import os
 from tqdm import tqdm
-import json
+# import json
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -25,6 +25,7 @@ from bioio.writers import OmeTiffWriter
 
 from joblib import Parallel, delayed
 
+import yaml
 
 # local imports
 import run_pipeline_helper_functions as rp
@@ -76,12 +77,12 @@ class LabelInfo:
     def save(label_info_list, filepath):
         data = [label.to_dict() for label in label_info_list]
         with open(filepath, 'w') as f:
-            json.dump(data, f)
+            yaml.dump(data, f)
 
     @staticmethod
     def load(filepath):
         with open(filepath, 'r') as f:
-            data = json.load(f)
+            data = yaml.safe_load(f)
         return [LabelInfo(**item) for item in data]
 
     @classmethod
@@ -170,7 +171,7 @@ def apply_threshold(image: np.ndarray, method: str = "otsu", channels: list[int]
 
     # Create an output mask with only the selected channels
     # num_selected_channels = len(channels)
-    mask_out:np.uint8 = np.zeros((t, c, z, y, x), dtype=np.uint8)  # Ensure mask_all is only for selected channels
+    mask_out:np.uint16 = np.zeros((t, c, z, y, x), dtype=np.uint16)  # 16 bit since it can be a lot of signals. Can change to 8bit later in the code
     
     threshold_fn = threshold_methods.get(method)
     if threshold_fn is None:
@@ -191,11 +192,11 @@ def apply_threshold(image: np.ndarray, method: str = "otsu", channels: list[int]
 
                 # Count unique labels and check if max exceeds 255
                 unique_labels = np.unique(labeled)
-                if len(unique_labels) > 256:
-                    raise ValueError(f"Error: More than 256 labels found inT={frame}, C={channel}, Z={z_plane}. Please check the input image or consider upgrading from 8bit mask.")
+                if len(unique_labels) > (2 ** 16) - 1:
+                    raise ValueError(f"Error: More than {(2 ** 16) - 1}] labels found inT={frame}, C={channel}, Z={z_plane}. Please check the input image or consider upgrading from 16bit mask.")
 
                 # Store labels in the appropriate position in the mask
-                mask_out[frame, channel, z_plane] = labeled.astype(np.uint8)
+                mask_out[frame, channel, z_plane] = labeled.astype(np.uint16)
 
                 
     return mask_out, LabelInfo.from_mask(mask_out)
@@ -450,19 +451,17 @@ def save_intermediate(mask: np.ndarray=None, labelinfo=None, rois=None, path=Non
     if mask is not None:
         OmeTiffWriter.save(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
     if labelinfo is not None:
-        LabelInfo.save(labelinfo, path + "_labelinfo.json")
+        LabelInfo.save(labelinfo, path + "_labelinfo.yaml")
     if rois is not None:
         rois_path = path + "_rois.zip"
         if os.path.exists(rois_path): # Will just append to folder not replace
             os.remove(rois_path)
         roiwrite(rois_path, rois)
 
-
-
-
 def process_file(input_path: str, 
                  output_name:str,
-                 channels: list = [1], 
+                 channels: list = [1],
+                 tracking_channel:int = None, 
                  median_filter_size: int = 10,
                  method: str = "otsu",   
                  min_size=10_000, max_size=55_000, watershed_large_labels=True,
@@ -470,6 +469,23 @@ def process_file(input_path: str,
                  tmp_output_folder: str = None) -> None:
     """Main function to load image, segment it, and generate ROIs."""
     
+
+    # Validate tracking_channel
+    if tracking_channel is not None:
+        if args.tracking_channel not in channels:
+            print(f"Error: tracking_channel must be one of the specified channels: {args.channels}.")
+            exit(1)
+    elif(args.tracking_channel == -1):
+        pass # keep as -1 and skip tracking
+    else:
+        # Set default to the first channel if tracking_channel is not provided
+        tracking_channel = args.channels[0]
+        print(f"Warning: No tracking channel set, using args.channels[0] ={args.channels[0]} use --tracking_channel=-1 to skip tracking or provide a valid input (args.tracking_channel in args.channels)")
+
+
+
+    labelinfo = None  # Initialize labelinfo to None
+
     try:
         img = rp.load_bioio(input_path)  # To get metadata
         channels_str = "_ch" + "-".join(map(str, channels))
@@ -495,7 +511,7 @@ def process_file(input_path: str,
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_02_thresh") if tmp_output_folder is not None else None
         if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.yaml")
         else:
             mask, labelinfo = apply_threshold(mask, method=method, channels=channels)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
@@ -506,7 +522,7 @@ def process_file(input_path: str,
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_03_rm_small") if tmp_output_folder is not None else None
         if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.yaml")
         else:
             max_size_filter = np.inf if watershed_large_labels else max_size
             mask, labelinfo = remove_small_or_large_labels(mask, labelinfo, min_size=min_size, max_size=max_size_filter)
@@ -518,7 +534,7 @@ def process_file(input_path: str,
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_04_rm_edges") if tmp_output_folder is not None else None
         if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.yaml")
         else:
             mask, labelinfo = remove_on_edges(mask, labelinfo, remove_xy_edges=remove_xy_edges, remove_z_edges=remove_z_edges)
             save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
@@ -529,7 +545,7 @@ def process_file(input_path: str,
         tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_05_fill_holes") if tmp_output_folder is not None else None
         if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
             mask = rp.load_bioio(tmp_path + ".tif").data
-            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
+            labelinfo = LabelInfo.load(tmp_path + "_labelinfo.yaml")
         
         else:
             mask = fill_holes_indexed(mask)
@@ -543,7 +559,7 @@ def process_file(input_path: str,
             tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_06_split_watershed") if tmp_output_folder is not None else None
             if tmp_path is not None and os.path.exists(tmp_path + ".tif"):
                 mask = rp.load_bioio(tmp_path + ".tif").data
-                labelinfo = LabelInfo.load(tmp_path + "_labelinfo.json")
+                labelinfo = LabelInfo.load(tmp_path + "_labelinfo.yaml")
             else:
                 mask, labelinfo = split_large_labels_with_watershed(mask, labelinfo, max_size=max_size)
                 save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
@@ -552,8 +568,22 @@ def process_file(input_path: str,
     except Exception as e:
                     print(f"Error Watershed {input_path}: {e}")
 
+
+    try:
+        if img.dims.T > 1 and tracking_channel != -1:
+            tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_07_tracking") if tmp_output_folder is not None else None
+
+            from track_indexed_mask import track_labels_with_trackpy    
+            df_tracked, mask = track_labels_with_trackpy(mask, channel_zero_base= tracking_channel)
+            labelinfo = LabelInfo.from_mask(mask)
+            save_intermediate(mask=mask, labelinfo=labelinfo, rois=None, path=tmp_path, physical_pixel_sizes=img.physical_pixel_sizes)
+            df_tracked.to_csv(tmp_path + ".tsv", sep='\t', index=False)  # index=False to not include row indices
+
+    except Exception as e:
+        print(f"Error tracking {input_path}: {e}")
+
     try: # Generate ROIs
-        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_07_rois.zip") if tmp_output_folder is not None else None
+        tmp_path = os.path.join(tmp_output_folder, os.path.splitext(os.path.basename(input_path))[0] + f"_{channels_str}_08_rois.zip") if tmp_output_folder is not None else None
         if tmp_path is not None and os.path.exists(tmp_path):   
             rois = roiread(tmp_path)
         else:
@@ -565,7 +595,6 @@ def process_file(input_path: str,
         
     # And then finally save mask, labelinfo and ROIS in the output folder
     save_intermediate(mask=mask, labelinfo=labelinfo, rois=rois, path=output_name, physical_pixel_sizes=img.physical_pixel_sizes)
-
 
     return mask, rois, labelinfo
 
@@ -583,14 +612,14 @@ def process_file(input_path: str,
 
 
 
-def process_folder(args: argparse.Namespace, use_parallel=True) -> None: # Paralel not working yet
+def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
     # Find files to process
     files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
 
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
-    if use_parallel:  # Process each file in parallel
+    if args.use_parallel:  # Process each file in parallel
         # raise NotImplementedError
         Parallel(n_jobs=-1)(
             delayed(process_file)(
@@ -629,6 +658,7 @@ def process_folder(args: argparse.Namespace, use_parallel=True) -> None: # Paral
                     input_path = input_file_path,
                     output_name = output_tif_file_name,
                     channels = args.channels,
+                    tracking_channel = args.tracking_channel,
                     median_filter_size = args.median_filter_size,
                     method = args.method,
                     min_size = args.min_size,
@@ -648,6 +678,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_folder", type=str, help="Input folder containing .tif files")
     parser.add_argument("--output_folder", type=str, help="Output folder for processed files")
     parser.add_argument("--channels", type=int, nargs='+', default=[0], help="List of channels to process")
+    parser.add_argument("--tracking_channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")
     parser.add_argument("--median_filter_size", type=int, default=10, help="Size of the median filter")
     parser.add_argument("--method", type=str, default="li", help="Thresholding method")
     parser.add_argument("--min_size", type=int, default=10_000, help="Minimum size for processing")
@@ -656,6 +687,8 @@ if __name__ == "__main__":
     parser.add_argument("--remove_xy_edges",action="store_true", help="Remove edges in XY")
     parser.add_argument("--remove_z_edges", action="store_true", help="Remove edges in Z")
     parser.add_argument("--tmp_output_folder", type=str, help="Save intemediate steps in tmp_output_folder")
+    parser.add_argument("--use_parallel", action="store_true", help="Split large cells with watershed")
+
     args = parser.parse_args()
 
     process_folder(args)
