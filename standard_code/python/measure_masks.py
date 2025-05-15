@@ -1,7 +1,8 @@
 # from roifile import roiread
 import numpy as np
+import pandas as pd
 # from skimage.morphology import skeletonize
-from skimage.measure import label
+# from skimage.measure import label
 from scipy.ndimage import distance_transform_edt
 import run_pipeline_helper_functions as rp
 
@@ -15,7 +16,8 @@ from matplotlib.patches import Ellipse
 import numpy as np
 from collections import deque
 import warnings
-from scipy.ndimage import binary_erosion
+# from scipy.ndimage import binary_erosion
+
 
 
 def plot_masks(*args, metadata=None):
@@ -67,7 +69,19 @@ def plot_masks(*args, metadata=None):
     # plt.tight_layout()
     plt.show()
 
-
+def plot_distance_vs_intensity(df: pd.DataFrame, distance_column: str, intensity_column: str):
+    # Plot distance vs intensity for each frame
+    plt.figure(figsize=(10, 6))
+    
+    for frame in df['Frame'].unique():
+        subset = df[df['Frame'] == frame]
+        plt.scatter(subset[distance_column], subset[intensity_column], label=f'Frame {frame}', alpha=0.5)
+    
+    plt.title(f'Distance vs Intensity: {distance_column}')
+    plt.xlabel(distance_column)
+    plt.ylabel(intensity_column)
+    plt.legend()
+    plt.show()
 
 def compute_distance_to_edge(indexed_mask_2d: np.ndarray) -> np.ndarray:
 
@@ -262,6 +276,33 @@ def process_rois(metadata: dict, mask_2d: np.ndarray) -> dict:
 
     return metadata
 
+import pandas as pd
+
+def create_dataframe(mask_2d: np.ndarray, distance_to_edge_mask: np.ndarray, 
+                     distance_to_point_mask: np.ndarray, 
+                     distance_to_point_along_edge: np.ndarray, 
+                     img_data_tyx: np.ndarray) -> pd.DataFrame:
+    
+    rows = []
+    for frame in range(img_data_tyx.shape[0]):
+        frame_data = img_data_tyx[frame]
+        for y in range(mask_2d.shape[0]):
+            for x in range(mask_2d.shape[1]):
+                if mask_2d[y, x] > 0:  # Only consider pixels in nucleus
+                    row = {
+                        "Frame": frame,
+                        "Pixel": (y, x),
+                        "Intensity": frame_data[y, x],
+                        "Distance to Edge": distance_to_edge_mask[y, x],
+                        "Distance to Point": distance_to_point_mask[y, x],
+                        "Distance to Point Along Edge": distance_to_point_along_edge[y, x]
+                    }
+                    rows.append(row)
+    
+    df = pd.DataFrame(rows)
+    return df
+
+
 
 
 def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
@@ -292,9 +333,6 @@ def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
     distance_to_point_along_edge = compute_distance_along_edge_to_point_mask(mask_2d, metadata, edge_mask)
 
     distance_to_point_mask = compute_distance_to_rois(mask_2d, metadata)
-
-    # distance_along_edge_to_point_mask = compute_distance_along_edge_to_point_mask(mask_2d, metadata)
-    
     
     # Call the plotting function with multiple masks and titles
     plot_masks(
@@ -305,7 +343,32 @@ def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
     (distance_to_point_along_edge, "Distance along Edge"),
     metadata=updated_metadata
      )    
+    
 
+    # Add this after processing the masks in process_file function
+    photoconversion_ch = 2
+    df = create_dataframe(mask_2d, distance_to_edge_mask, distance_to_point_mask, distance_to_point_along_edge, img.data[:,photoconversion_ch,0])
+
+    # You can save the DataFrame to a CSV file if desired
+    df.to_csv('output_data.csv', index=False)
+
+    # TODO what I want to extract from img_data and save in a pandas dataframe
+    # list all the pixels >0 in mask_2d, 
+    # This should be done for all frames in img_data. and we need to store the frame info
+    # 1) assign the distance to the edge of the nucleus from distance_to_edge_mask
+    # 2) assign the distance to the point from the distance_to_point_mask
+    # 3) for the pixels that are on the edge (defined in distance_to_point_along_edge) assign the distance to point (trough the cell), the rest should be na or something
+    # 4) for the pixels that are on the edge (defined in distance_to_point_along_edge) assign the distance to point (along the edge), the rest should be na or something
+    
+    # make plots 
+    # distance to edge on x axis and intensity on y axis. frame should be color
+    # eucledean distance to point on x axis and intensity on y axis. frame should be color
+    # distance to point along edge on x axis and intensity on y axis. frame should be color
+
+    # Generate plots for distance vs intensity
+    plot_distance_vs_intensity(df, 'Distance to Edge', 'Intensity')
+    plot_distance_vs_intensity(df, 'Distance to Point', 'Intensity')
+    plot_distance_vs_intensity(df, 'Distance to Point Along Edge', 'Intensity')
 
 img_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input\LDC20250314_1321N1_BANF1-V5-mEos4b_WT001.nd2"
 yaml_path = os.path.splitext(img_path)[0] + "_metadata.yaml"
