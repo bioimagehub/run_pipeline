@@ -1,0 +1,19 @@
+name: convert_to_tif
+channels:
+  - conda-forge
+  - anaconda
+dependencies:
+  - python=3.12
+  - pystackreg
+  - numpy
+  - matplotlib
+  - scyjava
+  - tqdm
+  - joblib
+  - pip
+  - pip:
+      - bioio
+      - bioio-bioformats
+      - bioio_ome_tiff
+      - bioio-tifffile
+      - bioio_nd2
