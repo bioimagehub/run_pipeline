@@ -38,41 +38,55 @@ def get_nd2_roi_metadata(file_path):
     try:
         with ND2Reader(file_path) as images:
             metadata = images.metadata
-            
-            # Get the size of a pixel in micrometers
-            pixel_microns = metadata.get('pixel_microns', 1)  # Default to 1 if not found
-            
-            # Access ROIs from metadata
-            rois = metadata.get('rois', [])
-            
-            # Loop through each ROI to extract position and size information
-            for roi in rois:
-                positions = roi.get('positions', [])
-                sizes = roi.get('sizes', [])
-                shape = roi.get('shape', 'unknown')  # Extract shape if available
-                roi_type = roi.get('type', 'unknown')  # Extract type if available
-                
-                # Convert position and size from micrometers to pixels
-                for pos, size in zip(positions, sizes):
-                    pos_pixels = [float(p / pixel_microns) for p in pos]
-                    size_pixels = [float(s / pixel_microns) for s in size]
+    
+    except Exception as e:
+        print(f"Error reading metadata: {e}")
+        return None
+    
+    try:        
+        # Get the size of a pixel in micrometers
+        pixel_microns = metadata.get('pixel_microns', 1)  # Default to 1 if not found
+        
+        # Access ROIs from metadata
+        rois = metadata.get('rois', [])
+        print(len(rois))
+    
+    except Exception as e:
+        print(f"Error counting rois: {e}")
+        return None    
 
-                    roi_pixels = {
-                        "Roi": {
-                            "Positions": {
-                                "x": pos_pixels[0],
-                                "y": pos_pixels[1]
-                            },
-                            "Size": {
-                                "x": size_pixels[0],
-                                "y": size_pixels[1]
-                            },
-                            "Shape": shape,
-                            "Type": roi_type
-                        }
+    if len(rois)<1:
+        return None
+
+    try:    
+        # Loop through each ROI to extract position and size information
+        for roi in rois:
+            positions = roi.get('positions', [])
+            sizes = roi.get('sizes', [])
+            shape = roi.get('shape', 'unknown')  # Extract shape if available
+            roi_type = roi.get('type', 'unknown')  # Extract type if available
+
+            # Convert position and size from micrometers to pixels
+            for pos, size in zip(positions, sizes):
+                pos_pixels = [float(p / pixel_microns) for p in pos]
+                size_pixels = [float(s / pixel_microns) for s in size]
+
+                roi_pixels = {
+                    "Roi": {
+                        "Positions": {
+                            "x": pos_pixels[0],
+                            "y": pos_pixels[1]
+                        },
+                        "Size": {
+                            "x": size_pixels[0],
+                            "y": size_pixels[1]
+                        },
+                        "Shape": shape,
+                        "Type": roi_type
                     }
+                }
 
-                    roi_info.append(roi_pixels)
+                roi_info.append(roi_pixels)
                     
     except Exception as e:
         print(f"Error processing: {e}")
@@ -108,5 +122,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    get_all_metadata(input_file = args.input_file, output_file= args.output_file)
-
+    metadata = get_all_metadata(input_file = args.input_file, output_file= args.output_file)
+    print(metadata)

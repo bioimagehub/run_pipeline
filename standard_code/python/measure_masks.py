@@ -281,7 +281,7 @@ import pandas as pd
 def create_dataframe(mask_2d: np.ndarray, distance_to_edge_mask: np.ndarray, 
                      distance_to_point_mask: np.ndarray, 
                      distance_to_point_along_edge: np.ndarray, 
-                     img_data_tyx: np.ndarray) -> pd.DataFrame:
+                     img_data_tyx: np.ndarray,) -> pd.DataFrame:
     
     rows = []
     for frame in range(img_data_tyx.shape[0]):
@@ -292,6 +292,7 @@ def create_dataframe(mask_2d: np.ndarray, distance_to_edge_mask: np.ndarray,
                     row = {
                         "Frame": frame,
                         "Pixel": (y, x),
+                        "Object Id": mask_2d[y, x],
                         "Intensity": frame_data[y, x],
                         "Distance to Edge": distance_to_edge_mask[y, x],
                         "Distance to Point": distance_to_point_mask[y, x],
@@ -305,7 +306,7 @@ def create_dataframe(mask_2d: np.ndarray, distance_to_edge_mask: np.ndarray,
 
 
 
-def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
+def process_file(img_path:str,  yaml_path:str, mask_path:str, output_path:str) -> None:
 
     # TODO find a way to define this
     mask_initial_frame = 0
@@ -335,14 +336,14 @@ def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
     distance_to_point_mask = compute_distance_to_rois(mask_2d, metadata)
     
     # Call the plotting function with multiple masks and titles
-    plot_masks(
-    (mask_2d, 'Original Mask'), 
-    (distance_to_edge_mask, 'Distance to Edge'),
-    (distance_to_point_mask, "Distance to Point"),
-    (edge_mask, "Edge"),
-    (distance_to_point_along_edge, "Distance along Edge"),
-    metadata=updated_metadata
-     )    
+    # plot_masks(
+    # (mask_2d, 'Original Mask'), 
+    # (distance_to_edge_mask, 'Distance to Edge'),
+    # (distance_to_point_mask, "Distance to Point"),
+    # (edge_mask, "Edge"),
+    # (distance_to_point_along_edge, "Distance along Edge"),
+    # metadata=updated_metadata
+    #  )    
     
 
     # Add this after processing the masks in process_file function
@@ -350,7 +351,7 @@ def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
     df = create_dataframe(mask_2d, distance_to_edge_mask, distance_to_point_mask, distance_to_point_along_edge, img.data[:,photoconversion_ch,0])
 
     # You can save the DataFrame to a CSV file if desired
-    df.to_csv('output_data.csv', index=False)
+    df.to_csv(output_path, index=False)
 
     # TODO what I want to extract from img_data and save in a pandas dataframe
     # list all the pixels >0 in mask_2d, 
@@ -366,13 +367,15 @@ def process_file(img_path:str,  yaml_path:str, mask_path:str) -> None:
     # distance to point along edge on x axis and intensity on y axis. frame should be color
 
     # Generate plots for distance vs intensity
-    plot_distance_vs_intensity(df, 'Distance to Edge', 'Intensity')
-    plot_distance_vs_intensity(df, 'Distance to Point', 'Intensity')
-    plot_distance_vs_intensity(df, 'Distance to Point Along Edge', 'Intensity')
+    # plot_distance_vs_intensity(df, 'Distance to Edge', 'Intensity')
+    # plot_distance_vs_intensity(df, 'Distance to Point', 'Intensity')
+    # plot_distance_vs_intensity(df, 'Distance to Point Along Edge', 'Intensity')
 
 img_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input\LDC20250314_1321N1_BANF1-V5-mEos4b_WT001.nd2"
 yaml_path = os.path.splitext(img_path)[0] + "_metadata.yaml"
 
 mask_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\output_nuc_mask\LDC20250314_1321N1_BANF1-V5-mEos4b_WT001.tif"
 
-process_file(img_path=img_path, yaml_path=yaml_path, mask_path=mask_path)
+output_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\output_data.csv"
+
+process_file(img_path=img_path, yaml_path=yaml_path, mask_path=mask_path, output_path=output_path)
