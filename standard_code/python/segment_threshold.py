@@ -466,9 +466,25 @@ def process_file(input_path: str,
                  threshold_method: str = "otsu",   
                  min_size: int=10_000, max_size: int=55_000, watershed_large_labels: bool = True,
                  remove_xy_edges:bool = True, remove_z_edges:bool = False,
-                 tmp_output_folder: str = None) -> None:
+                 tmp_output_folder: str = None,
+                 yaml_file_extension: str = "_metadata.yaml"
+                 ) -> None:
     """Main function to load image, segment it, and generate ROIs."""
-    
+    # Move over the metadta file
+    yaml_path = os.path.splitext(input_path)[0] + yaml_file_extension
+    if os.path.isfile(yaml_path):
+        with open(yaml_path, 'r') as f:
+            metadata = yaml.safe_load(f)
+        metadata["Threshold segmentation"] = {
+            "Channels": channels,
+            "Tracking channels": tracking_channel,
+            "Median filter size": median_filter_size,
+            "Threshold method": threshold_method,
+            "Min size": min_size,
+            "Remove xy edges": remove_xy_edges,
+        }
+        with open(os.path.join(output_name, os.path.basename(yaml_path)), 'w') as out_f:
+            yaml.safe_dump(metadata, out_f)  # Changed to dump the metadata
 
     # Validate tracking_channel
     if tracking_channel is not None:
@@ -617,6 +633,8 @@ def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
     # Find files to process
     files_to_process = rp.get_files_to_process(args.input_file_or_folder, ".tif", search_subfolders=False)
 
+    
+    
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
@@ -668,8 +686,10 @@ def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
                     watershed_large_labels = args.watershed_large_labels,
                     remove_xy_edges = args.remove_xy_edges,
                     remove_z_edges = args.remove_z_edges,
-                    tmp_output_folder = args.tmp_output_folder
-                )  # Process each file
+                    tmp_output_folder = args.tmp_output_folder,
+                    yaml_file_extension = parsed_args.yaml_file_extension
+                    )
+                  # Process each file
 
             except Exception as e:
                 print(f"Error processing {input_file_path}: {e}")
@@ -689,7 +709,8 @@ def main(parsed_args: argparse.Namespace):
                  threshold_method = parsed_args.threshold_method,   
                  min_size = parsed_args.min_size, max_size = parsed_args.max_size, watershed_large_labels = parsed_args.watershed_large_labels,
                  remove_xy_edges = parsed_args.remove_xy_edges, remove_z_edges = parsed_args.remove_z_edges,
-                 tmp_output_folder = parsed_args.mp_output_folder)
+                 tmp_output_folder = parsed_args.mp_output_folder,
+                 yaml_file_extension = parsed_args.yaml_file_extension)
         
     elif os.path.isdir(parsed_args.input_file_or_folder):
         print(f"Processing folder: {parsed_args.input_file_or_folder}")
@@ -713,7 +734,9 @@ if __name__ == "__main__":
     parser.add_argument("--remove-xy-edges",action="store_true", help="Remove edges in XY")
     parser.add_argument("--remove-z-edges", action="store_true", help="Remove edges in Z")
     parser.add_argument("--tmp-output-folder", type=str, help="Save intemediate steps in tmp_output_folder")
-    parser.add_argument("--use-parallel", action="store_true", help="Split large cells with watershed")
+    parser.add_argument("--use-parallel", action="store_true", help="Use paralell computing")
+    parser.add_argument("--yaml-file-extension", type=str, default= "_metadata.yaml", help="Extension relative to basename of input image name")
+
 
     parsed_args = parser.parse_args()
 

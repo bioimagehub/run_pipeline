@@ -107,9 +107,8 @@ def compute_distance_to_edge(indexed_mask_2d: np.ndarray) -> np.ndarray:
 
     return distance_mask
 
-def compute_distance_to_rois(indexed_mask_2d: np.ndarray, metadata: dict) -> np.ndarray:
-    # TODO Remove objects that do not have a point
-    # Start with a mask full of NaNs
+def compute_euclidean_distance_to_point(indexed_mask_2d: np.ndarray, metadata: dict) -> np.ndarray:
+    # Initialize a mask full of NaNs
     distance_to_point_mask = np.full(indexed_mask_2d.shape, np.nan)
 
     # Make a binary mask of the objects
@@ -117,37 +116,49 @@ def compute_distance_to_rois(indexed_mask_2d: np.ndarray, metadata: dict) -> np.
 
     # Get the list of ROIs
     rois = metadata.get("Image metadata", {}).get("ROIs", [])
-
+    
     if not rois:
         return distance_to_point_mask  # No ROIs, return all-NaN
 
-    # Create a mask with zeros where ROI centers are, and inf elsewhere
-    roi_centers_mask = np.full(indexed_mask_2d.shape, np.inf)
+    # Precompute labeled object mask
+    object_ids = np.unique(indexed_mask_2d)
+    object_ids = object_ids[object_ids > 0]
+
+    # Map object ID to ROI
+    roi_by_object = {}
 
     for roi in rois:
-        try:
-            x = int(round(roi["Roi"]["Positions"].get("x", -1)))
-            y = int(round(roi["Roi"]["Positions"].get("y", -1)))
+        pos = roi.get("Roi", {}).get("Positions", {})
+        x = int(round(pos.get("x", -1)))
+        y = int(round(pos.get("y", -1)))
 
-            if 0 <= x < indexed_mask_2d.shape[1] and 0 <= y < indexed_mask_2d.shape[0]:
-                roi_centers_mask[y, x] = 0  # mark the center of the ROI
-            else:
-                print(f"Invalid ROI position: ({x}, {y}). Skipping.")
+        if 0 <= x < indexed_mask_2d.shape[1] and 0 <= y < indexed_mask_2d.shape[0]:
+            obj_id = indexed_mask_2d[y, x]
+            if obj_id > 0:
+                roi_by_object[obj_id] = (x, y)  # Record the ROI center
+        else:
+            print(f"Invalid ROI position: ({x}, {y}). Skipping.")
 
-        except (KeyError, TypeError) as e:
-            print(f"Error processing ROI: {e}")
+    if not roi_by_object:
+        return distance_to_point_mask  # No valid ROIs for any objects, return all-NaN
 
-    # Compute Euclidean distance to nearest ROI center
-    distance_map = distance_transform_edt(roi_centers_mask)
+    # Compute distances only for objects with ROIs
+    for obj_id, (x, y) in roi_by_object.items():
+        # Create a mask with zeros where ROI center is
+        roi_centers_mask = np.full(indexed_mask_2d.shape, np.inf)
+        roi_centers_mask[y, x] = 0  # mark the center of the ROI
 
-    # Keep distances only inside labeled objects
-    distance_to_point_mask[object_mask] = distance_map[object_mask]
+        # Compute Euclidean distance to the ROI center
+        distance_map = distance_transform_edt(roi_centers_mask)
+
+        # Keep distances only inside the labeled object
+        distance_to_point_mask[indexed_mask_2d == obj_id] = distance_map[indexed_mask_2d == obj_id]
 
     return distance_to_point_mask
 
 
 
-def compute_distance_along_edge_to_point_mask(indexed_mask_2d: np.ndarray, metadata: dict, edge_mask: np.ndarray) -> np.ndarray:
+def compute_distance_along_edge_to_point(indexed_mask_2d: np.ndarray, metadata: dict, edge_mask: np.ndarray) -> np.ndarray:
     output_mask = np.full(indexed_mask_2d.shape, np.nan)
     rois = metadata.get("Image metadata", {}).get("ROIs", [])
     
@@ -281,24 +292,26 @@ def process_rois(metadata: dict, mask_2d: np.ndarray) -> dict:
                     continue
 
                 # Get nucleus ID
+
                 nucleus_id = mask_2d[y, x]
 
                 if nucleus_id == 0:
                     # Loop for the closes pixel with values in
                     distance, value = find_nearest_non_zero_value(mask_2d, (y, x))
                     
-                    if value < 20:
-                        nucleus_id
+                    if distance < 20:
+                        nucleus_id = value
                         print(f"Roi not inside mask, using the closest object {distance} pixels away. Id: {nucleus_id}")
                     else:
-                        print(f"Roi not inside mask, could not find a nearby {distance} pixels away. Id: {nucleus_id}")
+                        print(f"Roi not inside mask, and is more than too far away {distance} pixels away. Id: {nucleus_id}")
+
 
                         
                 # Store the object ID back in the ROI
                 roi['object_id_in_mask'] = int(nucleus_id)
                 # print(f"Stored object_id {nucleus_id} for ROI at ({x}, {y})")
 
-            except (KeyError, IndexError) as e:
+            except Exception as e:
                 print(f"Error processing ROI: {e}")
 
     except Exception as e:
@@ -337,7 +350,7 @@ def create_dataframe(mask_2d: np.ndarray, distance_to_edge_mask: np.ndarray,
 
 
 def process_file(img_path:str, yaml_path:str, mask_path:str, output_folder_path:str, mask_frame:int = 0, mask_channel = 0, mask_zslice = 0) -> None:
-    
+    print(img_path)
     output_file_basename = os.path.join(output_folder_path , os.path.splitext(os.path.basename(img_path))[0]) 
     
     img = rp.load_bioio(img_path)
@@ -350,35 +363,37 @@ def process_file(img_path:str, yaml_path:str, mask_path:str, output_folder_path:
     # Compute distances
     mask_2d = mask.data[mask_frame, mask_channel, mask_zslice, :, :]  # Adjust this slicing as necessary  
     updated_metadata = process_rois(metadata, mask_2d)
+    print(yaml.safe_dump(updated_metadata))
+    
+    with open(os.path.join(output_folder_path, os.path.basename(yaml_path)), 'w') as out_f:
+        yaml.safe_dump(metadata, out_f)  # Changed to dump the metadata
     
     distance_to_edge_mask = compute_distance_to_edge(mask_2d)
     edge_mask = np.where(distance_to_edge_mask <= 3, distance_to_edge_mask, np.nan)
-    distance_to_point_along_edge = compute_distance_along_edge_to_point_mask(mask_2d, updated_metadata, edge_mask)
-    distance_to_point_mask = compute_distance_to_rois(mask_2d, updated_metadata)
+    distance_to_point_along_edge = compute_distance_along_edge_to_point(mask_2d, updated_metadata, edge_mask)
+    distance_to_point_mask = compute_euclidean_distance_to_point(mask_2d, updated_metadata)
 
     # Save plots individually or all togheter
-    if 1 != 1: # Change after debuging
-        # Find the ID of this nucleus in the roi metadata
-        plot_masks((mask_2d, 'Original Mask t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_mask_orig2d.png")
+    # if 1 != 1: # Change after debuging
+    #     # Find the ID of this nucleus in the roi metadata
+    #     plot_masks((mask_2d, 'Original Mask t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_mask_orig2d.png")
 
-        # Make a distance matrix that tells how far it is to the nearest edge of the object
-        plot_masks((distance_to_edge_mask, 'Distance to Edge t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_distance_to_edge.png")
+    #     # Make a distance matrix that tells how far it is to the nearest edge of the object
+    #     plot_masks((distance_to_edge_mask, 'Distance to Edge t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_distance_to_edge.png")
 
-        plot_masks((edge_mask, 'Edge t=0'), metadata=updated_metadata, save_image_to_path = output_file_basename + "_mask_edge.png")
+    #     plot_masks((edge_mask, 'Edge mask t=0'), metadata=updated_metadata, save_image_to_path = output_file_basename + "_mask_edge.png")
 
-        plot_masks((distance_to_point_along_edge, 'Distance along Edge t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_distance_along_edge.png")
+    #     plot_masks((distance_to_point_along_edge, 'Distance along Edge t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_distance_along_edge.png")
 
-        plot_masks((distance_to_point_mask, 'Eucledean Distance to Edge t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_distance_euc_to_edge.png")
+    #     plot_masks((distance_to_point_mask, 'Eucledean Distance to point t=0'), metadata=updated_metadata, save_image_to_path= output_file_basename + "_distance_euc_to_edge.png")
 
-    else:
-        plot_masks((mask_2d, 'Original Mask t=0'),
-                   (distance_to_edge_mask, 'Distance to Edge t=0'),
-                   (edge_mask, 'Edge t=0'),
-                   (distance_to_point_along_edge, 'Distance along Edge t=0'),
-                   (distance_to_point_mask, 'Eucledean Distance to Edge t=0'),
-                   metadata=updated_metadata,
-                   save_image_to_path= output_file_basename + "_combined.png")
-
+    # else:
+    #     plot_masks((mask_2d, 'Original Mask t=0'),
+    #                (edge_mask, 'Edge mask t=0'),
+    #                (distance_to_edge_mask, 'Distance to Edge t=0'),
+    #                (distance_to_point_mask, 'Eucledean Distance to point t=0'),
+    #                (distance_to_point_along_edge, 'Distance along Edge t=0')
+    #                )
     
     # Add this after processing the masks in process_file function
     photoconversion_ch = 2
