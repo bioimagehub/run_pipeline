@@ -31,6 +31,12 @@ import yaml
 import run_pipeline_helper_functions as rp
 
 
+# TODO alow min and max size to be set in pixels or physical units
+
+
+
+
+
 # Mapping of threshold methods
 threshold_methods = {
     "otsu": threshold_otsu,
@@ -615,19 +621,6 @@ def process_file(input_path: str,
     save_intermediate(mask=mask, labelinfo=labelinfo, rois=rois, path=output_name, physical_pixel_sizes=img.physical_pixel_sizes)
 
     return mask, rois, labelinfo
-
-
-# process_file(path= r"//SCHINKLAB-NAS/data1/Schink/Oyvind/colaboration_user_data/20250124_Viola/input_tif/230705_93_mNG-DFCP1_LT_LC3_CMvsLPDS__LPDS__LPDS_NT_30min__2023-07-07__230705_mNG-DFCP1_LT_LC3_LPDS_NT_30min_2.tif", 
-#                 channels = [3],
-#                 median_filter_size= 15,
-#                 method = "otsu",   
-#                 min_size=10_000,
-#                 max_size=55_000, 
-#                 watershed_large_labels = True,
-#                 remove_xy_edges=True,
-#                 remove_z_edges=False,
-#                 tmp_output_folder = r"C:\Users\oodegard\Desktop\del")
-
 
 
 def process_folder(args: argparse.Namespace) -> None: # Paralel not working yet
