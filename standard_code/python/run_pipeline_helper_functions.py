@@ -108,3 +108,23 @@ def uncollapse_filename(collapsed: str, base_folder: str, delimiter: str = "__")
 
     original_path:str = os.path.join(base_folder, rel_path)
     return original_path
+
+
+if __name__ == "__main__":
+    # Example usage
+    folder_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input_tif"
+    extension = ".tif"
+    search_subfolders = False
+
+    files_to_process = get_files_to_process(folder_path, extension, search_subfolders)
+    print("Files to process:", files_to_process)
+
+    for file_path in files_to_process:
+        collapsed_name = collapse_filename(file_path, folder_path)
+        print("Collapsed filename:", collapsed_name)
+        original_path = uncollapse_filename(collapsed_name, folder_path)
+        print("Original path:", original_path)
+
+    # Load a BioImage object
+        img = load_bioio(file_path)
+        print(img.shape)
