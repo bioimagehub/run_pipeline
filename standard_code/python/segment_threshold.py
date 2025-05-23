@@ -471,9 +471,9 @@ def process_file(input_path: str,
                  ) -> None:
     """Main function to load image, segment it, and generate ROIs."""
     # Move over the metadta file
-    yaml_path = os.path.splitext(input_path)[0] + yaml_file_extension
-    if os.path.isfile(yaml_path):
-        with open(yaml_path, 'r') as f:
+    yaml_path_input = os.path.splitext(input_path)[0] + yaml_file_extension
+    if os.path.isfile(yaml_path_input):
+        with open(yaml_path_input, 'r') as f:
             metadata = yaml.safe_load(f)
         metadata["Threshold segmentation"] = {
             "Channels": channels,
@@ -483,8 +483,9 @@ def process_file(input_path: str,
             "Min size": min_size,
             "Remove xy edges": remove_xy_edges,
         }
-        with open(os.path.join(output_name, os.path.basename(yaml_path)), 'w') as out_f:
-            yaml.safe_dump(metadata, out_f)  # Changed to dump the metadata
+        yaml_path_output = os.path.splitext(output_name)[0] + yaml_file_extension
+        with open(yaml_path_output, 'w') as f:
+            yaml.dump(metadata, f)           
 
     # Validate tracking_channel
     if tracking_channel is not None:
@@ -699,7 +700,7 @@ def main(parsed_args: argparse.Namespace):
     # Check if the input is a file or a folder
     if os.path.isfile(parsed_args.input_file_or_folder):
         print(f"Processing single file: {parsed_args.input_file_or_folder}")
-        output_file_name = os.path.splitext(os.path.basename(parsed_args.input_folder))[0] + ".processed.tif"  # Example output naming
+        output_file_name = os.path.splitext(os.path.basename(parsed_args.input_folder))[0] + "_segmented.tif"  # Example output naming
         output_file_path = os.path.join(parsed_args.output_folder, output_file_name)
         process_file(input_path = parsed_args.input_file_or_folder,
                  output_name = output_file_path,
