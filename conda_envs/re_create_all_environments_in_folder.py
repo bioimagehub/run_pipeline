@@ -68,8 +68,9 @@ def delete_environments(folder_path:str) -> None:
             remove_existing_env(env_name)
 
 if __name__ == "__main__":
-    delete_list_of_envs = False
+    delete_list_of_envs = False # does not accept argumets, just deletes a list of environments defined in the code
     
+    # Run normally with arguments
     if not delete_list_of_envs:    
         parser = argparse.ArgumentParser(description="Install Conda environments from YAML files.")
         parser.add_argument("environment_paths", type=str, nargs='?', 
@@ -90,8 +91,10 @@ if __name__ == "__main__":
         else:
             reinstall = args.reinstall
             install_conda_envs_from_yml(environment_path, reinstall)
-
-    else: # Delete a list of environments
+    
+    
+    # Delete a list of environments
+    else: 
         list= ["esrrf", 
                 "test", 
                 "test2",            
