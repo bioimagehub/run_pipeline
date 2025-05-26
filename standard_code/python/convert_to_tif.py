@@ -64,11 +64,29 @@ def process_file(input_file_path: str, output_tif_file_path: str, drift_correct_
             yaml.dump(metadata, f)
                 
     # Perform projection if requested
+    initial_dtype = img.data.dtype
     if projection_method == "max":
         img_data = np.max(img.data, axis=2, keepdims=True)
     elif projection_method == "sum":
         print("Warning: Using sum projection and with same dtype may cause pixels to saturate.")
         img_data = np.sum(img.data, axis=2, keepdims=True)
+        
+        # Change to a dtype of max uint16
+        if initial_dtype == np.uint8:
+            print(f"Number of saturated pixels: {np.sum(img_data > 255)}")
+            img_data = img_data.astype(np.uint8)
+            
+        elif initial_dtype == np.uint16:
+            print(f"Number of saturated pixels: {np.sum(img_data > 65535)}")
+            img_data = img_data.astype(np.uint16)
+        # elif initial_dtype == np.uint32:
+        #     print(f"Number of saturated pixels: {np.sum(img_data > 4294967295)}")
+        #     img_data = img_data.astype(np.uint32)
+        # elif initial_dtype == np.float32:
+        #     img_data = img_data.astype(np.float32)
+        else:
+            raise ValueError(f"Unsupported dtype: {initial_dtype}")
+
     elif projection_method == "mean":
         img_data = np.mean(img.data, axis=2, keepdims=True)
     elif projection_method == "median":
