@@ -76,12 +76,24 @@ def process_file(input_file_path: str, output_tif_file_path: str, drift_correct_
         with open(input_metadata_file_path, 'r') as f:
             metadata = yaml.safe_load(f)
     else:
-        metadata = get_all_metadata(input_file_path)
+        try:        
+            metadata = get_all_metadata(input_file_path)
+        except Exception as e:
+            print(f"Error retrieving metadata: {e} for file {input_file_path}. Using None.")
+            metadata = {"Error": f"Error retrieving metadata: {e} for file {input_file_path}. Using None."}
+            with open(os.path.splitext(output_tif_file_path)[0] + "_metadata_error.txt", 'w') as f:
+                f.write(f"Error retrieving physical pixel sizes: {e} for file {input_file_path}. Using None.\n")    
+   
         with open(input_metadata_file_path, 'w') as f:
             yaml.dump(metadata, f)
                 
     # Perform projection if requested
-    initial_dtype = img.data.dtype
+    try:
+        initial_dtype = img.data.dtype
+    except Exception as e:
+        print(f"Error: The image data does not have a 'dtype' attribute {e}.\n Skipping this file: {input_file_path}")
+        return   
+    
     if projection_method == "max":
         img_data = np.max(img.data, axis=2, keepdims=True)
     elif projection_method == "sum":
