@@ -2,7 +2,7 @@ import os
 import subprocess
 import argparse
 
-def install_conda_envs_from_yml(folder_path, reinstall=False):
+def install_conda_envs_from_yml(folder_path:str, reinstall:bool=False) -> None:
     if os.path.isdir(folder_path):
         for file_name in os.listdir(folder_path):
             if file_name.endswith(".yml"):
@@ -24,7 +24,7 @@ def install_conda_envs_from_yml(folder_path, reinstall=False):
             # Create the new conda environment
             create_conda_env(folder_path)
 
-def extract_env_name(yml_file_path):
+def extract_env_name(yml_file_path:str) -> None:
     """Extract the environment name from the YAML file by searching for the 'name' key."""
     with open(yml_file_path, 'r') as file:
         for line in file:
@@ -32,7 +32,7 @@ def extract_env_name(yml_file_path):
                 return line.split(':', 1)[1].strip()  # Get the value after 'name:'
     return None  # Return None if no name is found
 
-def remove_existing_env(env_name):
+def remove_existing_env(env_name:str) -> None:
     """Remove an existing conda environment."""
     try:
         print(f"Removing existing environment: {env_name}...")
@@ -41,7 +41,7 @@ def remove_existing_env(env_name):
     except subprocess.CalledProcessError:
         print(f"No existing environment {env_name} found. Continuing...")
 
-def create_conda_env(yml_file_path):
+def create_conda_env(yml_file_path:str, reinstall:bool=False) -> None:
     """Create a conda environment from the YAML file."""
     try:
         print(f"Creating environment from {yml_file_path}...")
@@ -54,7 +54,7 @@ def create_conda_env(yml_file_path):
             print(f"Found {yml_file_path} environment. Skipping. Use --reinstall to replace")
     print("")
 
-def delete_environments(folder_path):
+def delete_environments(folder_path:str) -> None:
     """Delete all environments defined in the YAML files under the given path."""
     if os.path.isdir(folder_path):
         for file_name in os.listdir(folder_path):
@@ -68,22 +68,51 @@ def delete_environments(folder_path):
             remove_existing_env(env_name)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Install Conda environments from YAML files.")
-    parser.add_argument("environment_paths", type=str, nargs='?', 
-                        help="Path to a directory with .yml files or a single .yml file (optional).")
-    parser.add_argument("--reinstall", action="store_true", 
-                        help="If passed, remove existing environments before installing.")
-    parser.add_argument("--delete", action="store_true", 
-                        help="If passed, remove all existing environments defined in .yml files.")
-
-    args = parser.parse_args()
+    delete_list_of_envs = False # does not accept argumets, just deletes a list of environments defined in the code
     
-    # Get the path of the provided argument or default to the current directory
-    environment_path = args.environment_paths if args.environment_paths else os.getcwd()
+    # Run normally with arguments
+    if not delete_list_of_envs:    
+        parser = argparse.ArgumentParser(description="Install Conda environments from YAML files.")
+        parser.add_argument("environment_paths", type=str, nargs='?', 
+                            help="Path to a directory with .yml files or a single .yml file (optional).")
+        parser.add_argument("--reinstall", action="store_true", 
+                            help="If passed, remove existing environments before installing.")
+        parser.add_argument("--delete", action="store_true", 
+                            help="If passed, remove all existing environments defined in .yml files.")
 
-    if args.delete:
-        print("Deleting environments...")
-        delete_environments(environment_path)
-    else:
-        reinstall = args.reinstall
-        install_conda_envs_from_yml(environment_path, reinstall)
+        args = parser.parse_args()
+        
+        # Get the path of the provided argument or default to the current directory
+        environment_path = args.environment_paths if args.environment_paths else os.getcwd()
+
+        if args.delete:
+            print("Deleting environments...")
+            delete_environments(environment_path)
+        else:
+            reinstall = args.reinstall
+            install_conda_envs_from_yml(environment_path, reinstall)
+    
+    
+    # Delete a list of environments
+    else: 
+        list= ["esrrf", 
+                "test", 
+                "test2",            
+                "bioio",        
+                "devbio-napari", 
+                "drift", 
+                "image", 
+                "measure", 
+                "nd2reader", 
+                "segment", 
+                "stardist_gpu", 
+                "image"]
+        
+        for env_name in list:
+            print(f"Removing existing environment: {env_name}...")
+            remove_existing_env(env_name)
+
+
+
+
+
