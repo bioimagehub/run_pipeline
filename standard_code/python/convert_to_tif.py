@@ -52,8 +52,25 @@ def process_file(input_file_path: str, output_tif_file_path: str, drift_correct_
     output_metadata_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
     output_shifts_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_shifts.npy"
 
+    if os.path.exists(output_metadata_file_path):
+        print(f"Metadata file already exists: {output_metadata_file_path}. Skipping metadata extraction.")
+        return
+
+
     img = rp.load_bioio(input_file_path)
-    physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
+    
+    
+    # img.physical_pixel_sizes can crash even with else statement, so we use a try-except block
+    try:
+        physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
+    except Exception as e:
+        print(f"Error retrieving physical pixel sizes: {e} for file {input_file_path}. Using None.")
+        
+        # save a txt file with the error
+        with open(os.path.splitext(output_tif_file_path)[0] + "_error.txt", 'w') as f:
+            f.write(f"Error retrieving physical pixel sizes: {e} for file {input_file_path}. Using None.\n")    
+
+        physical_pixel_sizes = (None, None, None)
 
     if os.path.exists(input_metadata_file_path):
         with open(input_metadata_file_path, 'r') as f:
