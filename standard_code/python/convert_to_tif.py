@@ -10,7 +10,7 @@ from bioio.writers import OmeTiffWriter
 # Local imports
 import run_pipeline_helper_functions as rp
 from extract_metadata import get_all_metadata
-
+from bioio import BioImage
 
 def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0, use_parallel: bool = True) -> tuple[np.ndarray, np.ndarray]:
     T, C, Z, Y, X = video.shape    
@@ -47,7 +47,28 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0,
                     
     return corrected_video, tmats
 
-def process_file(input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, use_parallel: bool = True, projection_method: str = None) -> None:
+def process_multipoint_file(input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, use_parallel: bool = True, projection_method: str = None) -> None:
+    """
+    Process a multipoint file and convert it to TIF format with optional drift correction.
+    """
+    img = rp.load_bioio(input_file_path)
+
+    for i, scene in enumerate(img.scenes):
+        img.set_scene(scene)
+        filename_base = os.path.splitext(os.path.basename(input_file_path))[0]
+        output_tif_file_path = os.path.join(os.path.dirname(output_tif_file_path), f"{filename_base}_S{i:02}.tif")
+        
+        # Process the scene
+        process_file(img = img,
+                input_file_path = input_file_path, 
+                output_tif_file_path = output_tif_file_path, 
+                drift_correct_channel = parsed_args.drift_correct_channel, 
+                use_parallel = True, 
+                projection_method = parsed_args.projection_method, 
+                multipoint_files = parsed_args.multipoint_files)
+    
+
+def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, use_parallel: bool = True, projection_method: str = None, multipoint_files:bool= False) -> None:
     input_metadata_file_path: str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
     output_metadata_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
     output_shifts_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_shifts.npy"
@@ -57,8 +78,8 @@ def process_file(input_file_path: str, output_tif_file_path: str, drift_correct_
         return
 
 
-    img = rp.load_bioio(input_file_path)
-    
+    # img = rp.load_bioio(input_file_path) Accepted as argumet to accomodate multipoint files
+
     
     # img.physical_pixel_sizes can crash even with else statement, so we use a try-except block
     try:
@@ -166,14 +187,40 @@ def process_folder(args: argparse.Namespace):
         output_tif_file_path: str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path: str = os.path.join(destination_folder, output_tif_file_path)
         
-        process_file(input_file_path, output_tif_file_path, args.drift_correct_channel, use_parallel=True, projection_method=args.projection_method)
+        
+        
+        if(parsed_args.multipoint_files):
+            print("Processing multipoint file.")
+            process_multipoint_file(input_file_path, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
+        else:        
+            img = rp.load_bioio(input_file_path)
+            process_file(img = img,
+                         input_file_path = input_file_path, 
+                         output_tif_file_path = output_tif_file_path, 
+                         drift_correct_channel = parsed_args.drift_correct_channel, 
+                         use_parallel = True, 
+                         projection_method = parsed_args.projection_method, 
+                         multipoint_files = parsed_args.multipoint_files)
+            
 
 def main(parsed_args: argparse.Namespace):
     print("main")
     if os.path.isfile(parsed_args.input_file_or_folder):
         print(f"Processing single file: {parsed_args.input_file_or_folder}")
         output_tif_file_path = os.path.splitext(parsed_args.input_file_or_folder)[0] + parsed_args.output_file_name_extension + ".tif"
-        process_file(parsed_args.input_file_or_folder, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
+        
+        if(parsed_args.multipoint_files):
+            print("Processing multipoint file.")
+            process_multipoint_file(parsed_args.input_file_or_folder, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
+        else:        
+            img = rp.load_bioio(parsed_args.input_file_or_folder)
+            process_file(img = img,
+                         input_file_path = parsed_args.input_file_or_folder, 
+                         output_tif_file_path = output_tif_file_path, 
+                         drift_correct_channel = parsed_args.drift_correct_channel, 
+                         use_parallel = True, 
+                         projection_method = parsed_args.projection_method, 
+                         multipoint_files = parsed_args.multipoint_files)
         
     elif os.path.isdir(parsed_args.input_file_or_folder):
         print(f"Processing folder: {parsed_args.input_file_or_folder}")
@@ -192,6 +239,7 @@ if __name__ == "__main__":
     parser.add_argument("--drift-correct-channel", type=int, default=-1, help="Channel for drift correction (default: -1, no correction)")
     parser.add_argument("--projection-method", type=str, default=None, help="Method for projection (options: max, sum, mean, median, min, std)")
     parser.add_argument("--output-file-name-extension", type=str, default="", help="Output file name extension (e.g., '_max', do not include '.tif')")
+    parser.add_argument("--multipoint-files", action="store_true", help="Store the output in a multipoint file /series as separate_files (default: False)")
 
     parsed_args = parser.parse_args()
 
