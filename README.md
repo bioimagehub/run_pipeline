@@ -34,7 +34,7 @@ run:
   - --collapse-delimiter: __
   - --drift-correct-channel: -1
   - --projection-method: max
-  last_processed: "2025-05-26"
+  last_processed: "2025-05-26" # If this line is present this part will be skipped. If you want to run just this part delete this line if you want to run everything use the  --force_reprocessing tag
 - name: Convert multipoint images to tif and collapse folder structure
   environment: convert_to_tif
   commands:
