@@ -110,6 +110,13 @@ def uncollapse_filename(collapsed: str, base_folder: str, delimiter: str = "__")
     return original_path
 
 
+def split_comma_separated_strstring(value:str) -> list[str]:
+    return list(map(str, value.split(',')))    
+
+def split_comma_separated_intstring(value:str) -> list[int]:
+    return list(map(int, value.split(',')))    
+
+
 if __name__ == "__main__":
     # Example usage
     folder_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input_tif"
