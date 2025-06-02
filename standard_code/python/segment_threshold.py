@@ -439,19 +439,25 @@ def remove_small_or_large_labels(mask: np.ndarray, label_info_list: Optional[lis
         new_mask: The updated mask with small/large labels removed.
         kept_labels: List of LabelInfo instances for the kept labels.
     """
+   
     if len(mask.shape) != 5:
         raise ValueError("Input image must be 5D (T, C, Z, Y, X)")
     
     if label_info_list is None:
+        print("No label_info_list provided, generating from mask.")
         label_info_list = LabelInfo.from_mask(mask)
+
+    # print(f"Before removing minsizes {min_sizes} and max sizes {max_sizes}: {len(label_info_list)} labels found in mask.")
     
     if channels is None:
+        print("No channels specified, returning original mask and label info.")
         return mask, label_info_list  # No channels specified, return original mask and label info
     
     if len(min_sizes) != len(channels) or len(max_sizes) != len(channels):
         raise ValueError("min_sizes and max_sizes must match the number of specified channels.")
     
-    if all(min_size <= 0 for min_size in min_sizes) and all(max_size >= np.inf for max_size in max_sizes): 
+    if all(min_size <= 0 for min_size in min_sizes) and all(max_size >= np.inf for max_size in max_sizes):
+        print("No size filtering needed, returning original mask and label info.") 
         return mask, label_info_list  # No size filtering needed, return original mask and label info
     
 
@@ -478,25 +484,44 @@ def remove_small_or_large_labels(mask: np.ndarray, label_info_list: Optional[lis
 
     # Create a new mask
     mask_out = np.zeros_like(mask, dtype=mask.dtype)
+    # print("mask out shape" ,mask_out.shape)
 
     # look in the labelinfo file and move over the labels (from mask) that are within the min and max size range
     
     for label_info in label_info_list:
-        ch = label_info.channel
-        npixels = label_info.npixels
-        if npixels > max_sizes[ch] or npixels < min_sizes[ch]:
+        ch_to_process = label_info.channel
+        
+        if ch_to_process not in channels:
             continue
         
+        
+        npixels = label_info.npixels
+        # print(npixels, max_sizes[ch], min_sizes[ch])
+        # get the index of the channel in the channels list
+        ch_index = channels.index(ch_to_process)  # Get the index of the channel in the channels list
+
+        if max_sizes[ch_index] < npixels:
+            continue
+        if npixels < min_sizes[ch_index]:
+            continue
+
         # Move the mask with this ID from the original mask to the new mask
         frame = label_info.frame
+        if frame not in frames:
+            continue
         plane = label_info.z_plane
+        if plane >= mask.shape[2]:
+            print(f"Warning: Skipping label {label_info.label_id} in frame {frame}, channel {ch_to_process}, plane {plane} due to out-of-bounds index.")
+            continue
+
         label_id = label_info.label_id
-
-
+        # print(f"Moving label {label_id} from frame {frame}, channel {ch_to_process}, plane {plane} with size {npixels} to new mask.")
         # This ID should be foved from input maksk to output mask
-        mask_out[frame, ch, plane][mask[frame, ch, plane] == label_id] = label_id
+        mask_out[frame, ch_to_process, plane][mask[frame, ch_to_process, plane] == label_id] = label_id
 
-    return mask_out, LabelInfo.from_mask(mask_out)
+    labelinfo_out = LabelInfo.from_mask(mask_out)
+    # print(f"After removing: {len(labelinfo_out)} labels found in mask.")
+    return mask_out, labelinfo_out
 
 
 def remove_on_edges(mask: np.ndarray, label_info_list: Optional[list[LabelInfo]], remove_xy_edges: bool = True, remove_z_edges: bool = False) -> tuple[np.ndarray, list[LabelInfo]]:
@@ -959,7 +984,7 @@ def process_file(
     def _remove_small_large(m: Mask, li: Optional[List[LabelInfo]]) -> Tuple[Mask, Optional[List[LabelInfo]]]:
         watershed_large_labels_bool: List[bool] = [ws > 0 for ws in watershed_large_labels]
         max_filters = [float('inf') if ws else max_sizes[i] for i, ws in enumerate(watershed_large_labels_bool)]
-        return remove_small_or_large_labels(m, li, min_sizes=min_sizes, max_sizes=max_filters)
+        return remove_small_or_large_labels(m, li, min_sizes=min_sizes, max_sizes=max_filters, channels=channels)
 
     steps.append(("remove_small_labels", _remove_small_large, True))
 
@@ -1000,6 +1025,7 @@ def process_file(
                 current_mask, produced_li = func(current_mask, current_labelinfo)
                 if produced_li is not None:
                     current_labelinfo = produced_li
+                    # print(f"Produced {len(current_labelinfo)} labels in step '{step_name}'")
                 _save(current_mask, current_labelinfo if uses_li else None, None, cache_base)
         except Exception as e:
             return _safe_return(f"Error during '{step_name}'", e, (current_mask, rois, current_labelinfo))
