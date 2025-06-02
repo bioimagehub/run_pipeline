@@ -9,8 +9,8 @@ The aim is to standardise workflows and to keep a detailed record of what type o
 - 
 ## Requirements
 - Tested on Windows, and Anaconda 
-- You need to have the anaconda environments that can run your code already installed
-- Python scripts that accepts input arguments
+- You need to have the anaconda environments that can run your code already installed.
+- Python scripts or command line scripts that accepts input arguments
 
 ## Installation
 
@@ -23,32 +23,34 @@ The aim is to standardise workflows and to keep a detailed record of what type o
 2. Make or copy a configuration file to the toplevel of your image folder. the configuration file could look something like this
 ```yaml
 run:
-- name: Collapse folder structure and save as .tif # A name that describes this part of the code
-  environment: drift # name of the python environment you want to call
-  commands: # This is a list of commands that you want to execute
-  - python
-  - ./standard_code/convert_to_tif.py " # You can add the full path to your code. things that start with ./ and ends with .py will be relative to this git repo
-  - --input_folder: ./input # Things that start with ./ will be relative to the yaml file
-  - --extension: .ims # remember the dot before extension
-  - --search_subfolders
-  - --collapse_delimiter: __
-  - --projection_method: sum
-- name: run find nuclei with threshold # Once the first run comand has been executed this will run.
-  environment: segment
+- name: Convert to tif and collapse folder structure
+  environment: convert_to_tif # your python environment ( must already be installed)
   commands:
   - python
-  - ./standard_code/segment_threshold.py
-  - --input_folder: ./input_tif
-  - --output_folder: ./output_nuc_mask
-  - --channels: 3
-  - --median_filter_size: 15
-  - --method: li
-  - --min_size: 10000
-  - --max_size: 55000
-  - --watershed_large_labels
-  - --remove_xy_edges
+  - ./standard_code/python/convert_to_tif.py # strings that start with ./ and ends with .py will use the location of the run_pipeline folder and is usefull for executing code in e.g. ./run_pipeline/standard_code/python
+  - --input-file-or-folder: ./input # strings that start with ./ with no endings are mapped relative to the yaml file. 
+  - --extension: .nd2
+  - --search-subfolders
+  - --collapse-delimiter: __
+  - --drift-correct-channel: -1
+  - --projection-method: max
+  last_processed: "2025-05-26"
+- name: Convert multipoint images to tif and collapse folder structure
+  environment: convert_to_tif
+  commands:
+  - python
+  - ./standard_code/python/convert_to_tif.py
+  - --input-file-or-folder: ./input_multipoint
+  - --extension: .nd2
+  - --search-subfolders
+  - --collapse-delimiter: __
+  - --drift-correct-channel: -1
+  - --projection-method: max
+  - --multipoint-files
+  last_processed: "2025-05-26"
 ```
 save this as a .yaml file in your experiment forder next to your folder with your images like this:
+
 ```bash
 Experiment Folder
 │   pipeline_config.yaml
@@ -59,7 +61,6 @@ Experiment Folder
         Image_3.nd2
         Image_4.nd2
 ```
-
 
 3. Make the python environemnts that you have defined in your configuration file or use `base`. For the example above you need to have an environment called `drift` that have the libraries to run `convert_to_tif.py`, and `segment` to run `segment_threshold.py`.
 
