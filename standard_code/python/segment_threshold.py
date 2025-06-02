@@ -1101,7 +1101,7 @@ def process_folder(args: argparse.Namespace) -> None:
         Parallel(n_jobs=-1)(
             delayed(process_file)(
                 input_path = input_file_path,
-                output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0]),
+                output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask.tif"),  # Example output naming
                 channels = args.channels,
                 median_filter_sizes = args.median_filter_sizes,
                 background_median_filter = args.background_median_filter_sizes,
@@ -1121,7 +1121,7 @@ def process_folder(args: argparse.Namespace) -> None:
         # print(f"Process {len(files_to_process)} file(s) sequentially ")
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
             # Define output file name
-            output_tif_file_name: str = os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0])
+            output_tif_file_name: str = os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask")  # Example output naming
             # Process file
             try:
 
@@ -1156,7 +1156,7 @@ def main(parsed_args: argparse.Namespace):
     # Check if the input is a file or a folder
     if os.path.isfile(parsed_args.input_file_or_folder):
         print(f"Processing single file: {parsed_args.input_file_or_folder}")
-        output_file_name = os.path.splitext(os.path.basename(parsed_args.input_folder))[0] + "_segmented.tif"  # Example output naming
+        output_file_name = os.path.splitext(os.path.basename(parsed_args.input_folder))[0] + "_mask"  # Example output naming
         output_file_path = os.path.join(parsed_args.output_folder, output_file_name)
         process_file(input_path = parsed_args.input_file_or_folder,
                  output_name = output_file_path,
@@ -1186,7 +1186,7 @@ if __name__ == "__main__":
     parser.add_argument("--channels", type=split_comma_separated_intstring, default=[0], help="List of channels to process (comma-separated, e.g., 0,1,2)")
     parser.add_argument("--tracking-channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")
     parser.add_argument("--median-filter-sizes", type=split_comma_separated_intstring, default=[10], help="Size(s) of the median filter (comma-separated, e.g., 10,20)")
-    parser.add_argument("--background-median-filter-sizes", type=split_comma_separated_intstring, default=[50], help="Size(s) of the background median filter (comma-separated, e.g., 50,100). If <= 0, background subtraction is skipped.")
+    parser.add_argument("--background-median-filter-sizes", type=split_comma_separated_intstring, default=[-1], help="Size(s) of the background median filter (comma-separated, e.g., 50,100). If <= 0, background subtraction is skipped.")
     parser.add_argument("--threshold-methods", type=split_comma_separated_strstring, default=["li"], help="Thresholding method(s) (comma-separated, e.g., li,otsu)")  # Use nargs='*' to accept space-separated
     parser.add_argument("--min-sizes", type=split_comma_separated_intstring, default=[10_000], help="Minimum size for processing. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
     parser.add_argument("--max-sizes", type=split_comma_separated_intstring, default=[55_000], help="Maximum size for processing. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
@@ -1224,7 +1224,8 @@ if __name__ == "__main__":
         parsed_args.median_filter_sizes[i] if i < len(parsed_args.median_filter_sizes) else parsed_args.median_filter_sizes[0]
         for i in range(num_channels)
     ]
-    
+
+    # print(parsed_args.background_median_filter_sizes)
     # if only one background median filter size is provided use it for all channels
     parsed_args.background_median_filter_sizes = [
         parsed_args.background_median_filter_sizes[i] if i < len(parsed_args.background_median_filter_sizes) else parsed_args.background_median_filter_sizes[0]
@@ -1256,5 +1257,6 @@ if __name__ == "__main__":
         for i in range(num_channels)
     ]
 
+    # print(f"Channels: {parsed_args.channels}")
     # Run
     main(parsed_args)
