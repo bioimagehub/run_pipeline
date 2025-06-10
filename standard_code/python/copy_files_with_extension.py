@@ -16,13 +16,15 @@ import run_pipeline_helper_functions as rp
 
 def process_folders(input_folders: List[str], suffixes: List[List[str]], output_path: str) -> None:
     # Make a copy of the input image in the output folder
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)  # Create the output folder if it doesn't exist
+    os.makedirs(output_path, exist_ok=True)  # Create the output folder if it doesn't exist
     
     # Initialize a list to hold mask paths for later use
     mask_paths: List[List[str]] = []
 
     # Iterate over each mask folder and its associated suffixes
     for mask_folder, mask_suffixes in zip(input_folders, suffixes):
+        
+        
         current_mask_files: List[str] = []
 
         # For each suffix, find matching mask files
@@ -37,12 +39,13 @@ def process_folders(input_folders: List[str], suffixes: List[List[str]], output_
 
                 # Ensure that the output file does not already exist
                 if os.path.exists(output_mask_path):
+                    continue # Skip copying if the file already exists
                     # Give the file a new name by appending a number to the end of the file name
-                    base_name, ext = os.path.splitext(mask_file_name)
-                    counter = 1
-                    while os.path.exists(output_mask_path):
-                        output_mask_path = os.path.join(output_path, f"{base_name}_{counter}{ext}")
-                        counter += 1
+                    # base_name, ext = os.path.splitext(mask_file_name)
+                    # counter = 1
+                    # while os.path.exists(output_mask_path):
+                    #     output_mask_path = os.path.join(output_path, f"{base_name}_{counter}{ext}")
+                    #     counter += 1
 
                 # Copy the mask file to the output folder
                 shutil.copyfile(mask_file, output_mask_path) # Assuming you have a function to copy files
