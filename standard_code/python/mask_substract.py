@@ -100,9 +100,24 @@ def process_folder(mask_paths: List[str], mask_suffixes: List[str], mask_channel
 
 
 if __name__ == "__main__":
-    mask_paths = [r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary", r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"]
-    mask_suffixes = ["_cp_masks.tif", "_mask.tif"]
-    mask_channels: List[int] = [0, 3]
-    output_folder = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"
-    parallel = False
-    process_folder(mask_paths=mask_paths, mask_suffixes=mask_suffixes, output_path=output_folder, output_suffix="_cyt.tif", mask_channels=mask_channels, parallel=parallel)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mask-folders", nargs=2, type=str, help="list of paths to mask1 and mask2. E.g. --mask-folders /path/to/mask1 /path/to/mask2")
+    parser.add_argument("--mask-suffixes",type=rp.split_comma_separated_strstring, help="comma separated list of suffixes for the masks. E.g. --mask-suffixes,_cp_mask.tif _mask.tif")
+    parser.add_argument("--mask-channels", type=rp.split_comma_separated_intstring, help="comma separated list of suffixes for the masks. E.g. --mask-suffixes,_cp_mask.tif _mask.tif")
+
+    parser.add_argument("--output-folder", type=str, help="Path to the output folder where processed images will be saved")
+    parser.add_argument("--output-suffix", type=str, help="Suffix for the output file E.g. --output-suffix _cyt.tif")
+    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
+    
+    parsed_args: argparse.Namespace = parser.parse_args()
+       
+    
+    #mask_paths = [r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary", r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"]
+    # mask_suffixes: List[str] = ["_cp_masks.tif", "_mask.tif"]
+    # mask_channels: List[int] = [0, 3]
+    # output_folder = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"
+    parallel = parsed_args.no_parallel == False # inverse
+
+    print(parsed_args)
+
+    process_folder(mask_paths=parsed_args.mask_folders, mask_suffixes=parsed_args.mask_suffixes, output_path=parsed_args.output_folder, output_suffix=parsed_args.output_suffix, mask_channels=parsed_args.mask_channels, parallel=parallel)
