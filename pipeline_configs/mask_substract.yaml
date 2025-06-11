@@ -1,0 +1,13 @@
+run:
+- name: Substract Nucleus from whole cell _mask.cp
+  environment: segment_threshold
+  commands:
+  - python
+  - ./standard_code/python/mask_substract.py
+  - --mask-folders: null
+  - ./output_summary
+  - ./output_summary
+  - --mask-suffixes: _cp_masks.tif,_mask.tif
+  - --mask-channels: 0,3
+  - --output-folder: ./output_summary
+  - --output-suffix: _cyt.tif
