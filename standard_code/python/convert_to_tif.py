@@ -12,38 +12,20 @@ import run_pipeline_helper_functions as rp
 from extract_metadata import get_all_metadata
 from bioio import BioImage
 
-def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0, use_parallel: bool = True) -> tuple[np.ndarray, np.ndarray]:
-    T, C, Z, Y, X = video.shape    
+def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    T, C, Z, _, _ = video.shape    
     corrected_video = np.zeros_like(video)
     
-    sr = StackReg(StackReg.RIGID_BODY)
+    sr = StackReg(StackReg.TRANSLATION)
 
     # Max-projection along Z for drift correction
     ref_stack = np.max(video[:, drift_correct_channel, :, :, :], axis=1)
     
-    print("\nFinding shifts:")
-    tmats = sr.register_stack(ref_stack, reference='previous', verbose=False, axis=0) 
-
-    # Parallel transform function
-    if use_parallel:
-        def apply_shift(t):
-            local_sr = StackReg(StackReg.RIGID_BODY)  
-            out = np.empty_like(video[t])
-            for c in range(C):
-                for z in range(Z):
-                    out[c, z] = local_sr.transform(video[t, c, z], tmats[t])
-            return out
-
-        # Parallel processing across frames
-        corrected_list = Parallel(n_jobs=-1)(
-            delayed(apply_shift)(t) for t in tqdm(range(T), desc="Applying shifts")
-        )
-        corrected_video = np.stack(corrected_list)
-    else:
-        for t in tqdm(range(T), desc="Applying shifts", unit="frame"):
-            for c in range(C):
-                for z in range(Z):
-                    corrected_video[t, c, z, :, :] = sr.transform(video[t, c, z, :, :], tmats[t])
+    tmats = sr.register_stack(ref_stack, reference='mean', verbose=False, axis=0) 
+    for t in range(T):
+        for c in range(C):
+            for z in range(Z):
+                corrected_video[t, c, z, :, :] = sr.transform(video[t, c, z, :, :], tmats[t])
                     
     return corrected_video, tmats
 
@@ -63,12 +45,11 @@ def process_multipoint_file(input_file_path: str, output_tif_file_path: str, dri
                 input_file_path = input_file_path, 
                 output_tif_file_path = output_tif_file_path, 
                 drift_correct_channel = parsed_args.drift_correct_channel, 
-                use_parallel = True, 
                 projection_method = parsed_args.projection_method, 
                 multipoint_files = parsed_args.multipoint_files)
     
 
-def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, use_parallel: bool = True, projection_method: str = None, multipoint_files:bool= False) -> None:
+def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, projection_method: str = None, multipoint_files:bool= False) -> None:
     input_metadata_file_path: str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
     output_metadata_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
     output_shifts_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_shifts.npy"
@@ -149,7 +130,7 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         img_data = img.data
         
     if drift_correct_channel > -1:
-        output_img, shifts = drift_correct_xy_parallel(img_data, drift_correct_channel, use_parallel=use_parallel)
+        output_img, shifts = drift_correct_xy_parallel(img_data, drift_correct_channel)
         OmeTiffWriter.save(output_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
         np.save(output_shifts_file_path, shifts)
 
@@ -176,55 +157,59 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         with open(output_metadata_file_path, 'w') as f:
             yaml.dump(metadata, f)
 
-def process_folder(args: argparse.Namespace):
+def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
     files_to_process = rp.get_files_to_process(args.input_file_or_folder, args.extension, args.search_subfolders)
 
     destination_folder = args.input_file_or_folder + "_tif"
     os.makedirs(destination_folder, exist_ok=True)
 
-    for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
+    def process_single_file(input_file_path):
         output_tif_file_path: str = rp.collapse_filename(input_file_path, args.input_file_or_folder, args.collapse_delimiter)
         output_tif_file_path: str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path: str = os.path.join(destination_folder, output_tif_file_path)
-        
-        
-        
-        if(parsed_args.multipoint_files):
-            print("Processing multipoint file.")
-            process_multipoint_file(input_file_path, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
-        else:        
-            img = rp.load_bioio(input_file_path)
-            process_file(img = img,
-                         input_file_path = input_file_path, 
-                         output_tif_file_path = output_tif_file_path, 
-                         drift_correct_channel = parsed_args.drift_correct_channel, 
-                         use_parallel = True, 
-                         projection_method = parsed_args.projection_method, 
-                         multipoint_files = parsed_args.multipoint_files)
-            
 
-def main(parsed_args: argparse.Namespace):
-    print("main")
+        if(parsed_args.multipoint_files):
+            print(f"Processing multipoint file: {input_file_path}.")
+            process_multipoint_file(input_file_path, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
+        else:
+            img = rp.load_bioio(input_file_path)
+            process_file(img=img,
+                         input_file_path=input_file_path, 
+                         output_tif_file_path=output_tif_file_path, 
+                         drift_correct_channel=parsed_args.drift_correct_channel, 
+                         projection_method=parsed_args.projection_method, 
+                         multipoint_files=parsed_args.multipoint_files)
+
+    if parallel:
+        # Parallel processing for each file
+        Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in tqdm(files_to_process, desc="Processing files", unit="file"))
+    else:
+        # Sequential processing for each file
+        for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
+            process_single_file(input_file_path)
+
+
+def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
+    
     if os.path.isfile(parsed_args.input_file_or_folder):
         print(f"Processing single file: {parsed_args.input_file_or_folder}")
         output_tif_file_path = os.path.splitext(parsed_args.input_file_or_folder)[0] + parsed_args.output_file_name_extension + ".tif"
         
         if(parsed_args.multipoint_files):
             print("Processing multipoint file.")
-            process_multipoint_file(parsed_args.input_file_or_folder, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
+            process_multipoint_file(parsed_args.input_file_or_folder, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=parallel, projection_method=parsed_args.projection_method)
         else:        
             img = rp.load_bioio(parsed_args.input_file_or_folder)
             process_file(img = img,
                          input_file_path = parsed_args.input_file_or_folder, 
                          output_tif_file_path = output_tif_file_path, 
                          drift_correct_channel = parsed_args.drift_correct_channel, 
-                         use_parallel = True, 
                          projection_method = parsed_args.projection_method, 
                          multipoint_files = parsed_args.multipoint_files)
         
     elif os.path.isdir(parsed_args.input_file_or_folder):
         print(f"Processing folder: {parsed_args.input_file_or_folder}")
-        process_folder(parsed_args)
+        process_folder(parsed_args, parallel=parallel)
         
     else:
         print("Error: The specified path is neither a file nor a folder.")
@@ -240,10 +225,12 @@ if __name__ == "__main__":
     parser.add_argument("--projection-method", type=str, default=None, help="Method for projection (options: max, sum, mean, median, min, std)")
     parser.add_argument("--output-file-name-extension", type=str, default="", help="Output file name extension (e.g., '_max', do not include '.tif')")
     parser.add_argument("--multipoint-files", action="store_true", help="Store the output in a multipoint file /series as separate_files (default: False)")
+    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
 
     parsed_args = parser.parse_args()
 
+    parallel = parsed_args.no_parallel == False # inverse
 
 
     parsed_args.projection_method
-    main(parsed_args)
+    main(parsed_args, parallel=parallel)
