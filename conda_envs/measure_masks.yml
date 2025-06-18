@@ -19,3 +19,4 @@ dependencies:
       - bioio-tifffile
       - bioio_nd2
       - "roifile[all]"
+      - openpyxl
