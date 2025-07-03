@@ -344,12 +344,13 @@ def subtract_background_median_filter(image: np.ndarray, kernel_sizes: Optional[
 
     return result.astype(image.dtype)
 
+
 def apply_threshold(
     image: np.ndarray,
     methods: Optional[Sequence[str]] = None,
     channels: Optional[Sequence[int]] = None,
     frames: Optional[Sequence[int]] = None
-) -> Tuple[Mask, list[LabelInfo]]:
+) -> Tuple[np.ndarray, list]:
     """Apply thresholding method to a 5D TCZYX image and return a labeled 5D mask and a list of LabelInfo."""
 
     if methods is None:
@@ -370,30 +371,39 @@ def apply_threshold(
 
     mask_out: np.ndarray = np.zeros((t, c, z, y, x), dtype=np.uint16)
 
+    # Compute one threshold per channel using all frames
+    channel_thresholds = {}
+    for channel_idx, channel in enumerate(channels):
+        method_name = methods[channel_idx]
+        threshold_fn = threshold_methods.get(method_name)
+        if threshold_fn is None:
+            raise ValueError(f"Unsupported method: {method_name}. Supported methods are: {list(threshold_methods.keys())}")
+
+        # Stack all Z-slices from all frames into a single flat array
+        data_for_threshold = image[frames, channel].reshape(-1)
+        try:
+            channel_thresholds[channel] = threshold_fn(data_for_threshold)
+        except Exception as e:
+            raise RuntimeError(f"Thresholding failed for channel {channel} with method {method_name}: {e}")
+
+    # Apply threshold per channel across all timepoints
     for frame in frames:
-        for channel_idx, channel in enumerate(channels):
-            method_name = methods[channel_idx]
-            threshold_fn = threshold_methods.get(method_name)
-            if threshold_fn is None:
-                raise ValueError(f"Unsupported method: {method_name}. Supported methods are: {list(threshold_methods.keys())}")
+        for channel in channels:
+            thresh = channel_thresholds[channel]
 
             for z_plane in range(z):
                 img_plane = image[frame, channel, z_plane]
-                try:
-                    thresh = threshold_fn(img_plane)
-                    binary = img_plane > thresh
-                except Exception as e:
-                    print(f"Threshold failed on T={frame}, C={channel}, Z={z_plane}: {e}")
-                    continue
-
+                binary = img_plane > thresh
                 labeled = label(binary)
-                if isinstance(labeled, tuple):
-                    labeled = labeled[0]  # Extract the labeled array if a tuple is returned
 
-                if np.max(np.asarray(labeled)) > (2 ** 16) - 1:
-                    raise ValueError(f"Too many labels in T={frame}, C={channel}, Z={z_plane}. Consider using higher bit depth.")
+                if isinstance(labeled, tuple):  # safety check
+                    labeled = labeled[0]
 
-                mask_out[frame, channel, z_plane] = np.asarray(labeled).astype(np.uint16)
+                labeled = np.asarray(labeled)  # ensure it's an array
+                if labeled.max() > (2 ** 16 - 1):
+                    raise ValueError(f"Too many labels in T={frame}, C={channel}, Z={z_plane}. Use higher bit depth.")
+
+                mask_out[frame, channel, z_plane] = labeled.astype(np.uint16)
 
     return mask_out, LabelInfo.from_mask(mask_out)
 
@@ -829,7 +839,6 @@ def process_file(
     min_sizes: Optional[List[float]] = None,
     max_sizes: Optional[List[float]] = None,
     watershed_large_labels: Optional[List[int]] = None,  # [-1] means disabled
-    tracking_channel: Optional[int] = None,  # None -> auto, -1 -> skip tracking
     remove_xy_edges: bool = True,
     remove_z_edges: bool = False,
     tmp_output_folder: Optional[Union[str, Path]] = None,
@@ -859,7 +868,6 @@ def process_file(
     min_sizes = min_sizes or [-float('inf')]
     max_sizes = max_sizes or [float('inf')]
     watershed_large_labels = watershed_large_labels or [-1]
-    tracking_channel = tracking_channel or -1 
     
     # Length consistency checks.
     def _check_len(name: str, value: List[Any]) -> None:
@@ -912,7 +920,6 @@ def process_file(
                 metadata: Dict[str, Any] = yaml.safe_load(fh)
             metadata["Threshold segmentation"] = {
                 "Channels": channels,
-                "Tracking channel": tracking_channel,
                 "Median filter sizes": dict(zip(channels, median_filter_sizes)),
                 "Threshold methods": dict(zip(channels, threshold_methods)),
                 "Min size": min_sizes,
@@ -1034,7 +1041,7 @@ def process_file(
 
     # -------------------------------------------------------------------------
     # 8. tracking (if applicable)
-    if img.dims.T > 1 and tracking_channel != -1:
+    if img.dims.T > 1:
         step_name = "tracking"
         cache_base = _make_cache_path(input_path_p, channels, len(steps) + 1, step_name, tmp_dir_p)
         try:
@@ -1043,11 +1050,12 @@ def process_file(
                 current_labelinfo = LabelInfo.load(str(cache_base.with_name(f"{cache_base.name}_labelinfo.yaml")))  # Load cached label info
             else:
                 from track_indexed_mask import track_labels_with_trackpy  # Local import
-                df_tracked, current_mask = track_labels_with_trackpy(current_mask, channel_zero_base=tracking_channel)  # Tracking processing
+                df_tracked, current_mask = track_labels_with_trackpy(current_mask)  # Tracking processing
                 current_labelinfo = LabelInfo.from_mask(current_mask)  # Convert mask to label info
                 _save(current_mask, current_labelinfo, None, cache_base)
                 if cache_base:
                     df_tracked.to_csv(str(cache_base) + ".tsv", sep="\t", index=False)  # Save tracking data
+
         except Exception as e:
             return _safe_return("Error during 'tracking'", e, (current_mask, rois, current_labelinfo))
 
@@ -1105,7 +1113,6 @@ def process_folder(args: argparse.Namespace) -> None:
                 channels = args.channels,
                 median_filter_sizes = args.median_filter_sizes,
                 background_median_filter = args.background_median_filter_sizes,
-                tracking_channel = args.tracking_channel,
                 threshold_methods = args.threshold_methods,
                 min_sizes = args.min_sizes,
                 max_sizes = args.max_sizes,
@@ -1129,7 +1136,6 @@ def process_folder(args: argparse.Namespace) -> None:
                     input_path = input_file_path,
                     output_name = output_tif_file_name,
                     channels = args.channels,
-                    tracking_channel = args.tracking_channel,
                     median_filter_sizes = args.median_filter_sizes,
                     threshold_methods = args.threshold_methods,
                     background_median_filter = args.background_median_filter_sizes,
@@ -1161,7 +1167,6 @@ def main(parsed_args: argparse.Namespace):
         process_file(input_path = parsed_args.input_file_or_folder,
                  output_name = output_file_path,
                  channels = parsed_args.channels,
-                 tracking_channel = parsed_args.tracking_channel, 
                  median_filter_sizes = parsed_args.median_filter_sizes,
                  background_median_filter= parsed_args.background_median_filter_sizes,
                  threshold_methods = parsed_args.threshold_methods,   
@@ -1184,13 +1189,12 @@ if __name__ == "__main__":
     parser.add_argument("--input-file-or-folder", type=str, help="Path to the file or folder to be processed.")
     parser.add_argument("--output-folder", type=str, help="Output folder for processed files")
     parser.add_argument("--channels", type=split_comma_separated_intstring, default=[0], help="List of channels to process (comma-separated, e.g., 0,1,2)")
-    parser.add_argument("--tracking-channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")
     parser.add_argument("--median-filter-sizes", type=split_comma_separated_intstring, default=[10], help="Size(s) of the median filter (comma-separated, e.g., 10,20)")
     parser.add_argument("--background-median-filter-sizes", type=split_comma_separated_intstring, default=[-1], help="Size(s) of the background median filter (comma-separated, e.g., 50,100). If <= 0, background subtraction is skipped.")
     parser.add_argument("--threshold-methods", type=split_comma_separated_strstring, default=["li"], help="Thresholding method(s) (comma-separated, e.g., li,otsu)")  # Use nargs='*' to accept space-separated
     parser.add_argument("--min-sizes", type=split_comma_separated_intstring, default=[10_000], help="Minimum size for processing. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
     parser.add_argument("--max-sizes", type=split_comma_separated_intstring, default=[55_000], help="Maximum size for processing. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
-    parser.add_argument("--watershed-large-labels",type=split_comma_separated_strstring, default=[-1], help="Split objects larger than max_size with watershed, use -1 to disable. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
+    parser.add_argument("--watershed-large-labels",type=split_comma_separated_strstring, default=[-1], help="If True, large labels will be split using watershed. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels. Use 'True' or 'False' as strings.")
     parser.add_argument("--remove-xy-edges", action="store_true", help="Remove edges in XY")
     parser.add_argument("--remove-z-edges", action="store_true", help="Remove edges in Z")
     parser.add_argument("--tmp-output-folder", type=str, help="Save intermediate steps in tmp_output_folder")
