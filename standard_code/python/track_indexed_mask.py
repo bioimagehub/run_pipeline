@@ -41,7 +41,7 @@ def track_labels_with_trackpy(indexed_masks, output_mask_path: Optional[str] = N
         df = pd.DataFrame(records)
 
         if df.empty:
-            print(f"No labels found in channel {channel}, skipping.")
+            #print(f"No labels found in channel {channel}, skipping.")
             continue
 
         logging.getLogger('trackpy').setLevel(logging.ERROR)

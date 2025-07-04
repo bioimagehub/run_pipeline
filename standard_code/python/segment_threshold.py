@@ -1096,20 +1096,20 @@ def process_file(
     return current_mask, rois, current_labelinfo
 
 
-def process_folder(args: argparse.Namespace) -> None:     
+def process_folder(args: argparse.Namespace, parallel:bool) -> None:     
     # Find files to process
     files_to_process = rp.get_files_to_process(args.input_file_or_folder, ".tif", search_subfolders=False)
 
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
-    if args.use_parallel:  # Process each file in parallel
+    if parallel:  # Process each file in parallel
         # raise NotImplementedError
         
         Parallel(n_jobs=-1)(
             delayed(process_file)(
                 input_path = input_file_path,
-                output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask.tif"),  # Example output naming
+                output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask"),  # Example output naming
                 channels = args.channels,
                 median_filter_sizes = args.median_filter_sizes,
                 background_median_filter = args.background_median_filter_sizes,
@@ -1154,7 +1154,7 @@ def process_folder(args: argparse.Namespace) -> None:
                 print(f"Error processing {input_file_path}: {e}")
                 continue
 
-def main(parsed_args: argparse.Namespace):
+def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
     # -------------------------------------------------------------------------
     # Check if its a file or a folder and process accordingly
     # -----------------------------------
@@ -1178,7 +1178,7 @@ def main(parsed_args: argparse.Namespace):
         
     elif os.path.isdir(parsed_args.input_file_or_folder):
         print(f"Processing folder: {parsed_args.input_file_or_folder}")
-        process_folder(parsed_args)
+        process_folder(parsed_args, parallel)
         
     else:
         print("Error: The specified path is neither a file nor a folder.")
@@ -1198,7 +1198,7 @@ if __name__ == "__main__":
     parser.add_argument("--remove-xy-edges", action="store_true", help="Remove edges in XY")
     parser.add_argument("--remove-z-edges", action="store_true", help="Remove edges in Z")
     parser.add_argument("--tmp-output-folder", type=str, help="Save intermediate steps in tmp_output_folder")
-    parser.add_argument("--use-parallel", action="store_true", help="Use parallel computing")
+    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
     parser.add_argument("--yaml-file-extension", type=str, default="_metadata.yaml", help="Extension relative to basename of input image name")
     parser.add_argument("--sys-exit-after-step", type=str, default=None, help="Exit after a specific step (e.g., median_filter, background_subtract, thresholding, remove_small_labels, remove_edges, fill_holes, watershed, tracking, generate_rois) for debugging purposes. If None, will process all steps.")
     parsed_args = parser.parse_args()
@@ -1209,7 +1209,8 @@ if __name__ == "__main__":
     
     # -------------------------------------------------------------------------
     # Check if the input is correct -------------------------------------------
-    
+    parallel = parsed_args.no_parallel == False # inverse
+
     # -------------------------------------------------------------------------
     # Valid sys_exit_after_step input
     if parsed_args.sys_exit_after_step not in SysExitStepList:
@@ -1263,4 +1264,4 @@ if __name__ == "__main__":
 
     # print(f"Channels: {parsed_args.channels}")
     # Run
-    main(parsed_args)
+    main(parsed_args, parallel=parallel)

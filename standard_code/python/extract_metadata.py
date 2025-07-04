@@ -38,6 +38,7 @@ def get_nd2_roi_metadata(file_path):
     try:
         with ND2Reader(file_path) as images:
             metadata = images.metadata
+            print(metadata)
     
     except Exception as e:
         print(f"Error reading metadata: {e}")
@@ -49,7 +50,6 @@ def get_nd2_roi_metadata(file_path):
         
         # Access ROIs from metadata
         rois = metadata.get('rois', [])
-        print(len(rois))
     
     except Exception as e:
         print(f"Error counting rois: {e}")
@@ -61,6 +61,7 @@ def get_nd2_roi_metadata(file_path):
     try:    
         # Loop through each ROI to extract position and size information
         for roi in rois:
+            #print(roi)
             positions = roi.get('positions', [])
             sizes = roi.get('sizes', [])
             shape = roi.get('shape', 'unknown')  # Extract shape if available
@@ -117,8 +118,8 @@ if __name__ == "__main__":
 
 
     parser = argparse.ArgumentParser(description="Extract metadata from a BioImage file.")
-    parser.add_argument("-i", "--input_file", type=str, required=True, help="Path to the input BioImage file")
-    parser.add_argument("-o", "--output_file", type=str, required=False, help="Path to save the metadata YAML file")
+    parser.add_argument("-i", "--input-file", type=str, required=True, help="Path to the input BioImage file")
+    parser.add_argument("-o", "--output-file", type=str, required=False, help="Path to save the metadata YAML file")
 
     args = parser.parse_args()
 

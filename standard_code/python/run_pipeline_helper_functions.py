@@ -1,8 +1,65 @@
 from bioio import BioImage
 import os
 import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_bioformats
+import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
+import numpy as np
 
-def load_bioio(path: str) -> BioImage:
+def plot_masks(*args:tuple[np.ndarray, str], metadata=None, save_image_to_path = None):
+    """
+    Plots a variable number of masks with their corresponding titles and optionally overlays ROI metadata.
+
+    Parameters:
+    - args: A sequence of tuples, where each tuple is (mask, title).
+    - metadata: Optional dict containing ROI information under ['Image metadata']['ROIs'].
+    """
+    num_masks = len(args)
+    fig, ax = plt.subplots(1, num_masks, figsize=(num_masks * 6, 6))
+
+    if num_masks == 1:
+        ax = [ax]  # Make iterable if only one subplot
+
+    for i, (mask, title) in enumerate(args):
+        ax[i].imshow(mask, cmap='gray' if i == 0 else 'plasma')
+        ax[i].set_title(title)
+        ax[i].axis('off')
+
+        if metadata is not None:
+            try:
+                rois = metadata.get("Image metadata", {}).get("ROIs", [])
+                for roi in rois:
+                    roi_data = roi.get("Roi", {})
+                    pos = roi_data.get("Positions", {})
+                    size = roi_data.get("Size", {})
+
+                    x = pos.get("x", None)
+                    y = pos.get("y", None)
+                    sx = size.get("x", None)
+                    sy = size.get("y", None)
+
+                    if None not in (x, y, sx, sy):
+                        ellipse = Ellipse(
+                            (x, y),
+                            width=sx,
+                            height=sy,
+                            edgecolor='red',
+                            facecolor='none',
+                            linewidth=2
+                        )
+                        ax[i].add_patch(ellipse)
+
+            except Exception as e:
+                print(f"Error drawing ROIs: {e}")
+    # Save the plot if a save folder is provided
+    if save_image_to_path:
+        fig.savefig(save_image_to_path)
+        plt.close(fig)  # Close the figure to free memory
+    else:
+        plt.show()
+
+
+
+def load_bioio(path: str) -> BioImage|None:
     """
     Load a BioImage object from a file. The file format is determined by the file extension.
     :param args: Command line arguments containing the input file path.
@@ -10,6 +67,8 @@ def load_bioio(path: str) -> BioImage:
     """
     # Load the image using the appropriate reader based on the file extension   
     if path.endswith(".tif"):
+        #print("Loading TIF file:", path)
+        # Try to load as OME-TIF first, then generic TIF
         
         try: # Will work for ometif
             # import bioio_ome_tiff
@@ -37,6 +96,7 @@ def load_bioio(path: str) -> BioImage:
     elif path.endswith(".nd2"):
         # import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
+        return img
     
     
     # TODO Add more readers here if needed
@@ -44,8 +104,9 @@ def load_bioio(path: str) -> BioImage:
         # Bioformats has this annoying printout so I prefer to use a different reader 
         # import bioio_bioformats
         img = BioImage(path, reader=bioio_bioformats.Reader)
+        return img
     
-    return img
+    return  
 
 def get_files_to_process(folder_path: str, extension: str, search_subfolders: bool) -> list:
     """
