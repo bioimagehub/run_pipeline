@@ -36,7 +36,7 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
         physical_pixel_sizes = (None, None, None)
 
     # Prepare to store the indexed mask with edges defined
-    indexed_mask = np.zeros_like(mask.data, dtype=np.int32)
+    indexed_mask = np.zeros_like(mask.data, dtype=np.int8)
 
     # Compute edges and defined distances
     for mask_frame in range(t):
@@ -53,31 +53,40 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
                     object_mask = (mask_2d == object_id).astype(np.uint8)
 
                     # Calculate the distance to the edge of the object
-                    result = distance_transform_edt(object_mask == 0)
+                    result = distance_transform_edt(object_mask == object_id)
 
                     if isinstance(result, np.ndarray):
-                        distance_to_edge_mask = result
+                        distance_to_outside = result
                     else:
                         print("Warning: distance_transform_edt returned unexpected type. Skipping this object.")
                         continue
                         
+                    result = distance_transform_edt(object_mask == 0)
 
-                    # Calculate distance masks
-                    # Ensure to check that distance_inside and distance_outside are valid integers before comparisons
-                    if isinstance(distance_inside, int) and distance_inside >= 0:
-                        distance_inside_mask = distance_to_edge_mask <= distance_inside
+                    if isinstance(result, np.ndarray):
+                        distance_to_inside = result
                     else:
-                        distance_inside_mask = np.zeros_like(mask_2d, dtype=bool)
+                        print("Warning: distance_transform_edt returned unexpected type. Skipping this object.")
+                        continue
 
-                    if isinstance(distance_outside, int) and distance_outside >= 0:
-                        distance_outside_mask = (distance_to_edge_mask > distance_inside) & \
-                                                (distance_to_edge_mask <= (distance_inside + distance_outside))
-                    else:
-                        distance_outside_mask = np.zeros_like(mask_2d, dtype=bool)
+                    global_distance_mask = distance_to_outside - distance_to_inside
+                    
+                    # Set the min and max values for the distance mas
+                    min_val, max_val = 0, 0
+                    if (distance_inside > 0):
+                        max_val = distance_inside
+                    if (distance_outside > 0):
+                        min_val = 0 - distance_outside
+                    
+                    # set values outside the range to 0 and inside the range to the object id
+                    
+                    global_distance_mask[(global_distance_mask < min_val) | (global_distance_mask > max_val)] = 0
+                    global_distance_mask[global_distance_mask >0 ] = object_id
+                    
+                    
 
                     # Set the index for the defined edges
-                    indexed_mask[mask_frame, mask_channel, mask_zslice, :, :][distance_inside_mask] = object_id
-                    indexed_mask[mask_frame, mask_channel, mask_zslice, :, :][distance_outside_mask] = object_id
+                    indexed_mask[mask_frame, mask_channel, mask_zslice, :, :] = global_distance_mask
 
     # Save the indexed mask
     output_file_path = f"{output_file_basename}_edge_mask.tif"
