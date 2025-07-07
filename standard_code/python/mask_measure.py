@@ -122,6 +122,9 @@ def process_file(arguments: Tuple[str, str, List[str]]):
     image_name, base_name, masks = arguments
     print(f"Processing {image_name}")
     img = rp.load_bioio(image_name)
+    if img is None:
+        print(f"Warning: Could not load image {image_name}. Skipping.")
+        return base_name, pd.DataFrame()  # return empty DataFrame if image loading fails
     
     results = []
 
@@ -132,6 +135,11 @@ def process_file(arguments: Tuple[str, str, List[str]]):
 
                 for mask_path in masks:
                     mask = rp.load_bioio(mask_path)
+                    if mask is None:
+                        print(f"Warning: Could not load mask {mask_path}. Skipping.")
+                        continue
+
+
                     mask_suffix = os.path.splitext(os.path.basename(mask_path.replace(base_name, "")))[0]
                     mask_suffix = mask_suffix.replace("_", "")
 
@@ -193,7 +201,8 @@ def process_folder(image_folder: str,
                 matched_files[mask_base_name].append(mask_path)
             else:
                 print(f"Warning: Could not find base name '{mask_base_name}' in input folder for mask '{mask_path}'")
-
+    #print(matched_files)
+    
     # Prepare arguments for parallel processing
     process_args = [
         (os.path.join(image_folder, f"{base_name}{image_suffix}"), base_name, masks)
