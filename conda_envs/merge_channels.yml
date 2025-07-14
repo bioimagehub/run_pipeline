@@ -5,6 +5,8 @@ dependencies:
   - python=3.12  # Specify your desired Python version
   - numpy
   - tqdm
+  - matplotlib
+  - nd2reader
   - pyyaml  # For the yaml import
   - joblib
   - pip

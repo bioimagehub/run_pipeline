@@ -9,6 +9,7 @@ dependencies:
   - numpy
   - opencv
   - matplotlib
+  - nd2reader
   - tifffile
   - tqdm
   - joblib

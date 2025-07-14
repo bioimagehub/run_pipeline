@@ -6,11 +6,7 @@ import numpy.typing as npt
 from scipy.ndimage import distance_transform_edt
 from bioio.writers import OmeTiffWriter
 
-
 import run_pipeline_helper_functions as rp
-
-
-
 
 def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
@@ -81,18 +77,14 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
                     # set values outside the range to 0 and inside the range to the object id
                     
                     global_distance_mask[(global_distance_mask < min_val) | (global_distance_mask > max_val)] = 0
-                    global_distance_mask[global_distance_mask >0 ] = object_id
-                    
-                    
-
+                    global_distance_mask[global_distance_mask !=0 ] = object_id # All neg and pos values are set to the object id
+                                        
                     # Set the index for the defined edges
                     indexed_mask[mask_frame, mask_channel, mask_zslice, :, :] = global_distance_mask
 
     # Save the indexed mask
-    output_file_path = f"{output_file_basename}_edge_mask.tif"
+    output_file_path = f"{output_file_basename}_edge.tif"
     OmeTiffWriter.save(indexed_mask, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
-
-
   
 def process_folder(args: argparse.Namespace):
     files_to_process = rp.get_files_to_process(args.input_folder, args.input_extension, False)
@@ -103,8 +95,6 @@ def process_folder(args: argparse.Namespace):
         #mask_path = os.path.join(args.input_folder, os.path.splitext(os.path.basename(input_file_path))[0] + args.input_extension)
         process_file(mask_path = input_file_path, output_folder_path = args.output_folder, distance_inside=args.distance_inside, distance_outside=args.distance_outside)
 
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a folder (or file) of masks and convert indexed masks to distance matrix")
     parser.add_argument("--input-folder", type=str, help="Path to the indexed mask or folder with indexed masks to be processed. (must be file if file, and folder if folder in --input-file)")
@@ -113,9 +103,8 @@ if __name__ == "__main__":
     parser.add_argument("--distance-outside", type=int, default= 3, help="How far outside the object should the mask be extended? (default: 3 pixels)")
     parser.add_argument("--output-folder", type=str, help="Path to the file or folder to be processed.")
     parsed_args = parser.parse_args()
-
+    
     if not parsed_args.output_folder:
         parsed_args.output_folder = parsed_args.input_folder
-
+        
     process_folder(parsed_args)
-

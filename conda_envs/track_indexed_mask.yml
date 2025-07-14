@@ -7,6 +7,8 @@ dependencies:
   - tqdm
   - numpy
   - trackpy
+  - matplotlib
+  - nd2reader
   - scipy 
   - pip
   - pip:

@@ -124,4 +124,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     metadata = get_all_metadata(input_file = args.input_file, output_file= args.output_file)
-    print(metadata)
+    #print(metadata)

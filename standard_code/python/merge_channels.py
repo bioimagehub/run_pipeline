@@ -45,7 +45,7 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
         # Parse merge_channels string to list of channel groups
         channel_groups = json.loads(merge_channels)  # e.g. [[0,1], [2], [3,4]]
         channel_groups = [g if isinstance(g, list) else [g] for g in channel_groups] # Ensure all groups are lists
-
+        #print(channel_groups)
 
         output_channels = []
 
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument("--input-folder", type=str, required=True, help="Path to the input folder containing BioImage files")
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
     #TODO add merge channels argument
-    parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4] to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
+    parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
 
     args = parser.parse_args()
 

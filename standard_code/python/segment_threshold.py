@@ -31,6 +31,7 @@ import yaml
 
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union, Literal, Dict, Any
+
 from collections.abc import Sequence
 import sys
 import yaml
@@ -798,8 +799,8 @@ def mask_to_rois(mask: np.ndarray, label_info_list: list[LabelInfo]) -> list[Ima
     # Filter out empty outlines
     nonempty_outlines = [outline for outline in outlines if outline.shape[0] > 0]
 
-    if len(nonempty_outlines) < len(outlines):
-        print(f"Empty outlines found, saving {len(nonempty_outlines)} ImageJ ROIs to .zip archive.")
+    # if len(nonempty_outlines) < len(outlines):
+    #     print(f"Empty outlines found, saving {len(nonempty_outlines)} ImageJ ROIs to .zip archive.")
 
     rois = [ImagejRoi.frompoints(outline) for outline in nonempty_outlines]
 
@@ -826,7 +827,6 @@ def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
 # Main processing functions
 # -----------------------------------------------------------------------------
 
-from typing import Tuple, Optional, List, Union
 
 def process_file(
     input_path: Union[str, Path],
