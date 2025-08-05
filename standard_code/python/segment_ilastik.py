@@ -7,13 +7,9 @@ import numpy as np
 from bioio.writers import OmeTiffWriter
 from skimage.measure import label
 
-
 from segment_threshold import LabelInfo, remove_small_or_large_labels, remove_on_edges, fill_holes_indexed
 from track_indexed_mask import track_labels_with_trackpy
 import run_pipeline_helper_functions as rp
-
-
-
 
 
 def process_file(args, input_file):
@@ -21,14 +17,14 @@ def process_file(args, input_file):
     out_np_file = os.path.join(args.input_folder, os.path.splitext(os.path.basename(input_file))[0] + "_segmentation.np")
     output_tif_file_path = os.path.join(args.output_folder, os.path.basename(os.path.splitext(out_np_file)[0]) + ".tif")
 
-    # subprocess.run([
-    #     args.ilastik_path,
-    #     '--headless',
-    #     f'--project="{args.project_path}"',
-    #     '--export_source=simple segmentation',
-    #     f'--raw_data="{input_file}"',
-    #     f'--output_filename_format="{out_file}"'
-    # ])
+    subprocess.run([
+        args.ilastik_path,
+        '--headless',
+        f'--project="{args.project_path}"',
+        '--export_source=simple segmentation',
+        f'--raw_data="{input_file}"',
+        f'--output_filename_format="{out_np_file}"'
+    ])
 
 
     f = h5py.File(os.path.splitext(out_np_file)[0] + ".h5", 'r')

@@ -14,7 +14,7 @@ from extract_metadata import get_all_metadata
 
 
 
-def process_file(input_file_path: str, output_tif_file_path: str, merge_channels: str, paralell: bool = True) -> None:
+def process_file(input_file_path: str, output_tif_file_path: str, merge_channels: str, output_format: str = "tif", output_dim_order: str = "TCZYX", paralell: bool = True) -> None:
     try:
         # Define output file names
         input_metadata_file_path:str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
@@ -64,16 +64,26 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
 
         # Concatenate all processed channel groups
         out_img = np.concatenate(output_channels, axis=1)  # TCZYX
-        
+
         # Save output
-        OmeTiffWriter.save(out_img, output_tif_file_path, dim_order="TCZYX",physical_pixel_sizes=physical_pixel_sizes)
+        if output_format == "tif":
+            OmeTiffWriter.save(out_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
+        elif output_format == "npy":
+            # Rearrange dimensions if needed
+            if output_dim_order == "TZYXC":
+                # out_img is TCZYX, convert to TZYXC
+                out_img = np.transpose(out_img, (0,2,3,4,1))
+            np.save(os.path.splitext(output_tif_file_path)[0] + ".npy", out_img)
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
 
         # Save metadata to YAML file
         metadata["Merge channels"] = {
             "Method": "Sum projection",
             "Merge_channels": merge_channels,
+            "Output_format": output_format,
+            "Output_dim_order": output_dim_order,
         }
-        # Save metadata to YAML file
         with open(output_metadata_file_path, 'w') as f:
             yaml.dump(metadata, f)
 
@@ -95,7 +105,9 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
         Parallel(n_jobs=-1)(
             delayed(process_file)(input_file_path,
                                   os.path.join(args.output_folder, os.path.basename(input_file_path)),
-                                  args.merge_channels) 
+                                  args.merge_channels,
+                                  args.output_format,
+                                  args.output_dim_order)
             for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
         )
     else: # Process each file sequentially        
@@ -104,7 +116,7 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
             output_tif_file_path:str = os.path.join(args.output_folder, os.path.basename(input_file_path))
             # process file
             try:
-                process_file(input_file_path, output_tif_file_path, args.merge_channels)  # Process each file
+                process_file(input_file_path, output_tif_file_path, args.merge_channels, args.output_format, args.output_dim_order)  # Process each file
             except Exception as e:
                 print(f"Error processing {input_file_path}: {e}")
                 continue
@@ -120,6 +132,8 @@ if __name__ == "__main__":
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
     #TODO add merge channels argument
     parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
+    parser.add_argument("--output-format", type=str, choices=["tif", "npy"], default="tif", help="Output format: 'tif' (OME-TIFF) or 'npy' (NumPy array)")
+    parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")
 
     args = parser.parse_args()
 
