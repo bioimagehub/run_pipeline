@@ -24,7 +24,7 @@ def process_file(args, input_file):
         '--export_source=simple segmentation',
         f'--raw_data="{input_file}"',
         f'--output_filename_format="{out_np_file}"'
-    ])
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
     f = h5py.File(os.path.splitext(out_np_file)[0] + ".h5", 'r')
@@ -63,7 +63,7 @@ def process_file(args, input_file):
         for t in range(output_data.shape[0]):
             output_data[t, i, :, :, :] = label(output_data[t, i, :, :, :], connectivity=1)  # Label connected components
 
-    fill_holes_indexed(output_data)
+    output_data = fill_holes_indexed(output_data)
     
     # --- Min/Max size filtering ---
     min_sizes = args.min_sizes if hasattr(args, 'min_sizes') else [0]
@@ -97,13 +97,13 @@ def process_file(args, input_file):
 
     # return if no labels left after edge removal
     if not label_info_list:
-        print(f"No labels left after edge removal in {input_file}.")
-        OmeTiffWriter.save(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
-        return
+        print(f"No labels left after edge removal in {input_file}. Skipping tracking.")
+    else:
+        try:
+            _, output_data = track_labels_with_trackpy(output_data)
+        except Exception as e:
+            print(f"Tracking skipped for file {input_file}: {e}")
 
-    # Tracking
-    _, output_data = track_labels_with_trackpy(output_data)
- 
     # Save as OME-TIFF
     OmeTiffWriter.save(output_data, output_tif_file_path, dim_order="TCZYX")
     # print(f"Saved segmentation to {output_tif_file_path}")
