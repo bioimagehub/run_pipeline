@@ -6,6 +6,7 @@ import h5py
 import numpy as np
 from bioio.writers import OmeTiffWriter
 from skimage.measure import label
+from skimage.morphology import binary_erosion, binary_dilation
 
 from segment_threshold import LabelInfo, remove_small_or_large_labels, remove_on_edges, fill_holes_indexed
 from track_indexed_mask import track_labels_with_trackpy
@@ -95,6 +96,22 @@ def process_file(args, input_file):
     # --- Edge removal ---
     if getattr(args, 'remove_xy_edges', False) or getattr(args, 'remove_z_edges', False):
         output_data, label_info_list = remove_on_edges(output_data, label_info_list, remove_xy_edges=getattr(args, 'remove_xy_edges', False), remove_z_edges=getattr(args, 'remove_z_edges', False))
+
+
+    # --- Smoothing out edges ---
+    # This is done by Erosion followed by dilation
+    # Equivalent to: Dilate, Erode, Erode, Dilate (ImageJ)
+    # Apply to each channel and timepoint
+    for t in range(output_data.shape[0]):
+        for c in range(output_data.shape[1]):
+            for z in range(output_data.shape[2]):
+                mask = output_data[t, c, z] > 0
+                mask = binary_dilation(mask)
+                mask = binary_erosion(mask)
+                mask = binary_erosion(mask)
+                mask = binary_dilation(mask)
+                # Restore label values (keep only foreground, set to original label)
+                output_data[t, c, z][~mask] = 0
 
     # return if no labels left after edge removal
     if not label_info_list:
