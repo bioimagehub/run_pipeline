@@ -13,6 +13,7 @@ import run_pipeline_helper_functions as rp
 
 
 def process_file(args, input_file):
+    print(f"Processing file: {input_file}")
     # Define output file paths
     out_np_file = os.path.join(args.input_folder, os.path.splitext(os.path.basename(input_file))[0] + "_segmentation.np")
     output_tif_file_path = os.path.join(args.output_folder, os.path.basename(os.path.splitext(out_np_file)[0]) + ".tif")
@@ -111,6 +112,9 @@ def process_file(args, input_file):
 def process_folder(args: argparse.Namespace) -> None:
     # Find files to process
     files_to_process = rp.get_files_to_process(args.input_folder, args.input_suffix, search_subfolders=False)
+
+    # Create output folder if it doesn't exist
+    os.makedirs(args.output_folder, exist_ok=True)  
     
     if args.no_parallel:
         for input_file in files_to_process:
