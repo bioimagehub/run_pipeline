@@ -1,16 +1,19 @@
-name: track_indexed_mask
+name: run_ilastik
 channels:
   - conda-forge
   - anaconda
 dependencies:
-  - python=3.12
-  - tqdm
+  - python=3.13
+  - pystackreg
   - numpy
-  - trackpy
   - matplotlib
+  - opencv
+  - scyjava
+  - tqdm
+  - joblib
   - nd2reader
   - scikit-image
-  - scipy 
+  - h5py
   - pip
   - pip:
       - bioio

@@ -11,7 +11,7 @@ import logging
 from typing import Optional
 
 def track_labels_with_trackpy(indexed_masks, output_mask_path: Optional[str] = None):
-    T, C, Z, Y, X = indexed_masks.shape
+    T, C, Z, _, _ = indexed_masks.shape
 
     all_tracked_data = []
     new_indexed_masks = np.copy(indexed_masks)
