@@ -38,7 +38,7 @@ def get_nd2_roi_metadata(file_path):
     try:
         with ND2Reader(file_path) as images:
             metadata = images.metadata
-            print(metadata)
+            #print(metadata)
     
     except Exception as e:
         print(f"Error reading metadata: {e}")
