@@ -1,0 +1,59 @@
+# Programming Defaults for Standardization (BioImage Pipeline)
+
+
+## General Coding Practices
+- **Type Hinting:** All functions and arguments should use Python type hints.
+- **Main Guard:** All scripts should use `if __name__ == "__main__":` to encapsulate script execution.
+- **Function Naming:** Use snake_case for function and variable names.
+- **Argument Parsing:** Use `argparse.ArgumentParser` for all CLI scripts.
+- **Parallel Processing:** All scripts should support parallel processing by default, with the option to disable it using `--no-parallel`.
+- **Consistent Output:** Output files and folders should be clearly named and described.
+- **Modular Functions:** Processing is split into modular functions, typically `process_file` and `process_folder`.
+- **Composability:** Helper functions and utilities are imported from shared modules (e.g., `run_pipeline_helper_functions as rp`).
+- **Clear Error Handling:** Scripts print clear error messages and handle exceptions gracefully, especially in parallel execution.
+- **Documentation:** Each script and function should have clear docstrings and argument help descriptions.
+- **Flexible Input:** Scripts often accept both single files and folders as input.
+- **Boolean Flags:** Use `action="store_true"` for boolean CLI flags.
+- **Default Values:** Optional arguments have sensible default values.
+- **YAML Metadata:** Many scripts read/write YAML metadata for provenance.
+
+## Standard Argument Names and Help Descriptions
+
+| Argument Name         | Type    | Required | Help Description                                                                                 |
+|----------------------|---------|----------|-------------------------------------------------------------------------------------------------|
+| --input-folder       | str     | Yes      | Path to the input folder containing BioImage files                                               |
+| --input-suffix       | str     | Yes      | File ending e.g. .tif                                                                           |
+| --output-folder      | str     | Yes/No   | Output folder for processed files                                                                |
+| --output-suffix      | str     | No       | Suffix for the output file, e.g. _results.xlsx                                                  |
+| --project-path       | str     | Yes      | Path to already trained ilp project                                                             |
+| --ilastik-path       | str     | Yes      | Path to the ilastik executable                                                                  |
+| --min-sizes          | list[int]| No      | Minimum size for processing. Comma-separated list, one per channel, or single value for all.     |
+| --max-sizes          | list[int]| No      | Maximum size for processing. Comma-separated list, one per channel, or single value for all.     |
+| --remove-xy-edges    | flag    | No       | Remove edges in XY                                                                              |
+| --remove-z-edges     | flag    | No       | Remove edges in Z                                                                               |
+| --no-parallel        | flag    | No       | Disable parallel processing                                                                     |
+| --merge-channels     | str     | Yes/No   | E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove >4                |
+| --output-format      | str     | No       | Output format: 'tif' (OME-TIFF) or 'npy' (NumPy array)                                          |
+| --output-dim-order   | str     | No       | Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'                                    |
+| --output-scale       | float   | No       | Over or under-sampling factor for the output image. Default is 1 (no scaling).                  |
+| --mask-folders       | list[str]| Yes/No  | List of paths to mask1 and mask2.                                                               |
+| --mask-suffixes      | list[str]| No      | Comma separated list of suffixes for the masks.                                                 |
+| --mask-channels      | list[int]| No      | Comma separated list of channels for the masks.                                                 |
+| --image-folder       | str     | Yes/No   | Path to the input image folder (E.g. ./input_tif)                                               |
+| --image-suffix       | str     | No       | The extension of the input images, e.g. --image-suffix .tif                                     |
+| --distance-inside    | int     | No       | How far inside the object should the mask be extended? (default: 3 pixels)                      |
+| --distance-outside   | int     | No       | How far outside the object should the mask be extended? (default: 3 pixels)                     |
+| --input-yaml-extension| str    | No       | YAML file extension.                                                                            |
+
+
+## Notes
+- Use consistent argument names and help descriptions across all scripts.
+- Use `type=rp.split_comma_separated_intstring` or similar for comma-separated list arguments.
+- Use `action="store_true"` for boolean flags.
+- All scripts should provide a clear `description` in `ArgumentParser`.
+- Optional arguments should have sensible defaults where possible.
+- All output files/folders should be clearly described in the help text.
+- All scripts should support parallel processing by default, with `--no-parallel` to disable it.
+
+---
+This file is auto-generated to guide standardization of argument names, types, and help descriptions for all scripts in `standard_code/python`.
