@@ -137,26 +137,27 @@ def start_napari(tasks):
             
             # First file is image
             image_path = files[0]
-            image = rp.load_bioio(image_path).data # TCZYX             
+            image = rp.load_bioio(image_path).dask_data # TCZYX             
             self.viewer.add_image(image, name=name)
-            n_channels = image.shape[1]
-
+            
             # All other files are masks
             for mask_path in files[1:]:
-                mask = rp.load_bioio(mask_path).data # TCZYX
-                
+                mask = rp.load_bioio(mask_path).dask_data # TCZYX
                 mask_layer_name_base = os.path.splitext(os.path.basename(mask_path))[0]
+                mask_layer_name_base = mask_layer_name_base.replace(name, "")  # Remove basename from mask name
+
+                # Set visibility: only '_segmentation' is visible, others are hidden
+                visible = mask_layer_name_base == "_segmentation"
+
                 # If mask has more than one channel, split and add each as a separate label layer
                 if mask.shape[1] > 1:
-                    # mask shape: (C, ...)
                     for c in range(mask.shape[1]):
                         mask_c = mask[c]
                         mask_data = np.repeat(mask_c, image.shape[1], axis=1)
-                        self.viewer.add_labels(mask_data, name=f"{mask_layer_name_base}_C{c}")
+                        self.viewer.add_labels(mask_data, name=f"{mask_layer_name_base}_C{c}", visible=visible)
                 else:
                     mask_data = np.repeat(mask, image.shape[1], axis=1)
-
-                    self.viewer.add_labels(mask_data, name=mask_layer_name_base)
+                    self.viewer.add_labels(mask_data, name=mask_layer_name_base, visible=visible)
 
             self.viewer.status = f"{name} ({self.idx+1}/{len(self.tasks)})"
             self.list_widget.setCurrentRow(self.idx)
