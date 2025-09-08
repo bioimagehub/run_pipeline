@@ -310,15 +310,15 @@ func main() {
 		if arg == "-h" || arg == "--help" {
 			fmt.Println("Usage:")
 			fmt.Println("  your_program [options] <path_to_yaml>")
-			fmt.Println()
+			fmt.Println("")
 			fmt.Println("Options:")
-			fmt.Println("  --force_reprocessing  Process segments even if they have been previously processed.")
-			fmt.Println("  -h, --help            Show help information.")
+			fmt.Println("  -f, --force_reprocessing  Process segments even if they have been previously processed.")
+			fmt.Println("  -h, --help                Show help information.")
 			fmt.Println("")
 			fmt.Println("Arguments:")
 			fmt.Println("  <path_to_yaml>       The path to the YAML configuration file.")
 			os.Exit(0)
-		} else if arg == "--force_reprocessing" {
+		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
 		} else {
 			yamlPath = arg // Assume the next argument is the YAML file path
