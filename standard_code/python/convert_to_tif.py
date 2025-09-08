@@ -6,6 +6,8 @@ from joblib import Parallel, delayed
 import os
 import yaml
 from bioio.writers import OmeTiffWriter
+from typing import Optional
+
 
 # Local imports
 import run_pipeline_helper_functions as rp
@@ -29,39 +31,51 @@ def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0)
                     
     return corrected_video, tmats
 
-def process_multipoint_file(input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, use_parallel: bool = True, projection_method: str = None) -> None:
+def process_multipoint_file(input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, use_parallel: bool = True, projection_method: Optional[str] = None) -> None:
     """
     Process a multipoint file and convert it to TIF format with optional drift correction.
     """
     img = rp.load_bioio(input_file_path)
+    if img is None:
+        print(f"Error: Could not load image from file {input_file_path}. Skipping this file.")
+        return
 
     for i, scene in enumerate(img.scenes):
         img.set_scene(scene)
         filename_base = os.path.splitext(os.path.basename(input_file_path))[0]
-        output_tif_file_path = os.path.join(os.path.dirname(output_tif_file_path), f"{filename_base}_S{i:02}.tif")
-        
+        scene_output_tif_file_path = os.path.join(os.path.dirname(output_tif_file_path), f"{filename_base}_S{i:02}.tif")
+
         # Process the scene
-        process_file(img = img,
-                input_file_path = input_file_path, 
-                output_tif_file_path = output_tif_file_path, 
-                drift_correct_channel = parsed_args.drift_correct_channel, 
-                projection_method = parsed_args.projection_method, 
-                multipoint_files = parsed_args.multipoint_files)
+        process_file(
+            img=img,
+            input_file_path=input_file_path,
+            output_tif_file_path=scene_output_tif_file_path,
+            drift_correct_channel=drift_correct_channel,
+            projection_method=projection_method,
+        )
     
 
-def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, projection_method: str = None, multipoint_files:bool= False) -> None:
+
+
+def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, drift_correct_channel: int = -1, projection_method: Optional[str] = None) -> None:
     input_metadata_file_path: str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
     output_metadata_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
     output_shifts_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_shifts.npy"
+
+    # SAFEGUARD: Prevent writing to the same file as input
+    if os.path.abspath(input_file_path) == os.path.abspath(output_tif_file_path):
+        print(f"ERROR: Output file path matches input file path! Aborting to prevent overwriting original file: {input_file_path}")
+        return
+    if os.path.abspath(input_metadata_file_path) == os.path.abspath(output_metadata_file_path):
+        print(f"ERROR: Output metadata file path matches input metadata file path! Aborting to prevent overwriting original metadata: {input_metadata_file_path}")
+        return
 
     if os.path.exists(output_metadata_file_path):
         print(f"Metadata file already exists: {output_metadata_file_path}. Skipping metadata extraction.")
         return
 
+    # img = rp.load_bioio(input_file_path) Accepted as argument to accommodate multipoint files
 
-    # img = rp.load_bioio(input_file_path) Accepted as argumet to accomodate multipoint files
-
-    
     # img.physical_pixel_sizes can crash even with else statement, so we use a try-except block
     try:
         physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
@@ -77,15 +91,17 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
     if os.path.exists(input_metadata_file_path):
         with open(input_metadata_file_path, 'r') as f:
             metadata = yaml.safe_load(f)
+        if not isinstance(metadata, dict):
+            metadata = {}
     else:
-        try:        
+        try:
             metadata = get_all_metadata(input_file_path)
         except Exception as e:
             print(f"Error retrieving metadata: {e} for file {input_file_path}. Using None.")
             metadata = {"Error": f"Error retrieving metadata: {e} for file {input_file_path}. Using None."}
             with open(os.path.splitext(output_tif_file_path)[0] + "_metadata_error.txt", 'w') as f:
-                f.write(f"Error retrieving physical pixel sizes: {e} for file {input_file_path}. Using None.\n")    
-   
+                f.write(f"Error retrieving metadata: {e} for file {input_file_path}. Using None.\n")
+
         with open(input_metadata_file_path, 'w') as f:
             yaml.dump(metadata, f)
                 
@@ -99,22 +115,30 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
     if projection_method == "max":
         img_data = np.max(img.data, axis=2, keepdims=True)
     elif projection_method == "sum":
-        print("Warning: Using sum projection and with same dtype may cause pixels to saturate.")
+        print("Warning: Using sum projection. If the sum exceeds the original dtype, the result will be cast to a higher dtype to avoid saturation.")
         img_data = np.sum(img.data, axis=2, keepdims=True)
-        
-        # Change to a dtype of max uint16
+
+        # Handle dtype upcasting to avoid saturation
         if initial_dtype == np.uint8:
-            print(f"Number of saturated pixels: {np.sum(img_data > 255)}")
-            img_data = img_data.astype(np.uint8)
-            
+            if np.any(img_data > 255):
+                print(f"Sum exceeds uint8 range. Upcasting to uint16. Number of saturated pixels (would be): {np.sum(img_data > 255)}")
+                img_data = img_data.astype(np.uint16)
+            else:
+                img_data = img_data.astype(np.uint8)
         elif initial_dtype == np.uint16:
-            print(f"Number of saturated pixels: {np.sum(img_data > 65535)}")
-            img_data = img_data.astype(np.uint16)
-        # elif initial_dtype == np.uint32:
-        #     print(f"Number of saturated pixels: {np.sum(img_data > 4294967295)}")
-        #     img_data = img_data.astype(np.uint32)
-        # elif initial_dtype == np.float32:
-        #     img_data = img_data.astype(np.float32)
+            if np.any(img_data > 65535):
+                print(f"Sum exceeds uint16 range. Upcasting to uint32. Number of saturated pixels (would be): {np.sum(img_data > 65535)}")
+                img_data = img_data.astype(np.uint32)
+            else:
+                img_data = img_data.astype(np.uint16)
+        elif initial_dtype == np.uint32:
+            if np.any(img_data > 4294967295):
+                print(f"Sum exceeds uint32 range. Upcasting to float64. Number of saturated pixels (would be): {np.sum(img_data > 4294967295)}")
+                img_data = img_data.astype(np.float64)
+            else:
+                img_data = img_data.astype(np.uint32)
+        elif initial_dtype == np.float32 or initial_dtype == np.float64:
+            img_data = img_data.astype(initial_dtype)
         else:
             raise ValueError(f"Unsupported dtype: {initial_dtype}")
 
@@ -134,6 +158,8 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         OmeTiffWriter.save(output_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
         np.save(output_shifts_file_path, shifts)
 
+        if not isinstance(metadata, dict):
+            metadata = {}
         metadata["Convert to tif"] = {
             "Drift correction": {
                 "Method": "StackReg",
@@ -143,17 +169,19 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             "Projection": {
                 "Method": projection_method,
             }
-        }   
+        }
         with open(output_metadata_file_path, 'w') as f:
             yaml.dump(metadata, f)
     else:
         OmeTiffWriter.save(img_data, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
 
+        if not isinstance(metadata, dict):
+            metadata = {}
         metadata["Convert to tif"] = {
             "Projection": {
                 "Method": projection_method,
             }
-        }   
+        }
         with open(output_metadata_file_path, 'w') as f:
             yaml.dump(metadata, f)
 
@@ -168,17 +196,24 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
         output_tif_file_path: str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path: str = os.path.join(destination_folder, output_tif_file_path)
 
-        if(parsed_args.multipoint_files):
+        if args.multipoint_files:
             print(f"Processing multipoint file: {input_file_path}.")
-            process_multipoint_file(input_file_path, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=True, projection_method=parsed_args.projection_method)
+            process_multipoint_file(
+                input_file_path,
+                output_tif_file_path,
+                drift_correct_channel=args.drift_correct_channel,
+                use_parallel=True,
+                projection_method=args.projection_method
+            )
         else:
             img = rp.load_bioio(input_file_path)
-            process_file(img=img,
-                         input_file_path=input_file_path, 
-                         output_tif_file_path=output_tif_file_path, 
-                         drift_correct_channel=parsed_args.drift_correct_channel, 
-                         projection_method=parsed_args.projection_method, 
-                         multipoint_files=parsed_args.multipoint_files)
+            process_file(
+                img=img,
+                input_file_path=input_file_path,
+                output_tif_file_path=output_tif_file_path,
+                drift_correct_channel=args.drift_correct_channel,
+                projection_method=args.projection_method
+            )
 
     if parallel:
         # Parallel processing for each file
@@ -194,23 +229,30 @@ def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
     if os.path.isfile(parsed_args.input_file_or_folder):
         print(f"Processing single file: {parsed_args.input_file_or_folder}")
         output_tif_file_path = os.path.splitext(parsed_args.input_file_or_folder)[0] + parsed_args.output_file_name_extension + ".tif"
-        
-        if(parsed_args.multipoint_files):
+
+        if parsed_args.multipoint_files:
             print("Processing multipoint file.")
-            process_multipoint_file(parsed_args.input_file_or_folder, output_tif_file_path, parsed_args.drift_correct_channel, use_parallel=parallel, projection_method=parsed_args.projection_method)
-        else:        
+            process_multipoint_file(
+                parsed_args.input_file_or_folder,
+                output_tif_file_path,
+                drift_correct_channel=parsed_args.drift_correct_channel,
+                use_parallel=parallel,
+                projection_method=parsed_args.projection_method
+            )
+        else:
             img = rp.load_bioio(parsed_args.input_file_or_folder)
-            process_file(img = img,
-                         input_file_path = parsed_args.input_file_or_folder, 
-                         output_tif_file_path = output_tif_file_path, 
-                         drift_correct_channel = parsed_args.drift_correct_channel, 
-                         projection_method = parsed_args.projection_method, 
-                         multipoint_files = parsed_args.multipoint_files)
-        
+            process_file(
+                img=img,
+                input_file_path=parsed_args.input_file_or_folder,
+                output_tif_file_path=output_tif_file_path,
+                drift_correct_channel=parsed_args.drift_correct_channel,
+                projection_method=parsed_args.projection_method
+            )
+
     elif os.path.isdir(parsed_args.input_file_or_folder):
         print(f"Processing folder: {parsed_args.input_file_or_folder}")
         process_folder(parsed_args, parallel=parallel)
-        
+
     else:
         print("Error: The specified path is neither a file nor a folder.")
         return
@@ -224,7 +266,7 @@ if __name__ == "__main__":
     parser.add_argument("--drift-correct-channel", type=int, default=-1, help="Channel for drift correction (default: -1, no correction)")
     parser.add_argument("--projection-method", type=str, default=None, help="Method for projection (options: max, sum, mean, median, min, std)")
     parser.add_argument("--output-file-name-extension", type=str, default="", help="Output file name extension (e.g., '_max', do not include '.tif')")
-    parser.add_argument("--multipoint-files", action="store_true", help="Store the output in a multipoint file /series as separate_files (default: False)")
+    parser.add_argument("--multipoint-files", action="store_true", help="Not implemented yet: Store the output in a multipoint file /series as separate_files (default: False)")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
 
     parsed_args = parser.parse_args()
@@ -232,5 +274,4 @@ if __name__ == "__main__":
     parallel = parsed_args.no_parallel == False # inverse
 
 
-    parsed_args.projection_method
     main(parsed_args, parallel=parallel)
