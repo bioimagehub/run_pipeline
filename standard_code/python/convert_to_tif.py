@@ -7,7 +7,7 @@ import os
 import yaml
 from bioio.writers import OmeTiffWriter
 from typing import Optional
-
+import dask.array as da
 
 # Local imports
 import run_pipeline_helper_functions as rp
@@ -110,13 +110,15 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         initial_dtype = img.data.dtype
     except Exception as e:
         print(f"Error: The image data does not have a 'dtype' attribute {e}.\n Skipping this file: {input_file_path}")
-        return   
-    
+        return
+
+    dask_data = img.dask_data  # Use Dask array for memory efficiency
+
     if projection_method == "max":
-        img_data = np.max(img.data, axis=2, keepdims=True)
+        img_data = dask_data.max(axis=2, keepdims=True).compute()
     elif projection_method == "sum":
         print("Warning: Using sum projection. If the sum exceeds the original dtype, the result will be cast to a higher dtype to avoid saturation.")
-        img_data = np.sum(img.data, axis=2, keepdims=True)
+        img_data = dask_data.sum(axis=2, keepdims=True).compute()
 
         # Handle dtype upcasting to avoid saturation
         if initial_dtype == np.uint8:
@@ -143,13 +145,15 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             raise ValueError(f"Unsupported dtype: {initial_dtype}")
 
     elif projection_method == "mean":
-        img_data = np.mean(img.data, axis=2, keepdims=True)
+        img_data = dask_data.mean(axis=2, keepdims=True).compute()
     elif projection_method == "median":
-        img_data = np.median(img.data, axis=2, keepdims=True)
+        img_data = da.median(dask_data, axis=2, keepdims=True).compute()
     elif projection_method == "min":
-        img_data = np.min(img.data, axis=2, keepdims=True)
+        img_data = dask_data.min(axis=2, keepdims=True).compute()
     elif projection_method == "std":
-        img_data = np.std(img.data, axis=2, keepdims=True)
+        # Dask std does not support keepdims, so add the dimension back after compute
+        img_data = dask_data.std(axis=2).compute()
+        img_data = np.expand_dims(img_data, axis=2)
     else:
         img_data = img.data
         
@@ -272,6 +276,5 @@ if __name__ == "__main__":
     parsed_args = parser.parse_args()
 
     parallel = parsed_args.no_parallel == False # inverse
-
 
     main(parsed_args, parallel=parallel)
