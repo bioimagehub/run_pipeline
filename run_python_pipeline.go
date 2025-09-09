@@ -20,13 +20,12 @@ import (
 
 // Segment struct defines each segment of the pipeline with relevant attributes
 type Segment struct {
-	Name        string        `yaml:"name"`        // The name of the segment
-	Environment string        `yaml:"environment"` // The Python environment to use
-	Commands    []interface{} `yaml:"commands"`    // Commands to execute (can be strings or maps)
-	//FileExtension string        `yaml:"file_extension"`           // File extension to consider for input files
-	//InputDir      string        `yaml:"input_dir"`                // Directory for input files
-	//OutputDir     string        `yaml:"output_dir"`               // Directory for output files
-	LastProcessed string `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
+	Name          string        `yaml:"name"`                     // The name of the segment
+	Type          string        `yaml:"type,omitempty"`           // Optional: type of step (pause, stop, or normal)
+	Message       string        `yaml:"message,omitempty"`        // Optional: message for pause/stop
+	Environment   string        `yaml:"environment,omitempty"`    // The Python environment to use
+	Commands      []interface{} `yaml:"commands,omitempty"`       // Commands to execute (can be strings or maps)
+	LastProcessed string        `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
 }
 
 // Config struct to hold the overall configuration structure
@@ -329,6 +328,7 @@ func main() {
 			}
 		}
 	}
+
 	// TODO Check if the yaml file is inside the main program directory
 	// Suggest to rather copy it to the main folder of the program
 	// Then they can use relative paths to input folder and output folder
@@ -351,6 +351,27 @@ func main() {
 
 	// Iterate over each segment defined in the configuration
 	for i, segment := range config.Run {
+		// Handle pause and stop types
+		stepType := strings.ToLower(segment.Type)
+		switch stepType {
+		case "pause":
+			msg := segment.Message
+			if msg == "" {
+				msg = "Paused. Press Enter to continue."
+			}
+			fmt.Printf("[PAUSE] %s\n", msg)
+			reader := bufio.NewReader(os.Stdin)
+			_, _ = reader.ReadString('\n')
+			continue
+		case "stop":
+			msg := segment.Message
+			if msg == "" {
+				msg = "Stopped by stop step. Exiting."
+			}
+			fmt.Printf("[STOP] %s\n", msg)
+			os.Exit(0)
+		}
+
 		// Check if this segment has already been processed
 		if !forceReprocessing && segment.LastProcessed != "" {
 			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segment.LastProcessed)
