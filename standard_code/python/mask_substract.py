@@ -17,7 +17,7 @@ def process_file(file_paths: List[str], channels: List[int], output_path: str, o
         output_path (str): Path where the resulting mask will be saved.
         output_suffix (str): Suffix for the output file name.
     """
-    print(file_paths)
+    # print(file_paths)
     
     # Load data
     mask1_img = rp.load_bioio(file_paths[0])
@@ -51,7 +51,7 @@ def process_base_name(args):
         file_paths.append(file_path)
         channels.append(channel)
 
-    print(f"Processing Base name: '{base_name}': file paths: {file_paths}, channels: {channels}")
+    # print(f"Processing Base name: '{base_name}': file paths: {file_paths}, channels: {channels}")
     # Process the files
     process_file(file_paths, channels, output_path=output_path, output_suffix=output_suffix)
 
@@ -86,7 +86,7 @@ def process_folder(mask_paths: List[str], mask_suffixes: List[str], mask_channel
         matched_files[base_name].append((mpf, mask_channels[1]))  # Append tuple (file path, mask channel)
     
     # Now matched_files contains all the files grouped by their base names
-    print("Matched files:", matched_files)
+    # print("Matched files:", matched_files)
 
     # Prepare arguments for parallel processing
     jobs = [(base_name, items, output_path, output_suffix) for base_name, items in matched_files.items()]
@@ -118,6 +118,6 @@ if __name__ == "__main__":
     # output_folder = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"
     parallel = parsed_args.no_parallel == False # inverse
 
-    print(parsed_args)
+    # print(parsed_args)
 
     process_folder(mask_paths=parsed_args.mask_folders, mask_suffixes=parsed_args.mask_suffixes, output_path=parsed_args.output_folder, output_suffix=parsed_args.output_suffix, mask_channels=parsed_args.mask_channels, parallel=parallel)

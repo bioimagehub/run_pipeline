@@ -69,7 +69,7 @@ def main():
         base = os.path.splitext(os.path.basename(file_path))[0]
         roi_zip_path = os.path.join(output_folder, f"{base}{args.output_file_name_extension}.zip")
         roiwrite(roi_zip_path, rois)
-        print(f"Saved {len(rois)} ROIs to {roi_zip_path}")
+        #print(f"Saved {len(rois)} ROIs to {roi_zip_path}")
 
 if __name__ == "__main__":
     main()
