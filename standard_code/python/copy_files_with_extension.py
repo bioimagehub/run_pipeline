@@ -15,8 +15,8 @@ import run_pipeline_helper_functions as rp
 
 
 def process_folders(input_folders: List[str], suffixes: List[List[str]], output_path: str) -> None:
-    # Make a copy of the input image in the output folder
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)  # Create the output folder if it doesn't exist
+    # Ensure the output folder exists
+    os.makedirs(output_path, exist_ok=True)
     
     # Initialize a list to hold mask paths for later use
     mask_paths: List[List[str]] = []
