@@ -1,0 +1,16 @@
+name: image2imagejroi
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - scikit-image
+  - roifile
+  - pip
+  - pip:
+      - bioio
+      - bioio-bioformats
+      - bioio_ome_tiff
+      - bioio-tifffile
+      - bioio_nd2
