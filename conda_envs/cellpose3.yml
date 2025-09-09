@@ -1,0 +1,26 @@
+# cellpose3 (SAM) conda environment for Windows with GPU support
+# This environment uses Python 3.10 and installs cellpose[gui] (latest, v3+) and pytorch with CUDA support
+
+name: cellpose3
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.4
+  - numpy>=1.20.0
+  - scipy
+  - natsort
+  - tifffile
+  - imagecodecs
+  - roifile
+  - fastremap
+  - pip
+  - pip:
+      - fill_voids
+      - pyqtgraph
+      - cellpose[gui]==3.0.7
