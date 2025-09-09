@@ -50,7 +50,10 @@ def load_bioio(path: str) -> BioImage:
 def get_files_to_process(folder_path: str, extension: str, search_subfolders: bool) -> list:
     """
     Get a list of files in the specified folder with the specified extension.
+    WARNING: This function will be deprecated in the future. Please use get_files_to_process2 with a glob pattern instead.
     """
+    import warnings
+    warnings.warn("get_files_to_process will be deprecated in the future. Please use get_files_to_process2 with a glob pattern instead.", FutureWarning)
     files_to_process = []
     if search_subfolders:
         for dirpath, _, filenames in os.walk(folder_path):
@@ -62,8 +65,23 @@ def get_files_to_process(folder_path: str, extension: str, search_subfolders: bo
             for entry in it:
                 if entry.is_file() and entry.name.endswith(extension):
                     files_to_process.append(entry.path)
-    
-    # replace \ wit h / in the file paths
+    files_to_process = [file_path.replace("\\", "/") for file_path in files_to_process]
+    files_to_process = sorted(files_to_process)
+    return files_to_process
+
+def get_files_to_process2(search_pattern: str, search_subfolders: bool) -> list:
+    """
+    Get a list of files matching a glob pattern. Example: 'folder/*.tif' or 'folder/somefile*.tif'.
+    If search_subfolders is True, will use '**' for recursive search if not already present in the pattern.
+    Returns a sorted list of file paths with forward slashes.
+    """
+    import glob
+    import os
+    # If recursive search requested and not already in pattern, add '**/'
+    if search_subfolders and '**' not in search_pattern:
+        parts = os.path.split(search_pattern)
+        search_pattern = os.path.join(parts[0], '**', parts[1])
+    files_to_process = glob.glob(search_pattern, recursive=search_subfolders)
     files_to_process = [file_path.replace("\\", "/") for file_path in files_to_process]
     files_to_process = sorted(files_to_process)
     return files_to_process

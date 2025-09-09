@@ -1,4 +1,4 @@
-name: measure_mask
+name: mask_measure
 channels:
   - conda-forge
   - anaconda
