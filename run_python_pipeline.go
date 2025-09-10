@@ -372,6 +372,12 @@ func main() {
 			os.Exit(0)
 		}
 
+		// If not in forceReprocessing mode, but we hit a segment that is not processed, activate forceReprocessing for all subsequent segments
+		if !forceReprocessing && segment.LastProcessed == "" {
+			fmt.Printf("Segment %s has not been processed. Activating force reprocessing for all subsequent segments.\n", segment.Name)
+			forceReprocessing = true
+		}
+
 		// Check if this segment has already been processed
 		if !forceReprocessing && segment.LastProcessed != "" {
 			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segment.LastProcessed)
