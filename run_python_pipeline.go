@@ -316,6 +316,14 @@ func main() {
 			fmt.Println("")
 			fmt.Println("Arguments:")
 			fmt.Println("  <path_to_yaml>       The path to the YAML configuration file.")
+			fmt.Println("")
+			fmt.Println("YAML step types (for easy copy-paste):")
+			fmt.Println("  # - type: normal (default) - Runs commands as usual.")
+			fmt.Println("  # - type: pause  - Pauses the pipeline and waits for user to press Enter. Optional: add a 'message' field.")
+			fmt.Println("  # - type: stop   - Stops the pipeline immediately. Optional: add a 'message' field.")
+			fmt.Println("# Example: Copy this block directly to your YAML file:")
+			fmt.Println("run:")
+			fmt.Println("- name: Collapse folder structure and save as .tif\n  environment: convert_to_tif\n  commands:\n    - python\n    - ./standard_code/python/convert_to_tif.py\n    - --input-file-or-folder: ./input\n    - --extension: .ims\n    - --projection-method: max\n    - --search-subfolders\n    - --collapse-delimiter: __\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
 			os.Exit(0)
 		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
@@ -374,7 +382,7 @@ func main() {
 
 		// If not in forceReprocessing mode, but we hit a segment that is not processed, activate forceReprocessing for all subsequent segments
 		if !forceReprocessing && segment.LastProcessed == "" {
-			fmt.Printf("Segment %s has not been processed. Activating force reprocessing for all subsequent segments.\n", segment.Name)
+			fmt.Printf("Segment %s has not been processed. \n---Activating force reprocessing for all subsequent segments.---\n\n", segment.Name)
 			forceReprocessing = true
 		}
 
