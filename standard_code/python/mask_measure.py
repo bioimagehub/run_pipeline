@@ -62,12 +62,19 @@ def measure_masked_image(image_path: str, mask_path: str, output_csv: str):
                     )
                 )
                 df = pd.DataFrame(props)
-                # Calculate sum_intensity manually
+                # Calculate sum_intensity and median_intensity manually
                 sum_ints = []
+                median_ints = []
                 for label in df['label']:
                     region_mask = (mask_xy == label)
-                    sum_ints.append(image_xy[region_mask].sum())
+                    region_pixels = image_xy[region_mask]
+                    sum_ints.append(region_pixels.sum())
+                    if region_pixels.size > 0:
+                        median_ints.append(np.median(region_pixels))
+                    else:
+                        median_ints.append(np.nan)
                 df['sum_intensity'] = sum_ints
+                df['median_intensity'] = median_ints
                 df['T'] = t
                 df['C'] = c
                 df['Z'] = z

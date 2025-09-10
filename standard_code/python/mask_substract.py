@@ -1,123 +1,147 @@
 import argparse
 import numpy as np
 import multiprocessing
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 import run_pipeline_helper_functions as rp
 from bioio.writers import OmeTiffWriter
 import re
 import os
 
 
-def process_file(file_paths: List[str], channels: List[int], output_path: str, output_suffix: str = "_subtracted.tif") -> None:
+def process_file(mask1_path: str, mask2_path: str, output_path: str, output_suffix: str = "_subtracted.tif", output_suffix2: str = "_filtered.tif", enforce_one_to_one_overlap: bool = False) -> None:
     """
-    Subtracts two masks and saves the result to the output path.
-    
-    Args:
-        file_paths (List[str]): List of paths to the masks.
-        output_path (str): Path where the resulting mask will be saved.
-        output_suffix (str): Suffix for the output file name.
+    Subtracts mask2 from mask1 (set mask1 pixels to 0 where mask2 is nonzero). Optionally, remove all mask regions in mask1 and mask2 that do not overlap any region in the other mask.
+    Always saves the subtracted mask1. If ensure_overlap is set, also saves the filtered mask2.
     """
-    # print(file_paths)
-    
-    # Load data
-    mask1_img = rp.load_bioio(file_paths[0])
+    mask1_img = rp.load_bioio(mask1_path)
+    mask2_img = rp.load_bioio(mask2_path)
     physical_pixel_sizes = mask1_img.physical_pixel_sizes if mask1_img.physical_pixel_sizes is not None else (None, None, None)
-    mask1: np.ndarray = mask1_img.data[:, channels[0], :, :, :]  # TCZYX
-    mask2: np.ndarray = rp.load_bioio(file_paths[1]).data[:, channels[1], :, :, :]
-
-    # Ensure both masks have the same shape
+    mask1 = mask1_img.data[0, 0, :, :, :] if mask1_img.data.ndim == 5 else mask1_img.data
+    mask2 = mask2_img.data[0, 0, :, :, :] if mask2_img.data.ndim == 5 else mask2_img.data
     if mask1.shape != mask2.shape:
         raise ValueError("Masks must have the same shape for subtraction.")
-    
 
-    # Create the resulting mask: set mask1 pixels to 0 where mask2 is non-zero
-    result_mask = np.where(mask2 > 0, 0, mask1)  # Replace mask1 pixels with 0 where mask2 > 0
 
-    # Generate the output file path with the base name and output_suffix
-    base_name = re.sub(r'(_cp_masks|_mask)\.tif$', '', os.path.basename(file_paths[0]))
+    if enforce_one_to_one_overlap:
+        filtered_mask1, filtered_mask2 = ensure_one_to_one_pairing(mask1, mask2)
+    else:
+        filtered_mask1 = mask1.copy()
+        filtered_mask2 = mask2.copy()
+
+
+    # Subtract mask2 from mask1 (after filtering if needed)
+    result_mask1 = np.where(filtered_mask2 > 0, 0, filtered_mask1)
+
+    # Save outputs
+    base_name = os.path.splitext(os.path.basename(mask1_path))[0]
     output_tif_file_path = os.path.join(output_path, f"{base_name}{output_suffix}")
-    
-    # Save the resulting mask
-    OmeTiffWriter.save(result_mask, output_tif_file_path, dim_order="TZYX", physical_pixel_sizes=physical_pixel_sizes)
-
-def process_base_name(args):
-    """Helper function to process individual base names for parallel processing."""
-    base_name, items, output_path, output_suffix = args
-    file_paths = []
-    channels = []
-    
-    # Loop through each tuple in items to unpack the file paths and channels
-    for file_path, channel in items:
-        file_paths.append(file_path)
-        channels.append(channel)
-
-    # print(f"Processing Base name: '{base_name}': file paths: {file_paths}, channels: {channels}")
-    # Process the files
-    process_file(file_paths, channels, output_path=output_path, output_suffix=output_suffix)
+    OmeTiffWriter.save(result_mask1, output_tif_file_path, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
+    if enforce_one_to_one_overlap:
+        base_name2 = os.path.splitext(os.path.basename(mask2_path))[0]
+        output_tif_file_path2 = os.path.join(output_path, f"{base_name2}{output_suffix2}")
+        OmeTiffWriter.save(filtered_mask2, output_tif_file_path2, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
 
 
-def process_folder(mask_paths: List[str], mask_suffixes: List[str], mask_channels: List[int], output_path: str, output_suffix: str = "_subtracted.tif", parallel: bool = True):
+
+
+
+# --- Strict One-to-One Pairing Function ---
+def ensure_one_to_one_pairing(mask1: np.ndarray, mask2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    mask_paths: List of two paths to binary or indexed masks
-    mask_suffixes: list of two mask path suffixes (matches mask_paths) files should have a common basename but may vary on the suffix. E.G.  ["_cp_masks.tif", "_mask.tif"]
-    mask_channels: The channel in the mask where the subtraction should happen
-    output_path: Output path for processed files
-    output_suffix: Suffix for output files
+    Enforces a strict one-to-one pairing between mask1 and mask2 objects based on maximum overlap.
+    Each mask1 and mask2 object is paired at most once. The label of mask2 is set to the paired mask1 label.
+    Unpaired objects are removed. If mask2 is not fully inside mask1, mask1 is grown to encompass mask2.
+    Returns filtered mask1 and mask2.
     """
-    
-    mask1_files: List[str] = rp.get_files_to_process(mask_paths[0], mask_suffixes[0], search_subfolders=False)
-    mask2_files: List[str] = rp.get_files_to_process(mask_paths[1], mask_suffixes[1], search_subfolders=False)
+    mask1_labels = np.unique(mask1)
+    mask1_labels = mask1_labels[mask1_labels != 0]
+    mask2_labels = np.unique(mask2)
+    mask2_labels = mask2_labels[mask2_labels != 0]
 
-    # Create a dictionary to store matches
-    matched_files: Dict[str, List[Tuple[str, int]]] = {}
+    # Build overlap matrix: rows=mask2, cols=mask1
+    overlap_matrix = np.zeros((len(mask2_labels), len(mask1_labels)), dtype=np.int32)
+    for i, lbl2 in enumerate(mask2_labels):
+        mask2_bin = (mask2 == lbl2)
+        for j, lbl1 in enumerate(mask1_labels):
+            mask1_bin = (mask1 == lbl1)
+            overlap_matrix[i, j] = np.sum(mask2_bin & mask1_bin)
 
-    # Process mask1_files and make entries in the dictionary
-    for mpf in mask1_files:
-        base_name = re.sub(re.escape(mask_suffixes[0]) + r"$", "", os.path.basename(mpf))
-        if base_name not in matched_files:
-            matched_files[base_name] = []  # Initialize with an empty list
-        matched_files[base_name].append((mpf, mask_channels[0]))  # Append tuple (file path, mask channel)
-    
-    # Process mask2_files and make entries in the dictionary
-    for mpf in mask2_files:
-        base_name = re.sub(re.escape(mask_suffixes[1]) + r"$", "", os.path.basename(mpf))
-        if base_name not in matched_files:
-            matched_files[base_name] = []  # Initialize with an empty list
-        matched_files[base_name].append((mpf, mask_channels[1]))  # Append tuple (file path, mask channel)
-    
-    # Now matched_files contains all the files grouped by their base names
-    # print("Matched files:", matched_files)
+    # Build all possible (mask2, mask1, overlap) pairs
+    pairs = []
+    for i, lbl2 in enumerate(mask2_labels):
+        for j, lbl1 in enumerate(mask1_labels):
+            ov = overlap_matrix[i, j]
+            if ov > 0:
+                pairs.append((ov, i, j, lbl2, lbl1))
+    # Sort by overlap descending
+    pairs.sort(reverse=True)
 
-    # Prepare arguments for parallel processing
-    jobs = [(base_name, items, output_path, output_suffix) for base_name, items in matched_files.items()]
+    used_mask1 = set()
+    used_mask2 = set()
+    assignments = []  # (lbl2, lbl1)
+    for ov, i, j, lbl2, lbl1 in pairs:
+        if lbl2 not in used_mask2 and lbl1 not in used_mask1:
+            assignments.append((lbl2, lbl1))
+            used_mask2.add(lbl2)
+            used_mask1.add(lbl1)
 
+    # Build filtered masks
+    filtered_mask1 = np.zeros_like(mask1)
+    filtered_mask2 = np.zeros_like(mask2)
+    for lbl2, lbl1 in assignments:
+        mask2_bin = (mask2 == lbl2)
+        mask1_bin = (mask1 == lbl1)
+        filtered_mask1[mask1_bin] = lbl1
+        # Set mask2 to the paired mask1 label
+        filtered_mask2[mask2_bin] = lbl1
+        # If mask2 is not fully inside mask1, grow mask1 to encompass mask2
+        if not np.all(mask1_bin[mask2_bin]):
+            filtered_mask1[mask2_bin] = lbl1
+
+    return filtered_mask1, filtered_mask2
+
+def process_pair(args):
+    mask1_path, mask2_path, output_path, output_suffix, output_suffix2, enforce_one_to_one_overlap = args
+    process_file(mask1_path, mask2_path, output_path, output_suffix, output_suffix2, enforce_one_to_one_overlap)
+
+
+def process_masks(mask1_pattern: str, mask2_pattern: str, output_path: str, output_suffix: str = "_subtracted.tif", parallel: bool = True, search_subfolders: bool = False, output_suffix2: str = "_filtered.tif", enforce_one_to_one_overlap: bool = False):
+    mask1_files = rp.get_files_to_process2(mask1_pattern, search_subfolders)
+    mask2_files = rp.get_files_to_process2(mask2_pattern, search_subfolders)
+    # Match by base name (without extension)
+    mask1_dict = {os.path.splitext(os.path.basename(f))[0]: f for f in mask1_files}
+    mask2_dict = {os.path.splitext(os.path.basename(f))[0]: f for f in mask2_files}
+    common_basenames = set(mask1_dict.keys()) & set(mask2_dict.keys())
+    jobs = [(mask1_dict[bn], mask2_dict[bn], output_path, output_suffix, output_suffix2, enforce_one_to_one_overlap) for bn in common_basenames]
     if parallel:
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-            pool.map(process_base_name, jobs)
+            pool.map(process_pair, jobs)
     else:
         for job in jobs:
-            process_base_name(job)
+            process_pair(job)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mask-folders", nargs=2, type=str, help="list of paths to mask1 and mask2. E.g. --mask-folders /path/to/mask1 /path/to/mask2")
-    parser.add_argument("--mask-suffixes",type=rp.split_comma_separated_strstring, help="comma separated list of suffixes for the masks. E.g. --mask-suffixes,_cp_mask.tif _mask.tif")
-    parser.add_argument("--mask-channels", type=rp.split_comma_separated_intstring, help="comma separated list of suffixes for the masks. E.g. --mask-suffixes,_cp_mask.tif _mask.tif")
+    parser = argparse.ArgumentParser(description="Subtract mask2 from mask1 (set mask1 pixels to 0 where mask2 is nonzero). Optionally, remove all mask regions in mask1 and mask2 that do not overlap any region in the other mask.")
+    parser.add_argument('--mask1-search-pattern', required=True, help='Glob pattern for mask1 images, e.g. "folder/*_mask1.tif"')
+    parser.add_argument('--mask2-search-pattern', required=True, help='Glob pattern for mask2 images, e.g. "folder/*_mask2.tif"')
+    parser.add_argument('--output-folder', type=str, required=True, help='Path to the output folder where processed images will be saved')
+    parser.add_argument('--output-suffix', type=str, default='_subtracted.tif', help='Suffix for the mask1 output file (default: _subtracted.tif)')
+    parser.add_argument('--output-suffix2', type=str, default='_filtered.tif', help='Suffix for the mask2 output file if strict one-to-one overlap is set (default: _filtered.tif)')
+    parser.add_argument('--enforce-one-to-one-overlap', action='store_true', help='Enforce strict one-to-one pairing between mask1 and mask2 objects (labels in mask2 will match paired mask1).')
+    parser.add_argument('--search_subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
+    parser.add_argument('--no-parallel', action='store_true', help='Do not use parallel processing')
+    args = parser.parse_args()
 
-    parser.add_argument("--output-folder", type=str, help="Path to the output folder where processed images will be saved")
-    parser.add_argument("--output-suffix", type=str, help="Suffix for the output file E.g. --output-suffix _cyt.tif")
-    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
-    
-    parsed_args: argparse.Namespace = parser.parse_args()
-       
-    
-    #mask_paths = [r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary", r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"]
-    # mask_suffixes: List[str] = ["_cp_masks.tif", "_mask.tif"]
-    # mask_channels: List[int] = [0, 3]
-    # output_folder = r"Z:\Schink\Oyvind\colaboration_user_data\20250124_Viola\output_summary"
-    parallel = parsed_args.no_parallel == False # inverse
-
-    # print(parsed_args)
-
-    process_folder(mask_paths=parsed_args.mask_folders, mask_suffixes=parsed_args.mask_suffixes, output_path=parsed_args.output_folder, output_suffix=parsed_args.output_suffix, mask_channels=parsed_args.mask_channels, parallel=parallel)
+    parallel = not args.no_parallel
+    os.makedirs(args.output_folder, exist_ok=True)
+    process_masks(
+        mask1_pattern=args.mask1_search_pattern,
+        mask2_pattern=args.mask2_search_pattern,
+        output_path=args.output_folder,
+        output_suffix=args.output_suffix,
+        parallel=parallel,
+        search_subfolders=args.search_subfolders,
+        output_suffix2=args.output_suffix2,
+        enforce_one_to_one_overlap=args.enforce_one_to_one_overlap
+    )
