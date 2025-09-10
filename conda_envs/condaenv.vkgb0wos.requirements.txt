@@ -1,6 +1,0 @@
-bioio
-bioio-bioformats
-bioio_ome_tiff
-bioio-tifffile
-bioio_nd2
-roifile[all]
