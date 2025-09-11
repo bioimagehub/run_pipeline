@@ -85,7 +85,8 @@ def process_folder(args: argparse.Namespace) -> None:
     # Make a dictionary where the keys are the image basenames (without the suffix at the end) and the values are the full paths to the images
     for folder, suffixes in zip(image_folders, image_suffixes):
         for suffix in suffixes:
-            image_files = rp.get_files_to_process(folder, suffix, search_subfolders=False)
+            pattern = os.path.join(folder, f"*{suffix}")
+            image_files = rp.get_files_to_process2(pattern, False)
             for image_file in image_files:
                 basename = os.path.basename(image_file)[:-len(suffix)]
                 if basename not in processing_tasks:

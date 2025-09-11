@@ -17,4 +17,9 @@ dependencies:
   - pyqt               # GUI backend for napari
   - pip
   - pip:
-      - nellie
+  - nellie
+  - bioio
+  - bioio-bioformats
+  - bioio_ome_tiff
+  - bioio-tifffile
+  - bioio_nd2

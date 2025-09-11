@@ -1,13 +1,9 @@
 run:
-- name: Convert to tif and collapse folder structure
+- name: Extract metadata YAML next to image
   environment: extract_metadata
   commands:
   - python
-  - ./standard_code/python/convert_to_tif.py # Paths that start with ./ and ends with .py are relative to the root folder of run_python_pipeline.go
-  - --input_folder: ./input_nd2 #
-  - --extension: .nd2 # must include the dot
-  - --search_subfolders # This is a flag, so it can be omitted to only search the top folder
-  - --collapse_delimiter: __
-  - --drift_correct_channel: -1 # -1 means no drift correction (can also be omitted)
-  - --projection_method: max
-  - --output_file_name_extension: _max
+  - ./standard_code/python/extract_metadata.py
+  - --input-file: ./pipeline_configs/input_1/small_TCYX_01.ome.tif
+  # Optional: save to custom path
+  # - --output-file: ./output_summary/small_TCYX_01_metadata.yaml

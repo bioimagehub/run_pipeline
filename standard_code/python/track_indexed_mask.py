@@ -70,21 +70,25 @@ def process_file(input_file_path: str, output_file_path: str, tracking_channel: 
 
 
 def process_folder_or_file(args: argparse.Namespace):
-    input_files = rp.get_files_to_process(
-        args.input_search_pattern,
-        getattr(args, 'extension', '') or '',
-        getattr(args, 'search_subfolders', False) or False
-    )
+    recursive = getattr(args, 'search_subfolders', False) or False
+    if os.path.isdir(args.input_search_pattern):
+        ext = getattr(args, 'extension', '') or '.tif'
+        pattern = os.path.join(args.input_search_pattern, '**', f'*{ext}') if recursive else os.path.join(args.input_search_pattern, f'*{ext}')
+        base_folder = args.input_search_pattern
+    else:
+        pattern = args.input_search_pattern
+        base_folder = os.path.dirname(pattern) or '.'
+    input_files = rp.get_files_to_process2(pattern, recursive)
 
     if not input_files:
         print("No files found to process.")
         return
 
-    destination_folder = args.input_search_pattern.rstrip(os.sep) + "_tracked"
+    destination_folder = (args.input_search_pattern.rstrip(os.sep) if os.path.isdir(args.input_search_pattern) else base_folder.rstrip(os.sep)) + "_tracked"
     os.makedirs(destination_folder, exist_ok=True)
 
     def process_single_file(input_file_path):
-        output_file_name = rp.collapse_filename(input_file_path, args.input_search_pattern, args.collapse_delimiter)
+        output_file_name = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)
         output_file_name = os.path.splitext(output_file_name)[0] + args.output_file_name_extension + ".tif"
         output_file_path = os.path.join(destination_folder, output_file_name)
         process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel)

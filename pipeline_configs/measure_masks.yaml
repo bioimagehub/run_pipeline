@@ -1,0 +1,11 @@
+run:
+- name: Measure masks against input images
+	environment: mask_measure
+	commands:
+	- python
+	- ./standard_code/python/mask_measure.py
+	- --input-search-pattern: ./input_tif/*.tif
+	- --mask-search-pattern: ./output_summary/*_cp_masks_nuc.tif
+	# Optional flags:
+	# - --output: ./output_summary
+	# - --search-subfolders

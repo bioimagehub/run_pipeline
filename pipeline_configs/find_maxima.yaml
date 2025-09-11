@@ -1,0 +1,14 @@
+run:
+- name: Find local maxima and save CSVs
+  environment: mask_measure
+  commands:
+  - python
+  - ./standard_code/python/find_maxima.py
+  - --input-search-pattern: ./input_tif/*.tif
+  # Optional: provide masks to annotate maxima with mask label values
+  - --mask-search-patterns
+  - ./output_summary/*_cp_masks_cyt.tif
+  - ./output_summary/*_cp_masks_nuc.tif
+  - --min-distance: 10
+  - --threshold-abs: 2*median,-1,2*median,-1
+  - --output: ./output_summary

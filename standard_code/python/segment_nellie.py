@@ -129,9 +129,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
     args = parser.parse_args(argv)
 
-    import run_pipeline_helper_functions as rp
+    import glob
     from tqdm import tqdm
-    image_files = rp.get_files_to_process(args.input_search_pattern, '', False)
+    # Expand glob pattern and filter to tif/tiff if a directory wildcard provided
+    image_files = sorted(glob.glob(args.input_search_pattern))
+    if any(ch in args.input_search_pattern for ch in ['*', '?', '[']):
+        image_files = [p for p in image_files if p.lower().endswith(('.tif', '.tiff'))]
     is_batch = len(image_files) > 1
     output_dir = args.output_dir
     if output_dir is None and is_batch:

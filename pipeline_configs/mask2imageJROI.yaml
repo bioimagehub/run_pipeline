@@ -1,0 +1,12 @@
+run:
+- name: Convert masks to ImageJ ROI zip files
+  environment: mask2imagejroi
+  commands:
+  - python
+  - ./standard_code/python/mask2imageJROI.py
+  - --input-search-pattern: ./output_summary/*.tif
+  - --output-folder: ./rois
+  # Optional flags:
+  # - --output-file-name-extension: _rois
+  # - --search-subfolders
+  # - --no-parallel

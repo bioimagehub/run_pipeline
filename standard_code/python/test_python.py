@@ -12,10 +12,10 @@ def main():
 
     environment_name = os.environ.get('CONDA_DEFAULT_ENV', 'unknown')
 
-    # Example: process files using get_files_to_process
+    # Example: process files using get_files_to_process2
     try:
         import run_pipeline_helper_functions as rp
-        files = rp.get_files_to_process(args.input_search_pattern, '', False)
+        files = rp.get_files_to_process2(args.input_search_pattern, False)
     except Exception as e:
         files = []
         print(f"Could not import or run get_files_to_process: {e}")

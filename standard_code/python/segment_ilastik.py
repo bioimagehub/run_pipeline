@@ -200,8 +200,13 @@ def process_file(args, input_file):
         yaml.dump(metadata, f)
 
 def process_folder(args: argparse.Namespace) -> None:
-    # Find files to process
-    files_to_process = rp.get_files_to_process(args.input_folder, args.input_suffix, search_subfolders=False)
+    # Find files to process using glob pattern
+    if hasattr(args, 'input_search_pattern') and args.input_search_pattern:
+        pattern = args.input_search_pattern
+    else:
+        # Backward compatibility: construct pattern from folder + suffix
+        pattern = os.path.join(args.input_folder, f"*{args.input_suffix}")
+    files_to_process = rp.get_files_to_process2(pattern, False)
 
     # Create output folder if it doesn't exist
     os.makedirs(args.output_folder, exist_ok=True)  
@@ -222,8 +227,9 @@ def process_folder(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process BioImage files.")
     parser.add_argument("--ilastik-path", type=str, required=True, help="Path to the ilastik executable")
-    parser.add_argument("--input-folder", type=str, required=True, help="Path to the input folder containing BioImage files")
-    parser.add_argument("--input-suffix", type=str, required=True, help="File ending e.g. .tif")
+    parser.add_argument("--input-search-pattern", type=str, required=False, help="Glob pattern for input images, e.g. 'folder/*.tif'")
+    parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: Path to input folder (use --input-search-pattern)")
+    parser.add_argument("--input-suffix", type=str, required=False, help="Deprecated: File ending e.g. .tif (use --input-search-pattern)")
     parser.add_argument("--project-path", type=str, required=True, help="Path to already trained ilp project")
     parser.add_argument("--min-sizes", type=rp.split_comma_separated_intstring, default=[0], help="Minimum size for processing. Comma-separated list, one per channel, or single value for all.")
     parser.add_argument("--max-sizes", type=rp.split_comma_separated_intstring, default=[99999999], help="Maximum size for processing. Comma-separated list, one per channel, or single value for all.")

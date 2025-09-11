@@ -27,7 +27,8 @@ def process_folders(input_folders: List[str], suffixes: List[List[str]], output_
 
         # For each suffix, find matching mask files
         for suffix in mask_suffixes:
-            mask_files: List[str] = rp.get_files_to_process(mask_folder, extension=suffix, search_subfolders=False)
+            pattern = os.path.join(mask_folder, f"*{suffix}")
+            mask_files: List[str] = rp.get_files_to_process2(pattern, search_subfolders=False)
             current_mask_files.extend(mask_files)
 
             # Copy each found mask file to the output folder

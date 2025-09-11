@@ -131,8 +131,12 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
 
 def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
         
-    # Find files to process
-    files_to_process = rp.get_files_to_process(args.input_folder, ".tif", search_subfolders=False)
+    # Find files to process using glob pattern (prefer --input-search-pattern, fallback to --input-folder)
+    if hasattr(args, 'input_search_pattern') and args.input_search_pattern:
+        pattern = args.input_search_pattern
+    else:
+        pattern = os.path.join(args.input_folder, '*.tif')
+    files_to_process = rp.get_files_to_process2(pattern, False)
     # files_to_process = [files_to_process[0]] # For debugging
     
     # Make output folder
@@ -164,7 +168,8 @@ if __name__ == "__main__":
     import os
 
     parser = argparse.ArgumentParser(description="Process BioImage files.")
-    parser.add_argument("--input-folder", type=str, required=True, help="Path to the input folder containing BioImage files")
+    parser.add_argument("--input-search-pattern", type=str, required=False, help="Glob pattern for input images, e.g. 'folder/*.tif'")
+    parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: input folder (use --input-search-pattern)")
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
     parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
     parser.add_argument("--output-format", type=str, choices=["tif", "npy"], default="tif", help="Output format: 'tif' (OME-TIFF) or 'npy' (NumPy array)")
@@ -176,7 +181,8 @@ if __name__ == "__main__":
 
     # Check if output folder path is provided, if not set default
     if args.output_folder is None:
-        args.output_folder = os.path.join(args.input_folder, "_merged")
+        base = os.path.dirname(args.input_search_pattern) if args.input_search_pattern else args.input_folder
+        args.output_folder = os.path.join(base, "_merged")
 
     # Process the folder
     process_folder(args, use_parallel = not args.no_parallel)

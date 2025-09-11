@@ -4,10 +4,9 @@ run:
   commands:
   - python
   - ./standard_code/python/mask_substract.py
-  - --mask-folders: null
-  - ./output_summary
-  - ./output_summary
-  - --mask-suffixes: _cp_masks.tif,_mask.tif
-  - --mask-channels: 0,3
+  - --mask1-search-pattern: ./cellpose_cyt/*_cp_masks.tif
+  - --mask2-search-pattern: ./cellpose_nuc/*_cp_masks.tif
   - --output-folder: ./output_summary
   - --output-suffix: _cyt.tif
+  - --output-suffix2: _nuc.tif
+  - --enforce-one-to-one-overlap

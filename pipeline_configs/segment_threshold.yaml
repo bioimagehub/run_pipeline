@@ -2,13 +2,13 @@
   environment: segment_threshold
   commands:
   - python
-  - ./standard_code/segment_threshold.py
-  - --input_folder: ./input_tif
-  - --output_folder: ./output_nuc_mask
-  - --channels: 3 # zero base, so channel 1 is 0
-  - --median_filter_size: 15
-  - --method: li
-  - --min_size: 10000 # In pixels
-  - --max_size: 55000 # In pixels
-  - --watershed_large_labels
-  - --remove_xy_edges # Can also use --remove_z_edges
+  - ./standard_code/python/segment_threshold.py
+  - --input-search-pattern: ./input_tif/*.tif
+  - --output-folder: ./output_nuc_mask
+  - --channels: 3 # zero-based index
+  - --median-filter-sizes: 15
+  - --threshold-methods: li
+  - --min-sizes: 10000 # In pixels
+  - --max-sizes: 55000 # In pixels
+  - --watershed-large-labels
+  - --remove-xy-edges # Or --remove-z-edges

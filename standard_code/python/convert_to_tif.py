@@ -190,17 +190,30 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             yaml.dump(metadata, f)
 
 def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
-    files_to_process = rp.get_files_to_process(
-        args.input_search_pattern,
-        getattr(args, 'extension', '') or '',
-        getattr(args, 'search_subfolders', False) or False
-    )
+    # Determine if input is a glob pattern or a directory
+    is_glob = any(x in args.input_search_pattern for x in ["*", "?", "["])
+    if is_glob:
+        files_to_process = rp.get_files_to_process2(
+            args.input_search_pattern,
+            getattr(args, 'search_subfolders', False) or False
+        )
+        base_folder = os.path.dirname(args.input_search_pattern) or "."
+    else:
+        # Folder mode: require/assume an extension (default .tif if not provided)
+        ext = getattr(args, 'extension', None) or ".tif"
+        recursive = getattr(args, 'search_subfolders', False) or False
+        pattern = os.path.join(args.input_search_pattern, "**", f"*{ext}") if recursive else os.path.join(args.input_search_pattern, f"*{ext}")
+        files_to_process = rp.get_files_to_process2(
+            pattern,
+            recursive
+        )
+        base_folder = args.input_search_pattern
 
-    destination_folder = args.input_search_pattern + "_tif"
+    destination_folder = base_folder + "_tif"
     os.makedirs(destination_folder, exist_ok=True)
 
     def process_single_file(input_file_path):
-        output_tif_file_path: str = rp.collapse_filename(input_file_path, args.input_search_pattern, args.collapse_delimiter)
+        output_tif_file_path: str = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)
         output_tif_file_path: str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path: str = os.path.join(destination_folder, output_tif_file_path)
 
@@ -231,37 +244,36 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
 
 
 def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
-    
-    if os.path.isfile(parsed_args.input_file_or_folder):
-        print(f"Processing single file: {parsed_args.input_file_or_folder}")
-        output_tif_file_path = os.path.splitext(parsed_args.input_file_or_folder)[0] + parsed_args.output_file_name_extension + ".tif"
+    inp = parsed_args.input_search_pattern
+    if os.path.isfile(inp):
+        print(f"Processing single file: {inp}")
+        output_tif_file_path = os.path.splitext(inp)[0] + parsed_args.output_file_name_extension + ".tif"
 
         if parsed_args.multipoint_files:
             print("Processing multipoint file.")
             process_multipoint_file(
-                parsed_args.input_file_or_folder,
+                inp,
                 output_tif_file_path,
                 drift_correct_channel=parsed_args.drift_correct_channel,
                 use_parallel=parallel,
                 projection_method=parsed_args.projection_method
             )
         else:
-            img = rp.load_bioio(parsed_args.input_file_or_folder)
+            img = rp.load_bioio(inp)
             process_file(
                 img=img,
-                input_file_path=parsed_args.input_file_or_folder,
+                input_file_path=inp,
                 output_tif_file_path=output_tif_file_path,
                 drift_correct_channel=parsed_args.drift_correct_channel,
                 projection_method=parsed_args.projection_method
             )
-
-    elif os.path.isdir(parsed_args.input_file_or_folder):
-        print(f"Processing folder: {parsed_args.input_file_or_folder}")
-        process_folder(parsed_args, parallel=parallel)
-
     else:
-        print("Error: The specified path is neither a file nor a folder.")
-        return
+        # Treat as folder or glob and process batch
+        if os.path.isdir(inp):
+            print(f"Processing folder: {inp}")
+        else:
+            print(f"Processing pattern: {inp}")
+        process_folder(parsed_args, parallel=parallel)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a folder (or file) of images and convert them to TIF format with optional drift correction.")
@@ -271,6 +283,8 @@ if __name__ == "__main__":
     parser.add_argument("--projection-method", type=str, default=None, help="Method for projection (options: max, sum, mean, median, min, std)")
     parser.add_argument("--output-file-name-extension", type=str, default="", help="Output file name extension (e.g., '_max', do not include '.tif')")
     parser.add_argument("--multipoint-files", action="store_true", help="Not implemented yet: Store the output in a multipoint file /series as separate_files (default: False)")
+    parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search when using a glob pattern")
+    parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for when input-search-pattern is a folder (default: .tif)")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
 
     parsed_args = parser.parse_args()

@@ -98,7 +98,7 @@ def main():
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
     args = parser.parse_args()
 
-    image_files = rp.get_files_to_process(args.input_search_pattern, '', args.search_subfolders)
+    image_files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     is_batch = len(image_files) > 1
     # Set default output folder to mask folder if not provided
     if args.output is None:

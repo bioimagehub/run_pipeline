@@ -1074,18 +1074,27 @@ def process_file(
 
 
 def process_folder(args: argparse.Namespace) -> None:     
-    # Find files to process
-    files_to_process = rp.get_files_to_process(
-        args.input_search_pattern,
-        getattr(args, 'extension', '') or '',
-        getattr(args, 'search_subfolders', False) or False
-    )
+    # Find files to process using glob-based helper
+    recursive = getattr(args, 'search_subfolders', False) or False
+    # If input_search_pattern looks like a directory, construct a pattern from extension
+    if os.path.isdir(args.input_search_pattern):
+        ext = getattr(args, 'extension', '') or '.tif'
+        pattern = os.path.join(args.input_search_pattern, '**', f'*{ext}') if recursive else os.path.join(args.input_search_pattern, f'*{ext}')
+        base_folder = args.input_search_pattern
+    else:
+        pattern = args.input_search_pattern
+        # Derive base folder from pattern
+        base_folder = os.path.dirname(pattern) or '.'
+    files_to_process = rp.get_files_to_process2(pattern, recursive)
 
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
     def process_single_file(input_file_path):
-        output_tif_file_name: str = os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask")
+        # Preserve relative structure when pattern spans folders
+        collapsed_name = rp.collapse_filename(input_file_path, base_folder)
+        base_noext = os.path.splitext(collapsed_name)[0]
+        output_tif_file_name: str = os.path.join(args.output_folder, base_noext + "_mask")
         try:
             process_file(
                 input_path = input_file_path,

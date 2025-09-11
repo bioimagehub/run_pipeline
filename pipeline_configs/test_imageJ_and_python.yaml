@@ -4,6 +4,7 @@ run:
   commands:
   - python
   - ./standard_code/python/test_python.py
+  - --input-search-pattern: ./pipeline_configs/input_1/*.tif
   - --name: BIPHUB
   last_processed: "2025-05-13"
 - name: Run hello world example in python in a segment environment
@@ -11,6 +12,7 @@ run:
   commands:
   - python
   - ./standard_code/python/test_python.py
+  - --input-search-pattern: ./pipeline_configs/input_1/*.tif
   - --name: BIPHUB
   last_processed: "2025-05-13"
 - name: Run hello world example imageJ
