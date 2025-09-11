@@ -25,10 +25,73 @@ import yaml
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 
+def _save_empty_output(args, input_file: str, output_tif_file_path: str) -> None:
+    """Write an empty OME-TIFF (all zeros) with TCZYX order so every input yields an output.
+    Tries to infer T, Z, Y, X from the input npy (expected TZYXC) and uses C=1.
+    Also writes a metadata YAML mirroring the regular path.
+    """
+    # Infer shape from input where possible
+    try:
+        empty = None
+        if os.path.splitext(input_file)[1].lower() == ".npy":
+            arr = np.load(input_file, allow_pickle=False)
+            if arr.ndim == 5:
+                t, z, y, x, _ = arr.shape
+                empty = np.zeros((t, 1, z, y, x), dtype=np.uint8)
+            elif arr.ndim == 4:
+                t, z, y, x = arr.shape
+                empty = np.zeros((t, 1, z, y, x), dtype=np.uint8)
+        if empty is None:
+            empty = np.zeros((1, 1, 1, 1, 1), dtype=np.uint8)
+    except Exception:
+        empty = np.zeros((1, 1, 1, 1, 1), dtype=np.uint8)
+
+    # Save empty image
+    try:
+        OmeTiffWriter.save(empty, output_tif_file_path, dim_order="TCZYX")
+    except Exception as e:
+        logging.error(f"Failed to save empty output for {input_file}: {e}")
+        return
+
+    # Write metadata YAML (best-effort)
+    try:
+        input_metadata_file_path = os.path.splitext(input_file)[0] + "_metadata.yaml"
+        output_metadata_file_path = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
+        metadata = {}
+        if os.path.exists(input_metadata_file_path):
+            with open(input_metadata_file_path, 'r') as f:
+                try:
+                    loaded = yaml.safe_load(f)
+                    if isinstance(loaded, dict):
+                        metadata = loaded
+                except Exception:
+                    metadata = {}
+        metadata["Segmentation Ilastik"] = {
+            "Method": "Ilastik headless segmentation",
+            "Project_path": getattr(args, 'project_path', None),
+            "Min_sizes": getattr(args, 'min_sizes', None),
+            "Max_sizes": getattr(args, 'max_sizes', None),
+            "Remove_xy_edges": getattr(args, 'remove_xy_edges', False),
+            "Remove_z_edges": getattr(args, 'remove_z_edges', False),
+            "Output_format": "OME-TIFF",
+            "Output_dim_order": "TCZYX",
+            "Tracking": False,
+            "Hole_filling": "scipy.ndimage.binary_fill_holes",
+            "Edge_smoothing": "median filter (disk(3))",
+            "Note": "Empty placeholder written because segmentation failed or produced no output."
+        }
+        with open(output_metadata_file_path, 'w') as f:
+            yaml.dump(metadata, f)
+    except Exception:
+        # Non-fatal if metadata can't be written
+        pass
+
+
 def process_file(args, input_file):
     print(f"Processing file: {input_file}")
     # Define output file paths
-    out_np_file = os.path.join(args.input_folder, os.path.splitext(os.path.basename(input_file))[0] + "_segmentation.np")
+    in_dir = os.path.dirname(input_file)
+    out_np_file = os.path.join(in_dir, os.path.splitext(os.path.basename(input_file))[0] + "_segmentation.np")
     output_tif_file_path = os.path.join(args.output_folder, os.path.basename(os.path.splitext(out_np_file)[0]) + ".tif")
     h5_path = os.path.splitext(out_np_file)[0] + ".h5"
 
@@ -65,32 +128,45 @@ def process_file(args, input_file):
             if os.path.exists(h5_path):
                 break
 
-    # If Ilastik failed and no output exists, skip further processing for this file
+    # If Ilastik failed and no output exists, write empty output for this file
     if not os.path.exists(h5_path):
         if proc.returncode != 0:
             print(f"Ilastik failed (code {proc.returncode}) and produced no output for: {input_file}")
         else:
             print(f"Ilastik returned success but output is missing for: {input_file}. Expected: {h5_path}")
+        _save_empty_output(args, input_file, output_tif_file_path)
         return
 
     # Read Ilastik output
     with h5py.File(h5_path, 'r') as f:
         group_key = list(f.keys())[0]
-        data = np.array(f[group_key])  # TZYXC
+        data = np.array(f[group_key])  # Expected: TZYXC
 
-    # Rearrange to TCZYX
+    # Rearrange to TCZYX (be tolerant to 4D TZYX)
     if data.ndim == 5:
         data_tczyx = np.transpose(data, (0, 4, 1, 2, 3))
+    elif data.ndim == 4:
+        # Assume T, Z, Y, X -> add a singleton channel
+        data_tczyx = data[:, np.newaxis, :, :, :]
     else:
-        raise ValueError(f"Unexpected data shape: {data.shape}, expected 5D (T, Z, Y, X, C)")
-
-    # C should always be 1 for segmentation if not contunue to next step
-    if data_tczyx.shape[1] != 1:
-        print(f"Unexpected number of channels: {data_tczyx.shape[1]}, expected 1 for segmentation")
+        logging.warning(f"Unexpected data shape: {data.shape}, expected 5D (T, Z, Y, X, C) or 4D (T, Z, Y, X)")
+        _save_empty_output(args, input_file, output_tif_file_path)
         return
-    
-    unique_values = np.unique(data_tczyx)
-    unique_values = unique_values[unique_values > 1]  # Exclude background (0)
+
+    # C should always be 1 for segmentation; if not, keep the first channel and continue
+    if data_tczyx.shape[1] != 1:
+        logging.warning(f"Unexpected number of channels: {data_tczyx.shape[1]}, expected 1 for segmentation; using first channel.")
+        data_tczyx = data_tczyx[:, :1, ...]
+
+    # Determine which ilastik labels to keep
+    all_values = np.unique(data_tczyx)
+    nonzero_values = all_values[all_values > 0]  # Exclude background (0)
+    keep = getattr(args, 'keep_labels', None)
+    if keep:
+        keep_set = set(keep)
+        unique_values = np.array([v for v in nonzero_values if v in keep_set], dtype=nonzero_values.dtype)
+    else:
+        unique_values = nonzero_values
 
     # return if no unique values found
     if len(unique_values) == 0:
@@ -112,7 +188,7 @@ def process_file(args, input_file):
     output_data = fill_holes_indexed(output_data)
     if data_tczyx.shape[1] != 1:
         logging.warning(f"Unexpected number of channels: {data_tczyx.shape[1]}, expected 1 for segmentation")
-        return
+        # Do not return; continue with computed output_data
     
     min_sizes = args.min_sizes if hasattr(args, 'min_sizes') else [0]
     max_sizes = args.max_sizes if hasattr(args, 'max_sizes') else [float('inf')]
@@ -229,18 +305,31 @@ def process_file(args, input_file):
         "Output_dim_order": "TCZYX",
         "Tracking": not (not label_info_list),
         "Hole_filling": "scipy.ndimage.binary_fill_holes",
-        "Edge_smoothing": "median filter (disk(3))"
+        "Edge_smoothing": "median filter (disk(3))",
+        "Kept_labels": [int(v) for v in (unique_values.tolist() if hasattr(unique_values, 'tolist') else list(unique_values))]
     }
     with open(output_metadata_file_path, 'w') as f:
         yaml.dump(metadata, f)
 
+    # Additionally, save per-class outputs so each kept label gets its own file (C=1)
+    try:
+        for i, value in enumerate(unique_values):
+            per_class = output_data[:, i:i+1, ...]  # keep channel dimension as 1
+            per_class_path = os.path.splitext(output_tif_file_path)[0] + f"_class{int(value)}.tif"
+            OmeTiffWriter.save(per_class, per_class_path, dim_order="TCZYX")
+            # Write per-class metadata
+            per_class_meta_path = os.path.splitext(per_class_path)[0] + "_metadata.yaml"
+            per_meta = dict(metadata) if isinstance(metadata, dict) else {}
+            per_meta.setdefault("Segmentation Ilastik", {})
+            per_meta["Segmentation Ilastik"]["Kept_label"] = int(value)
+            with open(per_class_meta_path, 'w') as f:
+                yaml.dump(per_meta, f)
+    except Exception as e:
+        logging.warning(f"Per-class saving failed for {input_file}: {e}")
+
 def process_folder(args: argparse.Namespace) -> None:
     # Find files to process using glob pattern
-    if hasattr(args, 'input_search_pattern') and args.input_search_pattern:
-        pattern = args.input_search_pattern
-    else:
-        # Backward compatibility: construct pattern from folder + suffix
-        pattern = os.path.join(args.input_folder, f"*{args.input_suffix}")
+    pattern = args.input_search_pattern
     files_to_process = rp.get_files_to_process2(pattern, False)
 
     # Create output folder if it doesn't exist
@@ -262,12 +351,12 @@ def process_folder(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process BioImage files.")
     parser.add_argument("--ilastik-path", type=str, required=True, help="Path to the ilastik executable")
-    parser.add_argument("--input-search-pattern", type=str, required=False, help="Glob pattern for input images, e.g. 'folder/*.tif'")
-    parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: Path to input folder (use --input-search-pattern)")
-    parser.add_argument("--input-suffix", type=str, required=False, help="Deprecated: File ending e.g. .tif (use --input-search-pattern)")
+    parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input images, e.g. './input_Ilastik/*.npy'")
     parser.add_argument("--project-path", type=str, required=True, help="Path to already trained ilp project")
     parser.add_argument("--min-sizes", type=rp.split_comma_separated_intstring, default=[0], help="Minimum size for processing. Comma-separated list, one per channel, or single value for all.")
     parser.add_argument("--max-sizes", type=rp.split_comma_separated_intstring, default=[99999999], help="Maximum size for processing. Comma-separated list, one per channel, or single value for all.")
+    # Select which ilastik label values to keep (default: all non-zero). Will also write per-class files with suffix _class{v}.tif
+    parser.add_argument("--keep-labels", type=rp.split_comma_separated_intstring, help="Comma-separated ilastik label values to keep (e.g. 2,3). Default: keep all non-zero; note 1 is often background.")
     parser.add_argument("--remove-xy-edges", action="store_true", help="Remove edges in XY")
     parser.add_argument("--remove-z-edges", action="store_true", help="Remove edges in Z")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing")
