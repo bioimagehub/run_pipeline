@@ -1,0 +1,20 @@
+name: nellie
+channels:
+  - conda-forge
+  - nvidia
+channel_priority: strict
+dependencies:
+  - python=3.10
+  - napari
+  - numpy>=1.24,<2.0
+  - cupy
+  - cuda-version=12    # lets conda pull consistent CUDA 12.x runtime pieces
+  - cudnn              # optional but useful for performance
+  - cutensor           # optional
+  - tifffile
+  - scikit-image
+  - imagecodecs
+  - pyqt               # GUI backend for napari
+  - pip
+  - pip:
+      - nellie
