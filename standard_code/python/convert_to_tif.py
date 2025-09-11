@@ -6,6 +6,7 @@ from typing import Optional, Any
 from joblib import Parallel, delayed
 from tqdm import tqdm
 import dask.array as da
+import dask
 from pystackreg import StackReg
 from bioio.writers import OmeTiffWriter
 from bioio import BioImage
@@ -70,9 +71,9 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         print(f"ERROR: Output metadata file path matches input metadata file path! Aborting to prevent overwriting original metadata: {input_metadata_file_path}")
         return
 
-    if os.path.exists(output_metadata_file_path):
-        print(f"Metadata file already exists: {output_metadata_file_path}. Skipping metadata extraction.")
-        return
+    # Do not stop processing if an output metadata file exists; just reuse/overwrite later as needed
+    # if os.path.exists(output_metadata_file_path):
+    #     print(f"Metadata file already exists: {output_metadata_file_path}. Continuing without early exit.")
 
     # img = rp.load_bioio(input_file_path) Accepted as argument to accommodate multipoint files
 
@@ -89,13 +90,16 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         physical_pixel_sizes = (None, None, None)
 
     # Ensure metadata is always a dictionary for safe updates
+    # IMPORTANT: Never write anything next to the input file; keep source folders read-only.
     metadata: dict[str, Any] = {}
     if os.path.exists(input_metadata_file_path):
+        # If a pre-existing metadata file is available next to the input, use it but don't modify it
         with open(input_metadata_file_path, 'r') as f:
             loaded_md = yaml.safe_load(f)
         if isinstance(loaded_md, dict):
             metadata = loaded_md
     else:
+        # Otherwise, derive minimal metadata in-memory (no write near the input)
         try:
             loaded_md = get_all_metadata(input_file_path)
             if isinstance(loaded_md, dict):
@@ -105,9 +109,6 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             metadata = {"Error": f"Error retrieving metadata: {e} for file {input_file_path}. Using None."}
             with open(os.path.splitext(output_tif_file_path)[0] + "_metadata_error.txt", 'w') as f:
                 f.write(f"Error retrieving metadata: {e} for file {input_file_path}. Using None.\n")
-
-        with open(input_metadata_file_path, 'w') as f:
-            yaml.dump(metadata, f)
                 
     # Perform projection if requested
     try:
@@ -119,10 +120,10 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
     dask_data = img.dask_data  # Use Dask array for memory efficiency
 
     if projection_method == "max":
-        img_data = dask_data.max(axis=2, keepdims=True).compute()
+        img_data = dask_data.max(axis=2, keepdims=True).compute(scheduler="single-threaded")
     elif projection_method == "sum":
         print("Warning: Using sum projection. If the sum exceeds the original dtype, the result will be cast to a higher dtype to avoid saturation.")
-        img_data = dask_data.sum(axis=2, keepdims=True).compute()
+        img_data = dask_data.sum(axis=2, keepdims=True).compute(scheduler="single-threaded")
 
         # Handle dtype upcasting to avoid saturation
         if initial_dtype == np.uint8:
@@ -149,17 +150,18 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             raise ValueError(f"Unsupported dtype: {initial_dtype}")
 
     elif projection_method == "mean":
-        img_data = dask_data.mean(axis=2, keepdims=True).compute()
+        img_data = dask_data.mean(axis=2, keepdims=True).compute(scheduler="single-threaded")
     elif projection_method == "median":
-        img_data = da.median(dask_data, axis=2, keepdims=True).compute()
+        img_data = da.median(dask_data, axis=2, keepdims=True).compute(scheduler="single-threaded")
     elif projection_method == "min":
-        img_data = dask_data.min(axis=2, keepdims=True).compute()
+        img_data = dask_data.min(axis=2, keepdims=True).compute(scheduler="single-threaded")
     elif projection_method == "std":
         # Dask std does not support keepdims, so add the dimension back after compute
-        img_data = dask_data.std(axis=2).compute()
+        img_data = dask_data.std(axis=2).compute(scheduler="single-threaded")
         img_data = np.expand_dims(img_data, axis=2)
     else:
-        img_data = img.data
+        # Avoid immediate reader path that may stress JVM; compute via Dask single-threaded
+        img_data = dask_data.compute(scheduler="single-threaded")
         
     if drift_correct_channel > -1:
         output_img, shifts = drift_correct_xy_parallel(img_data, drift_correct_channel)
@@ -211,6 +213,11 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
     # Allow overriding destination folder via CLI; fall back to existing base_folder + "_tif"
     destination_folder = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
     os.makedirs(destination_folder, exist_ok=True)
+
+    # Safety: Bio-Formats/JVM is not friendly with multi-proc + threaded Dask. If IMS present, run sequentially.
+    if parallel and any(str(f).lower().endswith(".ims") for f in files_to_process):
+        print("IMS detected; disabling parallel processing to avoid JVM/threading crashes.")
+        parallel = False
 
     def process_single_file(input_file_path):
         output_tif_file_path: str = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)

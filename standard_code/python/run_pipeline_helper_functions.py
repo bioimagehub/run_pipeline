@@ -1,6 +1,82 @@
 from bioio import BioImage
 import os
-import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_bioformats
+import tempfile
+import bioio_ome_tiff, bioio_tifffile, bioio_nd2
+
+
+def _configure_bioformats_safe_io(input_path: str) -> None:
+    """Best-effort: prevent Bio-Formats from touching the source folder.
+
+    Bio-Formats may write .bfmemo cache files next to inputs (e.g., .ims).
+    We try to disable memoization or at least redirect it to a temp dir.
+    """
+    # Only apply for file types typically handled by Bio-Formats where sidecar writes are common
+    if not input_path.lower().endswith((".ims", ".czi", ".lif", ".nd2", ".oib", ".oif")):
+        return
+
+    tmp_dir = os.environ.get("BIOFORMATS_MEMO_DIR", None) or tempfile.gettempdir()
+
+    # Set a variety of known env vars / system properties consulted by wrappers
+    os.environ.setdefault("BIOFORMATS_DISABLE_MEMOIZATION", "1")
+    os.environ.setdefault("OME_BIOFORMATS_MEMOIZER_DISABLED", "1")
+    os.environ.setdefault("LOCI_FORMATS_MEMOIZER_DISABLED", "1")
+    os.environ.setdefault("BIOFORMATS_MEMO_DIR", tmp_dir)
+    os.environ.setdefault("OME_BIOFORMATS_MEMOIZER_DIR", tmp_dir)
+    os.environ.setdefault("LOCI_FORMATS_MEMOIZER_DIR", tmp_dir)
+
+    # Reduce Java-side log verbosity (SLF4J/Logback/SciJava) before JVM starts
+    try:
+        import scyjava  # type: ignore
+        # Prepare a minimal Logback configuration to clamp logs to WARN.
+        logback_path = os.path.join(tmp_dir, "bioformats-logback.xml")
+        if not os.path.exists(logback_path):
+            try:
+                with open(logback_path, "w", encoding="utf-8") as fh:
+                    fh.write(
+                        """
+<configuration>
+    <contextListener class="ch.qos.logback.classic.jul.LevelChangePropagator">
+        <resetJUL>true</resetJUL>
+    </contextListener>
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="loci" level="WARN"/>
+    <logger name="ome" level="WARN"/>
+    <logger name="org.scijava" level="WARN"/>
+    <logger name="org.janelia" level="WARN"/>
+    <logger name="net.imagej" level="WARN"/>
+
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>
+""".strip()
+                    )
+            except Exception:
+                # If writing fails, continue with system properties below
+                pass
+
+        # Force Logback to use our configuration if available
+        if os.path.exists(logback_path):
+            scyjava.config.add_option(f"-Dlogback.configurationFile={logback_path}")
+
+        # SLF4J simple logger (harmless if not the active binding)
+        scyjava.config.add_option("-Dorg.slf4j.simpleLogger.defaultLogLevel=warn")
+        scyjava.config.add_option("-Dorg.slf4j.simpleLogger.showDateTime=false")
+        scyjava.config.add_option("-Dorg.slf4j.simpleLogger.showThreadName=false")
+        # SciJava logger level
+        scyjava.config.add_option("-Dscijava.log.level=WARN")
+        # Fallback envs in case properties aren’t picked up by the active binding
+        os.environ.setdefault("SCIJAVA_LOG_LEVEL", "WARN")
+    except Exception:
+        # If scyjava isn't available yet, the properties below may still be picked up via env when JVM starts
+        os.environ.setdefault("org.slf4j.simpleLogger.defaultLogLevel", "warn")
+        os.environ.setdefault("scijava.log.level", "WARN")
 
 def load_bioio(path: str) -> BioImage:
     """
@@ -37,15 +113,20 @@ def load_bioio(path: str) -> BioImage:
     elif path.endswith(".nd2"):
         # import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
+        return img
     
     
     # TODO Add more readers here if needed
     else:
-        # Bioformats has this annoying printout so I prefer to use a different reader 
-        # import bioio_bioformats
+        # Bio-Formats: configure JVM/logging before importing the reader to ensure options apply pre-startup.
+        _configure_bioformats_safe_io(path)
+        # Lazy import to avoid triggering JVM before we've set options
+        import bioio_bioformats  # type: ignore
         img = BioImage(path, reader=bioio_bioformats.Reader)
-    
-    return img
+        return img
+
+    # Should not reach here; raise for unsupported formats
+    raise ValueError(f"Unsupported file format for: {path}")
 
 def get_files_to_process(folder_path: str, extension: str, search_subfolders: bool) -> list:
     """

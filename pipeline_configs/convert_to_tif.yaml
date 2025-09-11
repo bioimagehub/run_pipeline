@@ -3,11 +3,11 @@ run:
   environment: convert_to_tif
   commands:
   - python
-  - ./standard_code/python/convert_to_tif.py # Paths that start with ./ and ends with .py are relative to the root folder of run_python_pipeline.go
-  - --input-search-pattern: ./input/*.nd2 # Or e.g. ./input/*.tif
+  - ./standard_code/python/convert_to_tif.py
+  - --input-search-pattern: ./input/*.ims
   - --collapse-delimiter: __
-  - --drift-correct-channel: -1 # -1 means no drift correction (can also be omitted)
+  - --drift-correct-channel: -1
   - --projection-method: max
   - --output-file-name-extension: _max
-#  - --multipoint-files # If your files have more positions/series
-  
+  last_processed: "2025-09-11"
+  code_version: 0.0.1
