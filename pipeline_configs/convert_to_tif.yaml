@@ -10,4 +10,3 @@ run:
   - --projection-method: max
   - --output-file-name-extension: _max
   last_processed: "2025-09-11"
-  code_version: 0.0.1

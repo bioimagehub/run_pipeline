@@ -9,6 +9,9 @@ from skimage.measure import label
 from scipy.ndimage import binary_fill_holes
 import logging
 from skimage.transform import resize
+import tempfile
+import time
+import uuid
 
 from segment_threshold import LabelInfo, remove_small_or_large_labels, remove_on_edges, fill_holes_indexed
 from track_indexed_mask import track_labels_with_trackpy
@@ -27,20 +30,53 @@ def process_file(args, input_file):
     # Define output file paths
     out_np_file = os.path.join(args.input_folder, os.path.splitext(os.path.basename(input_file))[0] + "_segmentation.np")
     output_tif_file_path = os.path.join(args.output_folder, os.path.basename(os.path.splitext(out_np_file)[0]) + ".tif")
+    h5_path = os.path.splitext(out_np_file)[0] + ".h5"
 
-    subprocess.run([
+    # Prepare a unique Ilastik log directory per process to avoid Windows file-lock races
+    unique_log_dir = os.path.join(tempfile.gettempdir(), f"ilastik_logs_{uuid.uuid4().hex}")
+    os.makedirs(unique_log_dir, exist_ok=True)
+    env = os.environ.copy()
+    env["ILASTIK_LOG_DIR"] = unique_log_dir
+
+    # Run Ilastik headless, suppress warnings by filtering stderr (keep real errors)
+    proc = subprocess.run([
         args.ilastik_path,
         '--headless',
-        f'--project="{args.project_path}"',
+        f'--project={args.project_path}',
         '--export_source=simple segmentation',
-        f'--raw_data="{input_file}"',
-        f'--output_filename_format="{out_np_file}"'
-    ], stdout=subprocess.DEVNULL)
+        f'--raw_data={input_file}',
+        f'--output_filename_format={out_np_file}'
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
 
+    # Filter and print only non-warning stderr lines
+    if proc.stderr:
+        non_warning_lines = [
+            line for line in proc.stderr.splitlines()
+            if "WARNING" not in line and "UserWarning" not in line
+        ]
+        non_warning_output = "\n".join(non_warning_lines).strip()
+        if non_warning_output:
+            print(non_warning_output)
 
-    f = h5py.File(os.path.splitext(out_np_file)[0] + ".h5", 'r')
-    group_key = list(f.keys())[0]
-    data = np.array(f[group_key]) # TZYXC
+    # Give the filesystem a brief moment for the output to appear
+    if not os.path.exists(h5_path):
+        for _ in range(10):  # wait up to ~10s
+            time.sleep(1)
+            if os.path.exists(h5_path):
+                break
+
+    # If Ilastik failed and no output exists, skip further processing for this file
+    if not os.path.exists(h5_path):
+        if proc.returncode != 0:
+            print(f"Ilastik failed (code {proc.returncode}) and produced no output for: {input_file}")
+        else:
+            print(f"Ilastik returned success but output is missing for: {input_file}. Expected: {h5_path}")
+        return
+
+    # Read Ilastik output
+    with h5py.File(h5_path, 'r') as f:
+        group_key = list(f.keys())[0]
+        data = np.array(f[group_key])  # TZYXC
 
     # Rearrange to TCZYX
     if data.ndim == 5:
@@ -53,7 +89,6 @@ def process_file(args, input_file):
         print(f"Unexpected number of channels: {data_tczyx.shape[1]}, expected 1 for segmentation")
         return
     
-
     unique_values = np.unique(data_tczyx)
     unique_values = unique_values[unique_values > 1]  # Exclude background (0)
 
