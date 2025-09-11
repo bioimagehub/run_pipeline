@@ -26,12 +26,21 @@ type Segment struct {
 	Environment   string        `yaml:"environment,omitempty"`    // The Python environment to use
 	Commands      []interface{} `yaml:"commands,omitempty"`       // Commands to execute (can be strings or maps)
 	LastProcessed string        `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
+	CodeVersion   string        `yaml:"code_version,omitempty"`   // Git version/tag/commit hash used when this segment was processed
 }
 
 // Config struct to hold the overall configuration structure
 type Config struct {
 	Run []Segment `yaml:"run"` // Slice of segments representing the commands to be processed
 }
+
+// Versioning: overridden via -ldflags, with embedded fallback and git as last resort
+// Example: go build -ldflags "-X main.Version=v0.2.0 -X main.Commit=abc1234 -X main.BuildDate=2025-09-11"
+var (
+	Version   string
+	Commit    string
+	BuildDate string
+)
 
 // GetBaseDir returns the project root directory.
 // It handles both `go run` (using working dir) and `go build` (using executable path).
@@ -208,6 +217,55 @@ func saveToEnvFile(key, value string) {
 		log.Fatalf("Error writing to .env file: %v", err)
 	}
 	fmt.Printf("%s path saved to .env file.\n", key)
+}
+
+// getGitVersion returns a descriptive git version string for the current repository.
+// Tries `git describe --tags --dirty --always --long`, then falls back to short and full commit.
+func getGitVersion() string {
+	candidates := [][]string{
+		{"git", "describe", "--tags", "--dirty", "--always", "--long"},
+		{"git", "rev-parse", "--short", "HEAD"},
+		{"git", "rev-parse", "HEAD"},
+	}
+
+	baseDir := GetBaseDir()
+	for _, args := range candidates {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = baseDir
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			v := strings.TrimSpace(string(out))
+			if v != "" {
+				return v
+			}
+		}
+	}
+	return "unknown"
+}
+
+// getVersion returns a stable version string in priority:
+// 1) ldflags-injected Version (and optionally Commit) if set
+// 2) embedded VERSION file (at build time)
+// 3) git describe/commit if available
+// 4) "unknown"
+func getVersion() string {
+	v := strings.TrimSpace(Version)
+	c := strings.TrimSpace(Commit)
+	if v != "" {
+		if c != "" {
+			return fmt.Sprintf("%s (%s)", v, c)
+		}
+		return v
+	}
+	// Try reading VERSION file next to the executable
+	versionPath := filepath.Join(GetBaseDir(), "VERSION")
+	if b, err := os.ReadFile(versionPath); err == nil {
+		fileV := strings.TrimSpace(string(b))
+		if fileV != "" {
+			return fileV
+		}
+	}
+	return getGitVersion()
 }
 
 // Function to prepare command arguments for Python execution
@@ -438,6 +496,8 @@ func main() {
 
 		// Update last_processed with the current date if the command was successful
 		config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
+		// Record the code/version used for this successful run
+		config.Run[i].CodeVersion = getVersion()
 
 		// Write the updated configuration back to the YAML file
 		data, err = yaml.Marshal(&config) // Marshal the updated config struct
