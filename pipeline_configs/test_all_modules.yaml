@@ -1,30 +1,78 @@
 run:
-- name: Convert folder to tif and collapse folder structure
+- name: Convert T10C2_Phaffin-M4K to tif with drift correction
   environment: convert_to_tif
   commands:
   - python
   - ./standard_code/python/convert_to_tif.py
-  - --input_file_or_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\input_tif
-  - --extension: .tif
-  - --search_subfolders
-  - --collapse_delimiter: __
-  - --drift_correct_channel: -1
-  - --projection_method: max
-  - --output_file_name_extension: _max
-  last_processed: "2025-05-15"
-- name: Find objects with threshold
-  environment: segment_threshold
+  - --input-search-pattern: ./input_T10C2_Phaffin-M4K
+  - --drift-correct-channel: 0
+  - --collapse-delimiter: __
+  last_processed: "2025-09-11"
+- name: Convert C4 cyt/nuc folder to tif (no projection)
+  environment: convert_to_tif
   commands:
   - python
-  - ./standard_code/python/segment_threshold.py
-  - --input_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\input_tif
-  - --output_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\output_object_mask
-  - --tmp_output_folder: Z:\Schink\Oyvind\biphub_user_data\0 - Test data\output_object_mask/tmp
-  - --channels: 0
-  - --tracking_channel: -1
-  - --median_filter_size: 8
-  - --method: li
-  - --min_size: 0
-  - --watershed_large_labels
-  - --remove_xy_edges
-  last_processed: "2025-05-15"
+  - ./standard_code/python/convert_to_tif.py
+  - --input-search-pattern: ./input_C4_cyt1_cyt2_cyt3_nuc
+  - --collapse-delimiter: __
+  last_processed: "2025-09-11"
+- name: Merge channels for Cellpose (cyt=sum of 0,1,2; nuc=3)
+  environment: convert_to_tif
+  commands:
+  - python
+  - ./standard_code/python/merge_channels.py
+  - --input-folder: ./input_C4_cyt1_cyt2_cyt3_nuc_tif
+  - --output-folder: ./cellpose_input/merged
+  - --merge-channels: '[[0,1,2],[3]]'
+  last_processed: "2025-09-11"
+- name: Run Cellpose on cytoplasm (chan=0, chan2=1)
+  environment: cellpose3
+  commands:
+  - cellpose
+  - --dir: ./cellpose_input/merged
+  - --savedir: ./cellpose_cyt
+  - --channel_axis: 0
+  - --use_gpu
+  - --save_tif
+  - --chan: 0
+  - --chan2: 1
+  - --pretrained_model: cyto2_cp3
+  - --diameter: 300
+  - --cellprob_threshold: -4
+  - --exclude_on_edges
+  - --verbose
+  last_processed: "2025-09-11"
+- name: Run Cellpose on nucleus (chan=1 only)
+  environment: cellpose3
+  commands:
+  - cellpose
+  - --dir: ./cellpose_input/merged
+  - --savedir: ./cellpose_nuc
+  - --channel_axis: 0
+  - --use_gpu
+  - --save_tif
+  - --save_rois
+  - --chan: 1
+  - --chan2: 0
+  - --pretrained_model: nuclei
+  - --diameter: 250
+  - --exclude_on_edges
+  - --verbose
+  last_processed: "2025-09-11"
+- name: Convert C2Z38 ER-FA to tif (no projection)
+  environment: convert_to_tif
+  commands:
+  - python
+  - ./standard_code/python/convert_to_tif.py
+  - --input-search-pattern: ./input_C2Z38_ER-FA
+  - --collapse-delimiter: __
+  last_processed: "2025-09-11"
+- name: Segment with Nellie on ER-FA
+  environment: nellie
+  commands:
+  - python
+  - ./standard_code/python/segment_nellie.py
+  - --input-search-pattern: ./input_C2Z38_ER-FA_tif/*.tif
+  - --output-dir: ./nellie_output
+  - --ch: 0
+  last_processed: "2025-09-11"

@@ -4,9 +4,7 @@ run:
   commands:
   - python
   - ./standard_code/python/convert_to_tif.py # Paths that start with ./ and ends with .py are relative to the root folder of run_python_pipeline.go
-  - --input-file-or-folder: ./input # This can be ./input_nd2 if yaml file is in root folder 
-  - --extension: .nd2 # must include the dot
-  - --search-subfolders # This is a flag, so it can be omitted to only search the top folder
+  - --input-search-pattern: ./input/*.nd2 # Or e.g. ./input/*.tif
   - --collapse-delimiter: __
   - --drift-correct-channel: -1 # -1 means no drift correction (can also be omitted)
   - --projection-method: max
