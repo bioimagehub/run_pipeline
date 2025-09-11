@@ -2,7 +2,7 @@ import numpy as np
 import os
 import argparse
 import yaml
-from typing import Optional
+from typing import Optional, Any
 from joblib import Parallel, delayed
 from tqdm import tqdm
 import dask.array as da
@@ -88,14 +88,18 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
 
         physical_pixel_sizes = (None, None, None)
 
+    # Ensure metadata is always a dictionary for safe updates
+    metadata: dict[str, Any] = {}
     if os.path.exists(input_metadata_file_path):
         with open(input_metadata_file_path, 'r') as f:
-            metadata = yaml.safe_load(f)
-        if not isinstance(metadata, dict):
-            metadata = {}
+            loaded_md = yaml.safe_load(f)
+        if isinstance(loaded_md, dict):
+            metadata = loaded_md
     else:
         try:
-            metadata = get_all_metadata(input_file_path)
+            loaded_md = get_all_metadata(input_file_path)
+            if isinstance(loaded_md, dict):
+                metadata = loaded_md
         except Exception as e:
             print(f"Error retrieving metadata: {e} for file {input_file_path}. Using None.")
             metadata = {"Error": f"Error retrieving metadata: {e} for file {input_file_path}. Using None."}
@@ -162,8 +166,6 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
         OmeTiffWriter.save(output_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
         np.save(output_shifts_file_path, shifts)
 
-        if not isinstance(metadata, dict):
-            metadata = {}
         metadata["Convert to tif"] = {
             "Drift correction": {
                 "Method": "StackReg",
@@ -178,9 +180,6 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             yaml.dump(metadata, f)
     else:
         OmeTiffWriter.save(img_data, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
-
-        if not isinstance(metadata, dict):
-            metadata = {}
         metadata["Convert to tif"] = {
             "Projection": {
                 "Method": projection_method,
@@ -209,7 +208,8 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
         )
         base_folder = args.input_search_pattern
 
-    destination_folder = base_folder + "_tif"
+    # Allow overriding destination folder via CLI; fall back to existing base_folder + "_tif"
+    destination_folder = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
     os.makedirs(destination_folder, exist_ok=True)
 
     def process_single_file(input_file_path):
@@ -247,7 +247,13 @@ def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
     inp = parsed_args.input_search_pattern
     if os.path.isfile(inp):
         print(f"Processing single file: {inp}")
-        output_tif_file_path = os.path.splitext(inp)[0] + parsed_args.output_file_name_extension + ".tif"
+        # If an explicit output folder is provided, save into that folder; otherwise keep current behavior
+        if getattr(parsed_args, "output_folder", None):
+            os.makedirs(parsed_args.output_folder, exist_ok=True)
+            output_filename = os.path.basename(os.path.splitext(inp)[0]) + parsed_args.output_file_name_extension + ".tif"
+            output_tif_file_path = os.path.join(parsed_args.output_folder, output_filename)
+        else:
+            output_tif_file_path = os.path.splitext(inp)[0] + parsed_args.output_file_name_extension + ".tif"
 
         if parsed_args.multipoint_files:
             print("Processing multipoint file.")
@@ -282,6 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("--drift-correct-channel", type=int, default=-1, help="Channel for drift correction (default: -1, no correction)")
     parser.add_argument("--projection-method", type=str, default=None, help="Method for projection (options: max, sum, mean, median, min, std)")
     parser.add_argument("--output-file-name-extension", type=str, default="", help="Output file name extension (e.g., '_max', do not include '.tif')")
+    parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
     parser.add_argument("--multipoint-files", action="store_true", help="Not implemented yet: Store the output in a multipoint file /series as separate_files (default: False)")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search when using a glob pattern")
     parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for when input-search-pattern is a folder (default: .tif)")
