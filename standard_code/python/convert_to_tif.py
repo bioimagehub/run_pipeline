@@ -1,18 +1,18 @@
 import numpy as np
-from pystackreg import StackReg
-from tqdm import tqdm
-import argparse
-from joblib import Parallel, delayed
 import os
+import argparse
 import yaml
-from bioio.writers import OmeTiffWriter
 from typing import Optional
+from joblib import Parallel, delayed
+from tqdm import tqdm
 import dask.array as da
+from pystackreg import StackReg
+from bioio.writers import OmeTiffWriter
+from bioio import BioImage
 
 # Local imports
 import run_pipeline_helper_functions as rp
 from extract_metadata import get_all_metadata
-from bioio import BioImage
 
 def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0) -> tuple[np.ndarray, np.ndarray]:
     T, C, Z, _, _ = video.shape    
@@ -190,13 +190,17 @@ def process_file(img:BioImage, input_file_path: str, output_tif_file_path: str, 
             yaml.dump(metadata, f)
 
 def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
-    files_to_process = rp.get_files_to_process(args.input_file_or_folder, args.extension, args.search_subfolders)
+    files_to_process = rp.get_files_to_process(
+        args.input_search_pattern,
+        getattr(args, 'extension', '') or '',
+        getattr(args, 'search_subfolders', False) or False
+    )
 
-    destination_folder = args.input_file_or_folder + "_tif"
+    destination_folder = args.input_search_pattern + "_tif"
     os.makedirs(destination_folder, exist_ok=True)
 
     def process_single_file(input_file_path):
-        output_tif_file_path: str = rp.collapse_filename(input_file_path, args.input_file_or_folder, args.collapse_delimiter)
+        output_tif_file_path: str = rp.collapse_filename(input_file_path, args.input_search_pattern, args.collapse_delimiter)
         output_tif_file_path: str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path: str = os.path.join(destination_folder, output_tif_file_path)
 
@@ -220,10 +224,8 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
             )
 
     if parallel:
-        # Parallel processing for each file
         Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in tqdm(files_to_process, desc="Processing files", unit="file"))
     else:
-        # Sequential processing for each file
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
             process_single_file(input_file_path)
 
@@ -263,9 +265,7 @@ def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a folder (or file) of images and convert them to TIF format with optional drift correction.")
-    parser.add_argument("--input-file-or-folder", type=str, help="Path to the file or folder to be processed.")
-    parser.add_argument("--extension", type=str, help="File extension to filter files in folder (Only applicable for directory input)")
-    parser.add_argument("--search-subfolders", action="store_true", help="Include subfolders in the search for files (Only applicable for directory input)")
+    parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern to search for input files (e.g. './data/*.tif')")
     parser.add_argument("--collapse-delimiter", type=str, default="__", help="Delimiter to collapse file paths (Only applicable for directory input)")
     parser.add_argument("--drift-correct-channel", type=int, default=-1, help="Channel for drift correction (default: -1, no correction)")
     parser.add_argument("--projection-method", type=str, default=None, help="Method for projection (options: max, sum, mean, median, min, std)")
@@ -275,6 +275,6 @@ if __name__ == "__main__":
 
     parsed_args = parser.parse_args()
 
-    parallel = parsed_args.no_parallel == False # inverse
+    parallel = not parsed_args.no_parallel
 
     main(parsed_args, parallel=parallel)

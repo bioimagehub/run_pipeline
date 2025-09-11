@@ -1,13 +1,11 @@
 from __future__ import annotations
-import argparse
 import os
 import sys
-from tqdm import tqdm
-# import json
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-
+from tqdm import tqdm
 from skimage.filters import (
     threshold_otsu, threshold_yen, threshold_li, threshold_triangle,
     threshold_mean, threshold_minimum, threshold_isodata,
@@ -16,29 +14,16 @@ from skimage.filters import (
 from skimage.measure import label
 from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
-
 from scipy.ndimage import binary_fill_holes, median_filter, distance_transform_edt
-
 from cv2 import findContours, RETR_EXTERNAL, CHAIN_APPROX_NONE
-
 from roifile import ImagejRoi, roiwrite, roiread
-
 from bioio.writers import OmeTiffWriter
-
-from joblib import Parallel, delayed
-
-import yaml
-
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union, Literal, Dict, Any
 from collections.abc import Sequence
-import sys
 import yaml
-import numpy as np
-import os
 
-
-# local imports
+# Local imports
 import run_pipeline_helper_functions as rp
 
 # ---------------------------------------------------------------------------
@@ -1090,63 +1075,43 @@ def process_file(
 
 def process_folder(args: argparse.Namespace) -> None:     
     # Find files to process
-    files_to_process = rp.get_files_to_process(args.input_file_or_folder, ".tif", search_subfolders=False)
+    files_to_process = rp.get_files_to_process(
+        args.input_search_pattern,
+        getattr(args, 'extension', '') or '',
+        getattr(args, 'search_subfolders', False) or False
+    )
 
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
-    if args.use_parallel:  # Process each file in parallel
-        # raise NotImplementedError
-        
-        Parallel(n_jobs=-1)(
-            delayed(process_file)(
+    def process_single_file(input_file_path):
+        output_tif_file_name: str = os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask")
+        try:
+            process_file(
                 input_path = input_file_path,
-                output_name=os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask.tif"),  # Example output naming
+                output_name = output_tif_file_name,
                 channels = args.channels,
-                median_filter_sizes = args.median_filter_sizes,
-                background_median_filter = args.background_median_filter_sizes,
                 tracking_channel = args.tracking_channel,
+                median_filter_sizes = args.median_filter_sizes,
                 threshold_methods = args.threshold_methods,
+                background_median_filter = args.background_median_filter_sizes,
                 min_sizes = args.min_sizes,
                 max_sizes = args.max_sizes,
                 watershed_large_labels = args.watershed_large_labels,
                 remove_xy_edges = args.remove_xy_edges,
                 remove_z_edges = args.remove_z_edges,
-                tmp_output_folder = args.tmp_output_folder
+                tmp_output_folder = args.tmp_output_folder,
+                yaml_file_extension = args.yaml_file_extension,
+                sys_exit_after_step = args.sys_exit_after_step
             )
-            for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
-        )
-
-    else:  # Process each file sequentially        
-        # print(f"Process {len(files_to_process)} file(s) sequentially ")
+        except Exception as e:
+            print(f"Error processing {input_file_path}: {e}")
+    if not args.no_parallel:
+        from joblib import Parallel, delayed
+        Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in tqdm(files_to_process, desc="Processing files", unit="file"))
+    else:
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-            # Define output file name
-            output_tif_file_name: str = os.path.join(args.output_folder, os.path.splitext(os.path.basename(input_file_path))[0] + "_mask")  # Example output naming
-            # Process file
-            try:
-
-                process_file(
-                    input_path = input_file_path,
-                    output_name = output_tif_file_name,
-                    channels = args.channels,
-                    tracking_channel = args.tracking_channel,
-                    median_filter_sizes = args.median_filter_sizes,
-                    threshold_methods = args.threshold_methods,
-                    background_median_filter = args.background_median_filter_sizes,
-                    min_sizes = args.min_sizes,
-                    max_sizes = args.max_sizes,
-                    watershed_large_labels = args.watershed_large_labels,
-                    remove_xy_edges = args.remove_xy_edges,
-                    remove_z_edges = args.remove_z_edges,
-                    tmp_output_folder = args.tmp_output_folder,
-                    yaml_file_extension = parsed_args.yaml_file_extension,
-                    sys_exit_after_step = args.sys_exit_after_step
-                    )
-                  # Process each file
-
-            except Exception as e:
-                print(f"Error processing {input_file_path}: {e}")
-                continue
+            process_single_file(input_file_path)
 
 def main(parsed_args: argparse.Namespace):
     # -------------------------------------------------------------------------
@@ -1181,20 +1146,22 @@ def main(parsed_args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input-file-or-folder", type=str, help="Path to the file or folder to be processed.")
+    parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern to search for input files (e.g. './data/*.tif')")
+    parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for.")
+    parser.add_argument("--search-subfolders", action="store_true", help="Search recursively in subfolders.")
     parser.add_argument("--output-folder", type=str, help="Output folder for processed files")
     parser.add_argument("--channels", type=split_comma_separated_intstring, default=[0], help="List of channels to process (comma-separated, e.g., 0,1,2)")
     parser.add_argument("--tracking-channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")
     parser.add_argument("--median-filter-sizes", type=split_comma_separated_intstring, default=[10], help="Size(s) of the median filter (comma-separated, e.g., 10,20)")
     parser.add_argument("--background-median-filter-sizes", type=split_comma_separated_intstring, default=[-1], help="Size(s) of the background median filter (comma-separated, e.g., 50,100). If <= 0, background subtraction is skipped.")
-    parser.add_argument("--threshold-methods", type=split_comma_separated_strstring, default=["li"], help="Thresholding method(s) (comma-separated, e.g., li,otsu)")  # Use nargs='*' to accept space-separated
+    parser.add_argument("--threshold-methods", type=split_comma_separated_strstring, default=["li"], help="Thresholding method(s) (comma-separated, e.g., li,otsu)")
     parser.add_argument("--min-sizes", type=split_comma_separated_intstring, default=[10_000], help="Minimum size for processing. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
     parser.add_argument("--max-sizes", type=split_comma_separated_intstring, default=[55_000], help="Maximum size for processing. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
     parser.add_argument("--watershed-large-labels",type=split_comma_separated_strstring, default=[-1], help="Split objects larger than max_size with watershed, use -1 to disable. If a list is provided, it must match the number of channels. If only one value is provided, it will be used for all channels.")
     parser.add_argument("--remove-xy-edges", action="store_true", help="Remove edges in XY")
     parser.add_argument("--remove-z-edges", action="store_true", help="Remove edges in Z")
     parser.add_argument("--tmp-output-folder", type=str, help="Save intermediate steps in tmp_output_folder")
-    parser.add_argument("--use-parallel", action="store_true", help="Use parallel computing")
+    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing.")
     parser.add_argument("--yaml-file-extension", type=str, default="_metadata.yaml", help="Extension relative to basename of input image name")
     parser.add_argument("--sys-exit-after-step", type=str, default=None, help="Exit after a specific step (e.g., median_filter, background_subtract, thresholding, remove_small_labels, remove_edges, fill_holes, watershed, tracking, generate_rois) for debugging purposes. If None, will process all steps.")
     parsed_args = parser.parse_args()

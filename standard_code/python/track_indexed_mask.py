@@ -1,13 +1,15 @@
 import os
 import argparse
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
-from bioio.writers import OmeTiffWriter
-import trackpy as tp
+from tqdm import tqdm
 from scipy.ndimage import center_of_mass
-import run_pipeline_helper_functions as rp
+import trackpy as tp
+from bioio.writers import OmeTiffWriter
 import logging
+
+# Local imports
+import run_pipeline_helper_functions as rp
 
 
 def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_path=None):
@@ -68,42 +70,42 @@ def process_file(input_file_path: str, output_file_path: str, tracking_channel: 
 
 
 def process_folder_or_file(args: argparse.Namespace):
-    if os.path.isfile(args.input_tif_or_folder):
-        input_files = [args.input_tif_or_folder]
-    else:
-        input_files = rp.get_files_to_process(args.input_tif_or_folder, args.extension, args.search_subfolders)
+    input_files = rp.get_files_to_process(
+        args.input_search_pattern,
+        getattr(args, 'extension', '') or '',
+        getattr(args, 'search_subfolders', False) or False
+    )
 
     if not input_files:
         print("No files found to process.")
         return
 
-    # Create destination folder if processing a folder
-    if os.path.isdir(args.input_tif_or_folder):
-        destination_folder = args.input_tif_or_folder.rstrip(os.sep) + "_tracked"
-        os.makedirs(destination_folder, exist_ok=True)
-    else:
-        destination_folder = os.path.dirname(args.input_tif_or_folder)
+    destination_folder = args.input_search_pattern.rstrip(os.sep) + "_tracked"
+    os.makedirs(destination_folder, exist_ok=True)
 
-    for input_file_path in tqdm(input_files, desc="Tracking objects", unit="file"):
-        if os.path.isdir(args.input_tif_or_folder):
-            output_file_name = rp.collapse_filename(input_file_path, args.input_tif_or_folder, args.collapse_delimiter)
-            output_file_name = os.path.splitext(output_file_name)[0] + args.output_file_name_extension + ".tif"
-            output_file_path = os.path.join(destination_folder, output_file_name)
-        else:
-            output_file_path = os.path.splitext(input_file_path)[0] + args.output_file_name_extension + ".tif"
-
+    def process_single_file(input_file_path):
+        output_file_name = rp.collapse_filename(input_file_path, args.input_search_pattern, args.collapse_delimiter)
+        output_file_name = os.path.splitext(output_file_name)[0] + args.output_file_name_extension + ".tif"
+        output_file_path = os.path.join(destination_folder, output_file_name)
         process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel)
+
+    if not args.no_parallel:
+        from joblib import Parallel, delayed
+        Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in tqdm(input_files, desc="Tracking objects", unit="file"))
+    else:
+        for input_file_path in tqdm(input_files, desc="Tracking objects", unit="file"):
+            process_single_file(input_file_path)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Track labeled objects across time using TrackPy.")
-
-    parser.add_argument("-p", "--input_tif_or_folder", type=str, required=True, help="Path to a single input TIF file or a folder of TIF files to process.")
-    parser.add_argument("-e", "--extension", type=str, default=".tif", help="File extension to search for (used only if input is a folder).")
-    parser.add_argument("-R", "--search_subfolders", action="store_true", help="Search recursively in subfolders (used only if input is a folder).")
-    parser.add_argument("--collapse_delimiter", type=str, default="__", help="Delimiter for flattening output filenames.")
-    parser.add_argument("-ch", "--tracking_channel", type=int, default=0, help="Channel to use for tracking (default: 0).")
-    parser.add_argument("-o", "--output_file_name_extension", type=str, default="_tracked", help="Extension to append to output file name (default: '_tracked').")
+    parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern to search for input files (e.g. './data/*.tif')")
+    parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for.")
+    parser.add_argument("--search-subfolders", action="store_true", help="Search recursively in subfolders.")
+    parser.add_argument("--collapse-delimiter", type=str, default="__", help="Delimiter for flattening output filenames.")
+    parser.add_argument("--tracking-channel", type=int, default=0, help="Channel to use for tracking (default: 0).")
+    parser.add_argument("--output-file-name-extension", type=str, default="_tracked", help="Extension to append to output file name (default: '_tracked').")
+    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing.")
 
     args = parser.parse_args()
     process_folder_or_file(args)
