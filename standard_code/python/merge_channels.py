@@ -166,7 +166,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process BioImage files.")
     parser.add_argument("--input-folder", type=str, required=True, help="Path to the input folder containing BioImage files")
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
-    #TODO add merge channels argument
     parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
     parser.add_argument("--output-format", type=str, choices=["tif", "npy"], default="tif", help="Output format: 'tif' (OME-TIFF) or 'npy' (NumPy array)")
     parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")

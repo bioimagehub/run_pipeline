@@ -18,8 +18,8 @@ def main():
     # Set up the argument parser
     parser = argparse.ArgumentParser(description='Rename files in the target directory by replacing a search term with a replace term.')
     parser.add_argument('--directory', type=str, help='The target directory to rename files in')
-    parser.add_argument('--search_term', type=str, help='The term to search for in the file names')
-    parser.add_argument('--replace_term', type=str, help='The term to replace the search term with in the file names')
+    parser.add_argument('--search-term', type=str, help='The term to search for in the file names')
+    parser.add_argument('--replace-term', type=str, help='The term to replace the search term with in the file names')
 
     # Parse the arguments
     args = parser.parse_args()

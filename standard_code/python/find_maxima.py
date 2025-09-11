@@ -139,7 +139,7 @@ def main():
     parser.add_argument('--min-distance', type=rp.split_comma_separated_intstring, default=[10], help='Minimum number of pixels separating peaks. Comma-separated list, one per channel, or single value for all (default: 10)')
     parser.add_argument('--threshold-abs', type=rp.split_comma_separated_strstring, default=[0], help='Minimum intensity of peaks. Comma-separated list, one per channel, or expressions: mean, median, 2*mean, 2*median, -1 (skip channel).')
     parser.add_argument('--mask-search-patterns', nargs='*', default=None, help='List of glob patterns for mask images, e.g. "folder/*_nuc.tif folder/*_cyt.tif". For each maxima, the value at XY in each mask will be stored in a column <masklabel>_label.')
-    parser.add_argument('--search_subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
+    parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
     args = parser.parse_args()
 

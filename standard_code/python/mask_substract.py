@@ -129,7 +129,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-suffix', type=str, default='_subtracted.tif', help='Suffix for the mask1 output file (default: _subtracted.tif)')
     parser.add_argument('--output-suffix2', type=str, default='_filtered.tif', help='Suffix for the mask2 output file if strict one-to-one overlap is set (default: _filtered.tif)')
     parser.add_argument('--enforce-one-to-one-overlap', action='store_true', help='Enforce strict one-to-one pairing between mask1 and mask2 objects (labels in mask2 will match paired mask1).')
-    parser.add_argument('--search_subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
+    parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Do not use parallel processing')
     args = parser.parse_args()
 

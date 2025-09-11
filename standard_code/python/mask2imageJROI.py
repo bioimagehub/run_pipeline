@@ -47,7 +47,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Convert indexed mask images to ImageJ ROI zip files.")
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input mask images, e.g. 'folder/*.tif' or 'folder/somefile*.tif'. Use a single file path for one image.")
-    parser.add_argument("-o", "--output-folder", type=str, help="Output folder for ROI zip files. Defaults to input folder.")
+    parser.add_argument("--output-folder", type=str, help="Output folder for ROI zip files. Defaults to input folder.")
     parser.add_argument("--output-file-name-extension", type=str, default="_rois", help="Extension to append to output file name (default: '_rois').")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only relevant if pattern does not already include '**')")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (default: parallel enabled)")

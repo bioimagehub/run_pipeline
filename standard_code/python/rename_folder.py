@@ -49,8 +49,8 @@ def rename_or_move_folder(old_folder_path, new_folder_path):
 def main():
     # Set up the argument parser
     parser = argparse.ArgumentParser(description='Rename or move a folder and merge if necessary.')
-    parser.add_argument('--old_folder_path', type=str, help='The path to the folder to rename or move')
-    parser.add_argument('--new_folder_path', type=str, help='The new path for the folder')
+    parser.add_argument('--old-folder-path', type=str, help='The path to the folder to rename or move')
+    parser.add_argument('--new-folder-path', type=str, help='The new path for the folder')
 
     # Parse the arguments
     args = parser.parse_args()

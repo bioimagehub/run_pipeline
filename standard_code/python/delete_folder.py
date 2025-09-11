@@ -21,7 +21,7 @@ def delete_folders(folders):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Delete specified folders.')
-    parser.add_argument('folders', nargs='+', help='List of folder paths to delete')
+    parser.add_argument('--folders', nargs='+', required=True, help='List of folder paths to delete')
 
     args = parser.parse_args()
 

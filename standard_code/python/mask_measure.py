@@ -94,7 +94,7 @@ def main():
     parser.add_argument('--input-search-pattern', required=True, help='Glob pattern for input images, e.g. "folder/*.tif" or "folder/somefile*.tif". Use a single file path for one image.')
     parser.add_argument('--mask-search-pattern', required=True, help='Glob pattern for mask images, e.g. "folder/*_nuc.tif". The * will be replaced with the prefix of the input image before the * in its pattern.')
     parser.add_argument('--output', required=False, default=None, help='Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the mask.')
-    parser.add_argument('--search_subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
+    parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
     args = parser.parse_args()
 
