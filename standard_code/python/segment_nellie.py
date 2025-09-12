@@ -1,7 +1,12 @@
 import os
 import argparse
+import logging
 from typing import Optional, List, Dict, Any, Iterable
 
+# Module logger (configured in main). Using module name lets embedding apps adjust.
+logger = logging.getLogger(__name__)
+import glob
+from tqdm import tqdm
 def _build_file_info(
     *,
     input_path: str,
@@ -96,7 +101,7 @@ def segment_directory(
     )
     t_end = None if num_t is None else max(0, num_t - 1)
     for idx, path in enumerate(files, 1):
-        print(f"Processing file {idx} of {len(files)}, channel {ch + 1} of 1")
+        logger.info(f"Processing file {idx} of {len(files)}, channel {ch + 1} of 1")
         try:
             yield segment_image(
                 input_path=path,
@@ -109,7 +114,7 @@ def segment_directory(
                 threshold=threshold,
             )
         except Exception as e:
-            print(f"Failed to run {path}: {e}")
+            logger.error(f"Failed to run {path}: {e}")
             continue
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -127,10 +132,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument('--threshold', type=float, default=None, help='Manual intensity threshold')
     parser.add_argument('--cleanup-intermediates', action='store_true', help='Remove intermediate non-CSV files')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--quiet', action='store_true', help='Suppress normal progress/info output (sets log level WARNING)')
+    parser.add_argument('--log-level', default=None, help='Explicit logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Overrides default if not quiet.')
     args = parser.parse_args(argv)
 
-    import glob
-    from tqdm import tqdm
+    # Configure logging early.
+    # Environment variable fallbacks: NELLIE_SEGMENT_QUIET, NELLIE_SEGMENT_LOG_LEVEL
+    env_quiet = os.getenv('NELLIE_SEGMENT_QUIET', '').lower() in {'1', 'true', 'yes', 'on'}
+    effective_quiet = args.quiet or env_quiet
+    if effective_quiet:
+        level = logging.WARNING
+    else:
+        env_level = os.getenv('NELLIE_SEGMENT_LOG_LEVEL')
+        chosen = (args.log_level or env_level or 'INFO').upper()
+        level = getattr(logging, chosen, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger.debug(f"Logging initialized. quiet={effective_quiet} level={logging.getLevelName(level)}")
+
+
     # Expand glob pattern and filter to tif/tiff if a directory wildcard provided
     image_files = sorted(glob.glob(args.input_search_pattern))
     if any(ch in args.input_search_pattern for ch in ['*', '?', '[']):
@@ -155,14 +178,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 threshold=args.threshold,
                 cleanup_intermediates=args.cleanup_intermediates,
             )
-            print(f"Output dir: {res['output_dir']}")
-            print(f"User output base: {res['user_output_base']}")
-            print("Pipeline outputs:")
+            logger.info(f"Output dir: {res['output_dir']}")
+            logger.info(f"User output base: {res['user_output_base']}")
+            # Detailed pipeline artifact listing only at DEBUG level to reduce noise.
+            logger.debug("Pipeline outputs:")
             for k, v in sorted(res["pipeline_paths"].items()):
-                print(f"  {k}: {v}")
+                logger.debug(f"  {k}: {v}")
             return (image_path, None)
         except Exception as e:
-            print(f"Error processing {image_path}: {e}")
+            logger.error(f"Error processing {image_path}: {e}")
             return (image_path, str(e))
 
     if not args.no_parallel and is_batch:
@@ -172,12 +196,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             for f in tqdm(as_completed(futures), total=len(image_files), desc='Segmenting'):
                 _, err = f.result()
                 if err:
-                    print(f"Error: {err}")
+                    logger.error(f"Error: {err}")
     else:
         for img in tqdm(image_files, desc='Segmenting'):
             _, err = process_job(img)
             if err:
-                print(f"Error: {err}")
+                logger.error(f"Error: {err}")
     return 0
 
 if __name__ == "__main__":

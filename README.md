@@ -1,5 +1,11 @@
 # run_pipeline (Python / ImageJ workflow orchestrator)
 
+<p align="center">
+  <img src="assets/logo_concept_A.svg" alt="run_pipeline logo - flow nodes to pixel" width="200" />
+  <br/>
+  <sub><em>Deterministic multi-step image analysis pipeline orchestrator</em></sub>
+</p>
+
 Execute multi-step image analysis workflows described in a YAML file. Each step (segment) can run a Python script in a specified Conda environment or an ImageJ macro/command, and the pipeline keeps a provenance trail by updating the same YAML file with when and with which code version each segment was processed.
 
 ## Key Features
