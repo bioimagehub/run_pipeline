@@ -20,6 +20,12 @@ from skimage.filters import median
 from skimage.morphology import disk
 
 import yaml
+# Add tqdm for progress bars (fallback to no-op if not installed)
+try:
+    from tqdm import tqdm
+except Exception:
+    def tqdm(iterable, **kwargs):
+        return iterable
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -88,7 +94,7 @@ def _save_empty_output(args, input_file: str, output_tif_file_path: str) -> None
 
 
 def process_file(args, input_file):
-    print(f"Processing file: {input_file}")
+    # Removed per-file print; progress is handled by tqdm in process_folder
     # Define output file paths
     in_dir = os.path.dirname(input_file)
     out_np_file = os.path.join(in_dir, os.path.splitext(os.path.basename(input_file))[0] + "_segmentation.np")
@@ -333,15 +339,15 @@ def process_folder(args: argparse.Namespace) -> None:
     files_to_process = rp.get_files_to_process2(pattern, False)
 
     # Create output folder if it doesn't exist
-    os.makedirs(args.output_folder, exist_ok=True)  
-    
+    os.makedirs(args.output_folder, exist_ok=True)
+
     if args.no_parallel:
-        for input_file in files_to_process:
+        for input_file in tqdm(files_to_process, desc="Processing files", unit="file"):
             process_file(args, input_file)
     else:
         with ProcessPoolExecutor() as executor:
             future_to_file = {executor.submit(process_file, args, input_file): input_file for input_file in files_to_process}
-            for future in as_completed(future_to_file):
+            for future in tqdm(as_completed(future_to_file), total=len(future_to_file), desc="Processing files", unit="file"):
                 input_file = future_to_file[future]
                 try:
                     future.result()

@@ -169,44 +169,46 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
 
 
 def process_folder(args: argparse.Namespace, parallel:bool) -> None:
-    # Expand glob of YAMLs or masks; allow either to be the primary search
-    files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
+    # Build pairs from two glob patterns by substituting '*' with base names
+    mask_files = rp.get_files_to_process2(args.mask_search_pattern, args.search_subfolders) if args.mask_search_pattern else []
+    yaml_files = rp.get_files_to_process2(args.yaml_search_pattern, args.search_subfolders) if args.yaml_search_pattern else []
     os.makedirs(args.output_folder, exist_ok=True)
 
-    # Build (yaml_path, mask_path) pairs per base name
     tasks = []
-    for path in files:
-        base = os.path.splitext(path)[0]
-        if base.endswith(os.path.splitext(args.yaml_suffix)[0]):
-            # This is a YAML; derive mask by replacing suffix
-            stem = base[: -len(os.path.splitext(args.yaml_suffix)[0])]
-            mask_path = stem + args.mask_suffix
-            yaml_path = path
-        else:
-            # This is a mask; derive yaml by adding suffix
-            stem = base
-            yaml_path = stem + args.yaml_suffix
-            mask_path = path
-        tasks.append((yaml_path, mask_path))
 
-    # Remove duplicates and non-existing pairs
-    seen = set()
-    deduped = []
-    for y, m in tasks:
-        key = (os.path.abspath(y), os.path.abspath(m))
-        if key in seen:
-            continue
-        seen.add(key)
-        if os.path.exists(y) and os.path.exists(m):
-            deduped.append((y, m))
-        else:
-            if not os.path.exists(y):
-                print(f"[WARNING] Missing YAML for base: {m}")
-            if not os.path.exists(m):
-                print(f"[WARNING] Missing mask for base: {y}")
+    def has_star(p: str) -> bool:
+        return p is not None and ('*' in p or '?' in p or '[' in p)
+
+    if mask_files:
+        if not has_star(args.yaml_search_pattern):
+            print("[WARNING] --yaml-search-pattern has no wildcard. Expecting single file per mask base name.")
+        for mask_path in mask_files:
+            base_name = os.path.splitext(os.path.basename(mask_path))[0]
+            yaml_path = args.yaml_search_pattern.replace('*', base_name)
+            if os.path.exists(yaml_path):
+                tasks.append((yaml_path, mask_path))
+            else:
+                print(f"[WARNING] Missing YAML for mask base '{base_name}': {yaml_path}")
+    elif yaml_files:
+        if not has_star(args.mask_search_pattern):
+            print("[WARNING] --mask-search-pattern has no wildcard. Expecting single file per YAML base name.")
+        for yaml_path in yaml_files:
+            base_name = os.path.splitext(os.path.basename(yaml_path))[0]
+            mask_path = args.mask_search_pattern.replace('*', base_name)
+            if os.path.exists(mask_path):
+                tasks.append((yaml_path, mask_path))
+            else:
+                print(f"[WARNING] Missing mask for YAML base '{base_name}': {mask_path}")
+    else:
+        print("[ERROR] No files matched either pattern.")
+        return
+
+    if not tasks:
+        print("[WARNING] No valid YAML/mask pairs were found.")
+        return
 
     if not parallel:
-        for yaml_path, mask_path in tqdm(deduped, desc="Processing files", unit="file"):
+        for yaml_path, mask_path in tqdm(tasks, desc="Processing files", unit="file"):
             try:
                 process_file(yaml_path, mask_path, args.output_folder, args.distance_method)
             except Exception as e:
@@ -221,7 +223,7 @@ def process_folder(args: argparse.Namespace, parallel:bool) -> None:
         cpu_count = max(cpu_count - 1, 1)
 
         with ProcessPoolExecutor(max_workers=cpu_count) as executor:
-            futures = [executor.submit(process_file, y, m, args.output_folder, args.distance_method) for y, m in deduped]
+            futures = [executor.submit(process_file, y, m, args.output_folder, args.distance_method) for y, m in tasks]
 
             for future in tqdm(as_completed(futures), total=len(futures), desc="Processing", unit="file"):
                 try:
@@ -235,18 +237,22 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
 
     parser = argparse.ArgumentParser(description="Compute shortest distances from input coordinates to nearest mask objects.")
-    parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob for YAMLs or masks, e.g. './output_masks/*_segmentation_metadata.yaml' or './output_masks/*_segmentation.tif'")
+    parser.add_argument("--mask-search-pattern", type=str, required=False, help="Glob for masks, e.g. './output_masks/*_segmentation.tif'")
+    parser.add_argument("--yaml-search-pattern", type=str, required=False, help="Glob for YAMLs, e.g. './output_masks/*_segmentation_metadata.yaml'")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only if pattern doesn't already include '**')")
-    parser.add_argument("--yaml-suffix", type=str, default="_metadata.yaml", help="Suffix for YAML files (default: _metadata.yaml)")
-    parser.add_argument("--mask-suffix", type=str, default=".tif", help="Suffix for mask files (default: .tif)")
     parser.add_argument("--distance-method", type=str, default="geodesic", choices=["euclidean", "cityblock", "chessboard", "geodesic"], help="Distance computation method.")
     parser.add_argument("--output-folder", type=str, help="Destination folder for output distance maps.")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
 
     args = parser.parse_args()
 
+    if not args.mask_search_pattern and not args.yaml_search_pattern:
+        parser.error("Provide at least one of --mask-search-pattern or --yaml-search-pattern.")
+
+    # Default output to the directory of whichever pattern was provided
     if not args.output_folder:
-        args.output_folder = os.path.dirname(args.input_search_pattern) or "."
+        base_pattern = args.mask_search_pattern or args.yaml_search_pattern
+        args.output_folder = os.path.dirname(base_pattern) or "."
 
     parallel = args.no_parallel == False # inverse
 
