@@ -379,9 +379,10 @@ func main() {
 			fmt.Println("  # - type: normal (default) - Runs commands as usual.")
 			fmt.Println("  # - type: pause  - Pauses the pipeline and waits for user to press Enter. Optional: add a 'message' field.")
 			fmt.Println("  # - type: stop   - Stops the pipeline immediately. Optional: add a 'message' field.")
+			fmt.Println("  # - type: force  - Enables force reprocessing for all subsequent segments (same as --force_reprocessing). Optional: add a 'message' field.")
 			fmt.Println("# Example: Copy this block directly to your YAML file:")
 			fmt.Println("run:")
-			fmt.Println("- name: Collapse folder structure and save as .tif\n  environment: convert_to_tif\n  commands:\n    - python\n    - ./standard_code/python/convert_to_tif.py\n    - --input-file-or-folder: ./input\n    - --extension: .ims\n    - --projection-method: max\n    - --search-subfolders\n    - --collapse-delimiter: __\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
+			fmt.Println("- name: Collapse folder structure and save as .tif\n  environment: convert_to_tif\n  commands:\n    - python\n    - ./standard_code/python/convert_to_tif.py\n    - --input-file-or-folder: ./input\n    - --extension: .ims\n    - --projection-method: max\n    - --search-subfolders\n    - --collapse-delimiter: __\n- name: Enable force mode mid-pipeline\n  type: force\n  message: 'Reprocessing all subsequent steps.'\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
 			os.Exit(0)
 		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
@@ -436,6 +437,14 @@ func main() {
 			}
 			fmt.Printf("[STOP] %s\n", msg)
 			os.Exit(0)
+		case "force":
+			msg := segment.Message
+			if msg == "" {
+				msg = "Force mode activated. All subsequent segments will be reprocessed."
+			}
+			fmt.Printf("[FORCE] %s\n", msg)
+			forceReprocessing = true
+			continue
 		}
 
 		// If not in forceReprocessing mode, but we hit a segment that is not processed, activate forceReprocessing for all subsequent segments
