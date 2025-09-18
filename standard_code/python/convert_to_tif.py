@@ -4,7 +4,10 @@ import argparse
 import yaml
 from typing import Optional, Any
 from joblib import Parallel, delayed
+import joblib
 from tqdm import tqdm
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
+import io
 import dask.array as da
 import dask
 from pystackreg import StackReg
@@ -14,6 +17,24 @@ from bioio import BioImage
 # Local imports
 import run_pipeline_helper_functions as rp
 from extract_metadata import get_all_metadata
+
+# Local tqdm-joblib integration: advance progress on job completion
+@contextmanager
+def tqdm_joblib(tqdm_object: tqdm):
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            try:
+                tqdm_object.update(n=self.batch_size)
+            finally:
+                return super().__call__(*args, **kwargs)
+
+    old_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_callback
+        tqdm_object.close()
 
 def drift_correct_xy_parallel(video: np.ndarray, drift_correct_channel: int = 0) -> tuple[np.ndarray, np.ndarray]:
     T, C, Z, _, _ = video.shape    
@@ -224,30 +245,43 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
         output_tif_file_path: str = os.path.splitext(output_tif_file_path)[0] + args.output_file_name_extension + ".tif"
         output_tif_file_path: str = os.path.join(destination_folder, output_tif_file_path)
 
-        if args.multipoint_files:
-            print(f"Processing multipoint file: {input_file_path}.")
-            process_multipoint_file(
-                input_file_path,
-                output_tif_file_path,
-                drift_correct_channel=args.drift_correct_channel,
-                use_parallel=True,
-                projection_method=args.projection_method
-            )
+        def _run():
+            if args.multipoint_files:
+                print(f"Processing multipoint file: {input_file_path}.")
+                process_multipoint_file(
+                    input_file_path,
+                    output_tif_file_path,
+                    drift_correct_channel=args.drift_correct_channel,
+                    use_parallel=True,
+                    projection_method=args.projection_method
+                )
+            else:
+                img = rp.load_bioio(input_file_path)
+                process_file(
+                    img=img,
+                    input_file_path=input_file_path,
+                    output_tif_file_path=output_tif_file_path,
+                    drift_correct_channel=args.drift_correct_channel,
+                    projection_method=args.projection_method
+                )
+
+        if getattr(args, "suppress_worker_output", False):
+            # Prevent stray prints from libraries/workers from breaking tqdm output
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                _run()
         else:
-            img = rp.load_bioio(input_file_path)
-            process_file(
-                img=img,
-                input_file_path=input_file_path,
-                output_tif_file_path=output_tif_file_path,
-                drift_correct_channel=args.drift_correct_channel,
-                projection_method=args.projection_method
-            )
+            _run()
 
     if parallel:
-        Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in tqdm(files_to_process, desc="Processing files", unit="file"))
+        # Advance progress when each job completes
+        with tqdm_joblib(tqdm(total=len(files_to_process), desc="Processing files", unit="file")):
+            Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in files_to_process)
     else:
-        for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-            process_single_file(input_file_path)
+        # Update only after each file has finished processing
+        with tqdm(total=len(files_to_process), desc="Processing files", unit="file") as pbar:
+            for input_file_path in files_to_process:
+                process_single_file(input_file_path)
+                pbar.update(1)
 
 
 def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
@@ -261,7 +295,7 @@ def main(parsed_args: argparse.Namespace, parallel: bool = True) -> None:
             output_tif_file_path = os.path.join(parsed_args.output_folder, output_filename)
         else:
             output_tif_file_path = os.path.splitext(inp)[0] + parsed_args.output_file_name_extension + ".tif"
-
+        
         if parsed_args.multipoint_files:
             print("Processing multipoint file.")
             process_multipoint_file(
@@ -300,6 +334,7 @@ if __name__ == "__main__":
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search when using a glob pattern")
     parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for when input-search-pattern is a folder (default: .tif)")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
+    parser.add_argument("--suppress-worker-output", action="store_true", help="Suppress stdout/stderr inside per-file processing to avoid stray prints under progress bars")
 
     parsed_args = parser.parse_args()
 

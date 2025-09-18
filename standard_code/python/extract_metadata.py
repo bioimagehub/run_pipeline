@@ -43,17 +43,14 @@ def get_nd2_roi_metadata(file_path):
         print(f"Error reading metadata: {e}")
         return None
     
-    try:        
+    try:
         # Get the size of a pixel in micrometers
         pixel_microns = metadata.get('pixel_microns', 1)  # Default to 1 if not found
-        
-        # Access ROIs from metadata
+        # Access ROIs from metadata (avoid noisy prints)
         rois = metadata.get('rois', [])
-        print(len(rois))
-    
     except Exception as e:
         print(f"Error counting rois: {e}")
-        return None    
+        return None
 
     if len(rois)<1:
         return None
