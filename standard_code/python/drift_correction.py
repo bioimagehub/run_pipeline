@@ -2,10 +2,12 @@
 import argparse
 import os
 import time
-from typing import Optional, Tuple, Any
+import logging
+from typing import Optional, Tuple, Any, Dict, Iterable, List
 
 import numpy as np
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 # Local helper used throughout the repo
 import run_pipeline_helper_functions as rp
@@ -13,6 +15,9 @@ import run_pipeline_helper_functions as rp
 # CPU registration (StackReg)
 from pystackreg import StackReg
 from bioio.writers import OmeTiffWriter
+
+# Module logger
+logger = logging.getLogger(__name__)
 
 
 def drift_correct_xy_parallel(
@@ -43,10 +48,11 @@ def drift_correct_xy_parallel(
     for t in range(T):
         if transform_threads and transform_threads > 1:
             tasks = [(t, c, z) for c in range(C) for z in range(Z)]
-            results = Parallel(n_jobs=transform_threads, prefer="threads")(
+            _res = Parallel(n_jobs=transform_threads, prefer="threads")(
                 delayed(_transform_one)(a) for a in tasks
             )
-            for c, z, plane in results:
+            results_list = _res if isinstance(_res, list) else (list(_res) if _res is not None else [])
+            for c, z, plane in (results_list or []):
                 corrected_video[t, c, z, :, :] = plane
         else:
             for c in range(C):
@@ -74,7 +80,7 @@ def drift_correct_xy_pygpureg(
     try:
         import pyGPUreg as reg  # type: ignore
     except Exception as e:
-        print(f"pyGPUreg not available: {e}. Skipping GPU drift correction.")
+        logger.info(f"pyGPUreg not available: {e}. Skipping GPU drift correction.")
         return video, None
 
     T, C, Z, Y, X = video.shape
@@ -111,7 +117,7 @@ def drift_correct_xy_pygpureg(
     try:
         reg.init()
     except Exception as e:
-        print(f"pyGPUreg init failed for size {size}: {e}. Skipping GPU drift correction.")
+        logger.warning(f"pyGPUreg init failed for size {size}: {e}. Skipping GPU drift correction.")
         return video, None
 
     # Optional enums (fallback to library defaults if unavailable)
@@ -179,7 +185,7 @@ def drift_correct_xy_pygpureg(
                     shifts[t, 1] = float(shift[1])
             except Exception as e:
                 # If estimation fails, leave shift zeros and still try per-plane register
-                print(f"pyGPUreg shift estimate failed at t={t}: {e}")
+                logger.warning(f"pyGPUreg shift estimate failed at t={t}: {e}")
 
             # Apply the SAME estimated shift to every plane for this timepoint to match CPU behavior.
             for c in range(C):
@@ -222,14 +228,15 @@ def drift_correct_xy_pygpureg(
                             corrected[t, c, z] = reg_plane.astype(video.dtype)
                     except Exception as e:
                         # On failure, fall back to original plane
+                        logger.debug(f"Plane apply failed at t={t}, c={c}, z={z}: {e}")
                         corrected[t, c, z] = video[t, c, z]
         return corrected, shifts
     except Exception as e:
-        print(f"pyGPUreg path failed ({e}); returning original frames.")
+        logger.error(f"pyGPUreg path failed ({e}); returning original frames.")
         return video, None
 
 
-def load_first_T_timepoints(input_file: str, max_T: int = 10) -> np.ndarray:
+def load_first_T_timepoints(input_file: str, max_T: Optional[int] = None) -> np.ndarray:
     """
     Loads the image via rp.load_bioio and returns the first max_T timepoints as a numpy array.
     Assumes shape TCZYX. If data is a Dask array, compute only the needed slice.
@@ -244,7 +251,7 @@ def load_first_T_timepoints(input_file: str, max_T: int = 10) -> np.ndarray:
     except Exception as e:
         raise RuntimeError(f"Unexpected data shape for {input_file}: {getattr(data, 'shape', None)}; error: {e}")
 
-    tsel = min(max_T, T)
+    tsel = T if max_T is None else min(max_T, T)
     subset = data[:tsel, ...]
     compute_fn = getattr(subset, 'compute', None)
     if callable(compute_fn):
@@ -254,99 +261,204 @@ def load_first_T_timepoints(input_file: str, max_T: int = 10) -> np.ndarray:
             subset_np = np.asarray(subset)
     else:
         subset_np = np.asarray(subset)
+    # Guarantee a NumPy ndarray type for downstream logic
+    subset_np = np.asarray(subset_np)
     if subset_np.ndim != 5:
         raise RuntimeError(f"Expected 5D data (TCZYX), got shape {subset_np.shape}")
     return subset_np
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Time CPU (StackReg) vs GPU (pyGPUreg) drift correction on first T timepoints"
-    )
-    parser.add_argument("--input-file", type=str, default="", help="Path to input image file")
-    parser.add_argument("--drift-channel", type=int, default=0, help="Channel index used for drift estimation")
-    parser.add_argument("--cpu-threads", type=int, default=0, help="Threads for per-plane transform in CPU baseline (0/1=serial)")
-    parser.add_argument("--timepoints", type=int, default=10, help="Number of initial timepoints to test")
-    args = parser.parse_args()
+def correct_image(
+    *,
+    input_path: str,
+    output_dir: Optional[str] = None,
+    drift_channel: int = 0,
+    method: str = "auto",
+    timepoints: Optional[int] = None,
+    cpu_threads: int = 0,
+    save_shifts: bool = True,
+) -> Dict[str, Any]:
+    """
+    Correct XY drift on a single image file.
 
-    input_file = args.input_file
-    if not input_file:
-        print("No input file provided (--input-file). Fill in the path to run the test.")
-        return
-    if not os.path.exists(input_file):
-        print(f"Input file not found: {input_file}")
-        return
+    Parameters:
+    - input_path: path to image to correct (expects TCZYX)
+    - output_dir: where to write outputs (defaults next to input)
+    - drift_channel: channel index to estimate drift from
+    - method: 'cpu' | 'gpu' | 'auto' (gpu then fallback to cpu)
+    - timepoints: if provided, limit to first T timepoints
+    - cpu_threads: per-plane transform threads for CPU implementation
+    - save_shifts: save tmats/shifts npy alongside TIFF
 
-    print(f"Loading first {args.timepoints} timepoints from: {input_file}")
-    data = load_first_T_timepoints(input_file, max_T=args.timepoints)
-    print(f"Data subset shape: {data.shape}, dtype: {data.dtype}")
-
-    # Prepare output folder and filenames
-    out_dir = os.path.join(os.path.dirname(input_file), "_output")
-    os.makedirs(out_dir, exist_ok=True)
-    base = os.path.splitext(os.path.basename(input_file))[0]
-    tsel = data.shape[0]
-    cpu_tif = os.path.join(out_dir, f"{base}_T{tsel}_drift_CPU.tif")
-    cpu_tmats_npy = os.path.join(out_dir, f"{base}_T{tsel}_drift_CPU_tmats.npy")
-    gpu_shifts_npy = os.path.join(out_dir, f"{base}_T{tsel}_drift_GPU_shifts.npy")
-    gpu_tif = os.path.join(out_dir, f"{base}_T{tsel}_drift_GPU.tif")
-
-    # CPU timing
+    Returns dict with output paths and basic metadata.
+    """
     t0 = time.perf_counter()
-    cpu_out, cpu_tmats = drift_correct_xy_parallel(
-        data, drift_correct_channel=args.drift_channel, transform_threads=args.cpu_threads
-    )
-    cpu_dt = time.perf_counter() - t0
-    print(f"CPU (StackReg) time: {cpu_dt:.2f}s")
-    # Save CPU outputs
-    try:
-        OmeTiffWriter.save(cpu_out, cpu_tif, dim_order="TCZYX")
-        print(f"Saved CPU-corrected TIFF: {cpu_tif}")
-    except Exception as e:
-        print(f"Failed to save CPU TIFF: {e}")
-    try:
-        # tmats can be large but useful for inspection
-        np.save(cpu_tmats_npy, cpu_tmats)
-        print(f"Saved CPU transforms: {cpu_tmats_npy}")
-    except Exception as e:
-        print(f"Failed to save CPU transforms: {e}")
+    data = load_first_T_timepoints(input_path, max_T=timepoints)
+    T, C, Z, Y, X = data.shape
+    base = os.path.splitext(os.path.basename(input_path))[0]
+    out_dir = output_dir or os.path.join(os.path.dirname(input_path), "_output")
+    os.makedirs(out_dir, exist_ok=True)
 
-    # GPU timing (pyGPUreg)
-    t1 = time.perf_counter()
-    gpu_out, gpu_shifts = drift_correct_xy_pygpureg(
-        data, drift_correct_channel=args.drift_channel
-    )
-    gpu_dt = time.perf_counter() - t1
-    if gpu_out is data:
-        print(f"GPU (pyGPUreg) skipped or placeholder. Elapsed: {gpu_dt:.2f}s")
+    chosen = method.lower()
+    corrected: np.ndarray
+    info: Dict[str, Any] = {}
+    npy_path = None
+
+    if chosen not in {"cpu", "gpu", "auto"}:
+        raise ValueError("method must be one of 'cpu', 'gpu', or 'auto'")
+
+    def _save_outputs(arr: np.ndarray, suffix: str) -> str:
+        out_tif = os.path.join(out_dir, f"{base}_T{T}_drift_{suffix}.tif")
+        OmeTiffWriter.save(arr, out_tif, dim_order="TCZYX")
+        return out_tif
+
+    # Try GPU first if requested/auto
+    gpu_failed = False
+    gpu_used = False
+    if chosen in {"gpu", "auto"}:
+        logger.info("Attempting GPU drift correction (pyGPUreg)...")
+        corrected_gpu, gpu_shifts = drift_correct_xy_pygpureg(data, drift_correct_channel=drift_channel)
+        if gpu_shifts is None:
+            gpu_failed = True
+            logger.info("GPU drift correction unavailable or failed; will fallback if allowed.")
+        else:
+            gpu_used = True
+            corrected = corrected_gpu
+            out_tif = _save_outputs(corrected, "GPU")
+            info["output_tif"] = out_tif
+            if save_shifts:
+                npy_path = os.path.join(out_dir, f"{base}_T{T}_drift_GPU_shifts.npy")
+                np.save(npy_path, gpu_shifts)
+                info["shifts_npy"] = npy_path
+            info["method"] = "gpu"
+            info["time_sec_gpu"] = time.perf_counter() - t0
+
+    # CPU path if requested or GPU failed in auto
+    if (chosen == "cpu") or (chosen == "auto" and (gpu_failed or not gpu_used)):
+        logger.info("Running CPU drift correction (pystackreg)...")
+        t1 = time.perf_counter()
+        corrected_cpu, tmats = drift_correct_xy_parallel(
+            data, drift_correct_channel=drift_channel, transform_threads=cpu_threads
+        )
+        corrected = corrected_cpu
+        out_tif = _save_outputs(corrected, "CPU")
+        info["output_tif"] = out_tif
+        if save_shifts:
+            npy_path = os.path.join(out_dir, f"{base}_T{T}_drift_CPU_tmats.npy")
+            np.save(npy_path, tmats)
+            info["tmats_npy"] = npy_path
+        info["method"] = "cpu" if not gpu_used else info.get("method", "cpu")
+        info["time_sec_cpu"] = time.perf_counter() - t1
+
+    info.update({
+        "input_path": input_path,
+        "output_dir": out_dir,
+        "T": T,
+        "shape": (T, C, Z, Y, X),
+        "drift_channel": drift_channel,
+    })
+    return info
+
+
+def correct_directory(
+    *,
+    input_search_pattern: str,
+    output_dir: Optional[str] = None,
+    drift_channel: int = 0,
+    method: str = "auto",
+    timepoints: Optional[int] = None,
+    cpu_threads: int = 0,
+    save_shifts: bool = True,
+    parallel: bool = True,
+) -> Iterable[Dict[str, Any]]:
+    """
+    Batch drift correction over a glob search pattern.
+    Follows the organization pattern of segment_nellie.py.
+    """
+    import glob as _glob
+
+    image_files = sorted(_glob.glob(input_search_pattern))
+    # If wildcard used, optionally filter to common tif/tiff
+    if any(ch in input_search_pattern for ch in ["*", "?", "["]):
+        image_files = [p for p in image_files if p.lower().endswith((".tif", ".tiff"))]
+
+    is_batch = len(image_files) > 1
+    if output_dir is None and is_batch:
+        output_dir = os.path.dirname(input_search_pattern)
+    if is_batch and output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    def _one(img_path: str) -> Dict[str, Any]:
+        try:
+            return correct_image(
+                input_path=img_path,
+                output_dir=output_dir,
+                drift_channel=drift_channel,
+                method=method,
+                timepoints=timepoints,
+                cpu_threads=cpu_threads,
+                save_shifts=save_shifts,
+            )
+        except Exception as e:
+            logger.error(f"Failed to correct {img_path}: {e}")
+            return {"input_path": img_path, "error": str(e)}
+
+    if parallel and is_batch:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor() as ex:
+            futures = [ex.submit(_one, p) for p in image_files]
+            for f in tqdm(as_completed(futures), total=len(image_files), desc="Drift correcting"):
+                yield f.result()
     else:
-        print(f"GPU (pyGPUreg) time: {gpu_dt:.2f}s")
-    # Save GPU outputs (even if placeholder) for easy side-by-side inspection
-    try:
-        OmeTiffWriter.save(gpu_out, gpu_tif, dim_order="TCZYX")
-        print(f"Saved GPU-corrected TIFF: {gpu_tif}")
-    except Exception as e:
-        print(f"Failed to save GPU TIFF: {e}")
+        for p in tqdm(image_files, desc="Drift correcting"):
+            yield _one(p)
 
-    # Save GPU shifts and report accuracy vs CPU translation components
-    try:
-        if gpu_shifts is not None and cpu_tmats is not None:
-            np.save(gpu_shifts_npy, gpu_shifts)
-            print(f"Saved GPU shifts: {gpu_shifts_npy}")
-            # Extract CPU (dy, dx) from 3x3 matrices per timepoint
-            try:
-                cpu_shifts = np.column_stack([cpu_tmats[:, 1, 2], cpu_tmats[:, 0, 2]])
-                # Align shapes in case of slight T mismatch
-                tmin = min(cpu_shifts.shape[0], gpu_shifts.shape[0])
-                d = gpu_shifts[:tmin] - cpu_shifts[:tmin]
-                rms = float(np.sqrt(np.mean(d**2)))
-                mad = float(np.max(np.abs(d)))
-                print(f"GPU vs CPU shift error: RMS={rms:.3f} px, MaxAbs={mad:.3f} px over T={tmin}")
-            except Exception as e:
-                print(f"Failed to compute CPU/GPU shift comparison: {e}")
-    except Exception as e:
-        print(f"Failed to save GPU shifts: {e}")
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Correct XY drift using CPU (pystackreg) or GPU (pyGPUreg)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument('--input-search-pattern', required=True, help='Glob pattern or single file path.')
+    parser.add_argument('--output-dir', default=None, help='Where to place outputs')
+    parser.add_argument('--drift-channel', type=int, default=0, help='Channel index used for drift estimation')
+    parser.add_argument('--method', default='auto', choices=['cpu', 'gpu', 'auto'], help='Which method to use')
+    parser.add_argument('--cpu-threads', type=int, default=0, help='Threads for per-plane transform in CPU baseline (0/1=serial)')
+    parser.add_argument('--save-shifts', action='store_true', help='Save tmats/shifts npy next to outputs')
+    parser.add_argument('--no-parallel', action='store_true', help='Disable parallel batch processing')
+    parser.add_argument('--log-level', default=None, help='Explicit logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).')
+    args = parser.parse_args(argv)
+
+    # Logging setup: use provided --log-level or env DRIFT_CORRECT_LOG_LEVEL (default INFO)
+    env_level = os.getenv('DRIFT_CORRECT_LOG_LEVEL')
+    chosen = (args.log_level or env_level or 'INFO').upper()
+    level = getattr(logging, chosen, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger.debug(f"Logging initialized. level={logging.getLevelName(level)}")
+
+    # Batch runner
+    results = []
+    for res in correct_directory(
+        input_search_pattern=args.input_search_pattern,
+        output_dir=args.output_dir,
+        drift_channel=args.drift_channel,
+        method=args.method,
+        cpu_threads=args.cpu_threads,
+        save_shifts=args.save_shifts,
+        parallel=not args.no_parallel,
+    ):
+        results.append(res)
+        if 'error' in res:
+            logger.error(f"Error: {res['error']} ({res.get('input_path')})")
+        else:
+            logger.info(f"Done: {res.get('output_tif')} ({res.get('method')})")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
