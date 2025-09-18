@@ -27,6 +27,7 @@ type Segment struct {
 	Commands      []interface{} `yaml:"commands,omitempty"`       // Commands to execute (can be strings or maps)
 	LastProcessed string        `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
 	CodeVersion   string        `yaml:"code_version,omitempty"`   // Git version/tag/commit hash used when this segment was processed
+	RunDuration   string        `yaml:"run_duration,omitempty"`   // Wall-clock duration of this segment (e.g., "1m23.456s")
 }
 
 // Config struct to hold the overall configuration structure
@@ -497,6 +498,7 @@ func main() {
 		cmd.Stderr = os.Stderr // Redirect standard error to console
 
 		// Execute the command
+		startTime := time.Now()
 		err = cmd.Run()
 		if err != nil {
 			fmt.Printf("Error executing command: %v\n", err)
@@ -507,6 +509,8 @@ func main() {
 		config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
 		// Record the code/version used for this successful run
 		config.Run[i].CodeVersion = getVersion()
+		// Record wall-clock run duration
+		config.Run[i].RunDuration = time.Since(startTime).String()
 
 		// Write the updated configuration back to the YAML file
 		data, err = yaml.Marshal(&config) // Marshal the updated config struct
