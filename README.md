@@ -171,6 +171,7 @@ ExperimentFolder/
 * run_pipeline_helper_functions.py – Shared helper utilities used by scripts.
 * segment_ilastik.py – Run or interface with Ilastik-based segmentation.
 * segment_nellie.py – Segmentation using the Nellie model/pipeline.
+* _segment_ernet.py – ERnet-v2 segmentation wrapper (imports ERnet repo's Inference module and runs inference; requires separate ERnet checkout and weights).
 * segment_threshold.py – Simple threshold-based segmentation.
 * track_indexed_mask.py – Track labeled mask objects across frames / timepoints.
 
@@ -332,6 +333,25 @@ Notes:
 * Remove `last_processed` / `code_version` lines if copying directly; they are auto-added after a successful run.
 * Adjust `--channel_axis` if data order is (Z, Y, X, C) or uses a different convention.
 * Large diameters (>200) may benefit from tiling or GPU memory considerations depending on image size.
+
+### ERnet-v2 Notes
+Requires cloning ERnet-v2 repository and obtaining a .pth checkpoint. Point `--ernet-dir` to the repo (or its `Inference` folder) and pass `--weights`.
+
+Quick start (PowerShell):
+```powershell
+# Create env once
+conda env create -f .\conda_envs\segment_ernet.yml
+
+# Run wrapper (CPU example)
+conda activate segment_ernet
+python .\standard_code\python\_segment_ernet.py `
+  --input-search-pattern ".\pipeline_configs\input_tif\*.tif" `
+  --ernet-dir ".\external\ERnet-v2" `
+  --weights ".\external\ERnet-v2\weights\ernet_swin.pth" `
+  --output-dir ".\_tmp_out\ernet" `
+  --cpu
+```
+If `--graph-metrics` is enabled, ensure `sknw` is installed; otherwise omit that flag.
 
 
 

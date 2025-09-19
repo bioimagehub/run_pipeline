@@ -1,4 +1,5 @@
-# Ignore files and folders that start with an underscore
+# Local clones of external repos
+external/# Ignore files and folders that start with an underscore
 _*/
 _*
 *.env
@@ -7,3 +8,6 @@ _*
 
 # Ignore all folders inside pipeline_configs/
 pipeline_configs/*/
+
+# Ignore all files and folders inside external/
+external/*/

@@ -581,7 +581,7 @@ def correct_image(
         return out_tif
 
     # Try cupy first, then gpu then cpu if requested/auto
-    gpu_failed = False
+    # gpu_failed = False
     gpu_used = False
     
     if chosen in {"cupy", "auto"} and not info.get("method"):  # try GPU CuPy if auto

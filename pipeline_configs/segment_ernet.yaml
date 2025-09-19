@@ -1,0 +1,23 @@
+run:
+- name: Convert to tif
+  environment: convert_to_tif
+  commands:
+  - python
+  - ./standard_code/python/convert_to_tif.py
+  - --input-search-pattern: '%REPO%/input_town/*.ims'
+- name: Segment ER with ERnet-v2 (GPU)
+  environment: ernet
+  commands:
+  - python
+  - '%REPO%/standard_code/python/_segment_ernet.py'
+  - --input-search-pattern: '%YAML%/input_town_tif/*.tif'
+  - --output-dir: '%YAML%/ernet_output'
+  - --ernet-dir: '%REPO%/external/ERnet-v2'
+  - --weights: https://github.com/charlesnchr/ERnet-v2/releases/download/v2.0/20220306_ER_4class_swinir_nch1.pth
+  - --tile-size: 512
+  - --channel-index: 0
+  - --mask-class: tubule
+  - --output-ome-tif
+  last_processed: "2025-09-19"
+  code_version: 0.0.8
+  run_duration: 24.9240309s

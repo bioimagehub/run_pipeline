@@ -1,0 +1,33 @@
+name: ernet
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch=2.4.*
+  - torchvision=0.19.*
+  - torchaudio=2.4.*
+  - python-dotenv
+  - tqdm
+  - pytorch-cuda=12.4    # <- exists on Windows
+  - numpy>=1.24,<2.0
+  - numba
+  - scipy
+  - scikit-image
+  - opencv
+  - matplotlib
+  - pillow
+  - networkx<3
+  - imagecodecs
+  - ipykernel
+  - pip
+  - pip:
+      - timm
+      - einops
+      - sknw==0.12
+      - bioio
+      - bioio-bioformats
+      - bioio-ome-tiff
+      - bioio-tifffile
+      - bioio-nd2

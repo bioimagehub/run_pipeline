@@ -43,6 +43,9 @@ var (
 	BuildDate string
 )
 
+// one-time warning flag for deprecated './' usage
+var warnedDotSlash bool
+
 // GetBaseDir returns the project root directory.
 // It handles both `go run` (using working dir) and `go build` (using executable path).
 func GetBaseDir() string {
@@ -67,20 +70,35 @@ func GetBaseDir() string {
 }
 
 func resolvePath(v string, mainProgramDir, yamlDir string) string {
-	if strings.HasPrefix(v, "./") {
-		v = strings.TrimPrefix(v, "./")
-		if strings.HasSuffix(v, ".py") {
-			return filepath.Join(mainProgramDir, v)
-		}
-		if strings.HasSuffix(v, ".ijm") {
-			return filepath.Join(mainProgramDir, v)
-		}
-		if strings.HasSuffix(v, ".exe") {
-			return filepath.Join(mainProgramDir, v)
-		}
-
-		return filepath.Join(yamlDir, v)
+	// New explicit tokens (non-breaking):
+	//   %REPO%/path -> resolved relative to mainProgramDir (repo/program root)
+	//   %YAML%/path -> resolved relative to folder containing the YAML file
+	// These take precedence when present at the start of the string.
+	if strings.HasPrefix(v, "%REPO%") {
+		sub := strings.TrimPrefix(v, "%REPO%")
+		sub = strings.TrimLeft(sub, "/\\")
+		return filepath.Join(mainProgramDir, filepath.FromSlash(sub))
 	}
+	if strings.HasPrefix(v, "%YAML%") {
+		sub := strings.TrimPrefix(v, "%YAML%")
+		sub = strings.TrimLeft(sub, "/\\")
+		return filepath.Join(yamlDir, filepath.FromSlash(sub))
+	}
+
+	// Backward-compatible behavior for leading ./
+	if strings.HasPrefix(v, "./") {
+		if !warnedDotSlash {
+			fmt.Println("[deprecated] Use %REPO%/ or %YAML%/ instead of './'")
+			warnedDotSlash = true
+		}
+		vTrim := strings.TrimPrefix(v, "./")
+		if strings.HasSuffix(vTrim, ".py") || strings.HasSuffix(vTrim, ".ijm") || strings.HasSuffix(vTrim, ".exe") {
+			return filepath.Join(mainProgramDir, vTrim)
+		}
+		return filepath.Join(yamlDir, vTrim)
+	}
+
+	// No changes for other paths (absolute or bare)
 	return v
 }
 
