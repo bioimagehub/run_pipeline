@@ -174,6 +174,51 @@ ExperimentFolder/
 * segment_threshold.py – Simple threshold-based segmentation.
 * track_indexed_mask.py – Track labeled mask objects across frames / timepoints.
 
+## Drift correction in convert_to_tif.py
+`standard_code/python/convert_to_tif.py` can optionally correct XY drift on time series (TCZYX).
+
+- Enable drift correction with: `--drift-correct-channel <int>` (0-based channel index). Use `-1` (default) to disable.
+- Select algorithm with a single flag: `--drift-correct-method {cpu|gpu|cupy|auto}`
+  - `cpu` → StackReg translation (pystackreg)
+  - `gpu` → pyGPUreg (GPU)
+  - `cupy` → CuPy phase correlation (GPU)
+  - `auto` → try `cupy` → `gpu` → `cpu` in that order
+
+Outputs
+- The corrected OME-TIFF is written to the chosen output path.
+- If drift correction ran, a sidecar `*_shifts.npy` is saved containing either the GPU shifts (T×2) or CPU StackReg matrices (T×3×3).
+
+Prerequisites
+- CuPy mode: install CuPy in the `convert_to_tif` Conda env. For NVIDIA CUDA on Windows, either:
+  - `conda install -c conda-forge cupy` (matching your CUDA toolchain), or
+  - `pip install cupy-cuda11x` (pick the build that matches your CUDA)
+- pyGPUreg mode (default when no flag): requires `pyGPUreg` in the env.
+- CPU mode: requires `pystackreg`.
+
+Examples (PowerShell)
+```powershell
+# CuPy GPU drift correction
+python .\standard_code\python\convert_to_tif.py \
+  --input-search-pattern ".\input_tif\*.tif" \
+  --projection-method max \
+  --drift-correct-channel 0 \
+  --drift-correct-method cupy
+
+# CPU StackReg drift correction
+python .\standard_code\python\convert_to_tif.py \
+  --input-search-pattern ".\input_tif\*.tif" \
+  --projection-method max \
+  --drift-correct-channel 0 \
+  --drift-correct-method cpu
+
+# GPU pyGPUreg (default)
+python .\standard_code\python\convert_to_tif.py \
+  --input-search-pattern ".\input_tif\*.tif" \
+  --projection-method max \
+  --drift-correct-channel 0 \
+  --drift-correct-method gpu
+```
+
 ## command line Scripts
 You can also invoke any CLI-capable tool (Python modules, installed packages, standalone `.exe` files) inside a segment. This lets you integrate tools like Cellpose, Ilastik exporters, FFMPEG, or your own compiled utilities directly into the unified provenance-tracked workflow.
 

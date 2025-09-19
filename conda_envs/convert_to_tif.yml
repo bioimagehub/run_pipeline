@@ -1,16 +1,27 @@
 name: convert_to_tif
 channels:
+  - nvidia
   - conda-forge
-  - anaconda
+
 dependencies:
+  # Core
   - python=3.12
-  - pystackreg
   - numpy
   - matplotlib
-  - scyjava
   - tqdm
   - joblib
+
+  # I/O + helpers
   - nd2reader
+  - scyjava
+  - pystackreg
+
+  # GPU stack (conda-native)
+  - cuda-version=12        # pulls a consistent CUDA 12.x runtime set
+  - cupy                   # CuPy from conda-forge (matches cuda-version)
+  - cudnn                  # optional, but useful to have around
+  - cutensor               # optional, speeds up some tensor ops
+
   - pip
   - pip:
       - bioio
@@ -18,3 +29,4 @@ dependencies:
       - bioio_ome_tiff
       - bioio-tifffile
       - bioio_nd2
+      - pyGPUreg
