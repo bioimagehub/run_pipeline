@@ -338,17 +338,48 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 
 // Function to prepare command arguments for uv execution
 // Expects segment.Environment to be of the form "uv:<group>"
-func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) []string {
+// makeUvCommand builds the uv command args and returns the desired Python version (if any)
+// Supported environment syntax:
+//
+//	"uv:<group>"              -> uses default/fallback Python (3.11), includes dependency group
+//	"uv@3.11:<group>"         -> forces Python 3.11
+//	default Python may be overridden with env var UV_DEFAULT_PYTHON (e.g., 3.11 or 3.10)
+func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, string) {
 	// Determine the correct uv runner prefix, installing or falling back to pipx if needed
 	cmdArgs := getUvRunnerPrefix(mainProgramDir)
 
-	// Extract group name after prefix uv:
+	// Always run in isolated env to avoid picking up project .venv or system env
+	cmdArgs = append(cmdArgs, "--isolated")
+
+	// Extract optional Python version and group from environment string
 	envLower := strings.ToLower(segment.Environment)
-	group := strings.TrimPrefix(envLower, "uv:")
-	if group != envLower { // prefix existed
-		if group != "" {
-			cmdArgs = append(cmdArgs, "--group", group)
+	uvPython := strings.TrimSpace(os.Getenv("UV_DEFAULT_PYTHON"))
+	if uvPython == "" {
+		uvPython = "3.11" // default for broad wheel availability
+	}
+
+	var group string
+	if strings.HasPrefix(envLower, "uv@") {
+		// format uv@<pyver>:<group>
+		rest := strings.TrimPrefix(envLower, "uv@")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) == 2 {
+			if parts[0] != "" {
+				uvPython = parts[0]
+			}
+			group = parts[1]
+		} else {
+			// No group specified, just a version
+			if parts[0] != "" {
+				uvPython = parts[0]
+			}
 		}
+	} else {
+		group = strings.TrimPrefix(envLower, "uv:")
+	}
+
+	if group != "" {
+		cmdArgs = append(cmdArgs, "--group", group)
 	}
 
 	// Loop through commands similar to Python/ImageJ path handling
@@ -371,7 +402,7 @@ func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) []string {
 		}
 	}
 
-	return cmdArgs
+	return cmdArgs, uvPython
 }
 
 // getUvRunnerPrefix ensures `uv` is available and returns the appropriate command prefix:
@@ -620,9 +651,40 @@ func main() {
 			}
 
 			cmdArgs = makeImageJCommand(segment, imageJPath, mainProgramDir, yamlDir)
-		} else if strings.HasPrefix(strings.ToLower(segment.Environment), "uv:") {
+		} else if strings.HasPrefix(strings.ToLower(segment.Environment), "uv:") || strings.HasPrefix(strings.ToLower(segment.Environment), "uv@") {
 			// uv-managed environment: no conda activation
-			cmdArgs = makeUvCommand(segment, mainProgramDir, yamlDir)
+			var uvPython string
+			cmdArgs, uvPython = makeUvCommand(segment, mainProgramDir, yamlDir)
+			// Propagate desired Python version to uv via environment
+			// Use UV_PYTHON which uv honors for selecting interpreter
+			if uvPython != "3.11" {
+				fmt.Printf("[note] Requesting UV_PYTHON=%s (override via UV_DEFAULT_PYTHON). 3.11 is recommended for best wheel coverage on Windows.\n", uvPython)
+			}
+			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+			cmd.Env = append(os.Environ(), fmt.Sprintf("UV_PYTHON=%s", uvPython))
+			fmt.Printf("Constructed command: %v with UV_PYTHON=%s\n", cmdArgs, uvPython)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			startTime := time.Now()
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("Error executing command: %v\n", err)
+				log.Fatalf("Error")
+			}
+			config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
+			config.Run[i].CodeVersion = getVersion()
+			config.Run[i].RunDuration = time.Since(startTime).String()
+			data, err = yaml.Marshal(&config)
+			if err != nil {
+				log.Fatalf("error marshalling updated YAML: %v", err)
+			}
+			err = os.WriteFile(yamlPath, data, 0644)
+			if err != nil {
+				log.Fatalf("error writing YAML file: %v", err)
+			}
+			fmt.Println("")
+			fmt.Println("")
+			continue
 		} else {
 			anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 			if err != nil {

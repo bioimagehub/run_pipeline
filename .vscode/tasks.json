@@ -40,6 +40,16 @@
 			"args": [
 				"pipeline_configs/segment_ernet_uv.yaml"
 			]
+		},
+		{
+			"label": "Build Go exe",
+			"type": "shell",
+			"command": "go",
+			"args": [
+				"build",
+				"-o",
+				"run_python_pipeline.exe"
+			]
 		}
 	]
 }
