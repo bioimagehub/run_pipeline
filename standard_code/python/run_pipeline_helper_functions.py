@@ -114,6 +114,23 @@ def load_bioio(path: str) -> BioImage:
         # import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
         return img
+
+    elif path.endswith(".ims"):
+        # Prefer pure-Python Imaris reader to avoid JVM/JPype
+        try:
+            from bioio_imaris import Reader as ImarisReader  # located alongside this file
+            img = BioImage(path, reader=ImarisReader)
+            return img
+        except Exception:
+            # Fallback: use Bio-Formats if plugin is unavailable
+            _configure_bioformats_safe_io(path)
+            try:
+                import bioio_bioformats  # type: ignore
+                img = BioImage(path, reader=bioio_bioformats.Reader)
+                return img
+            except Exception:
+                # Will raise unsupported below
+                pass
     
     
     # TODO Add more readers here if needed

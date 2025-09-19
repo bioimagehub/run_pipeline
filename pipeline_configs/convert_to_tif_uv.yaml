@@ -1,0 +1,10 @@
+run:
+- name: Convert to tif (UV)
+  environment: uv:convert-to-tif
+  commands:
+  - python
+  - ./standard_code/python/convert_to_tif.py
+  - --input-search-pattern: '%REPO%/input_town/*.ims'
+  last_processed: "2025-09-19"
+  code_version: 0.0.8
+  run_duration: 11.9162499s

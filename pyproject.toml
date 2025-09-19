@@ -1,0 +1,72 @@
+[project]
+name = "run-pipeline"
+version = "0.0.0"
+requires-python = ">=3.11"
+description = "Pipeline runner with uv groups for per-segment envs"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+# Intentionally empty; uv groups are defined below under [tool.uv.dependency-groups]
+
+[tool.uv]
+# Consider best match across indexes when multiple are configured
+index-strategy = "unsafe-best-match"
+
+# Use the PyTorch CUDA index only for torch packages
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+
+[dependency-groups]
+convert-to-tif = [
+	"numpy",
+	"matplotlib",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"scyjava",
+	"jpype1==1.5.0",
+	"dask[array]",
+	"h5py",
+	"imaris-ims-file-reader",
+	"pystackreg",
+	"cupy-cuda12x",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"pyGPUreg",
+]
+segment-ernet = [
+	"torch==2.4.0+cu124",
+	"torchvision==0.19.0+cu124",
+	"torchaudio==2.4.0+cu124",
+	"python-dotenv",
+	"tqdm",
+	"numpy>=1.24,<2.0",
+	"numba",
+	"scipy",
+	"scikit-image",
+	"opencv-python",
+	"matplotlib",
+	"pillow",
+	"networkx<3",
+	"imagecodecs",
+	"ipykernel",
+	"timm",
+	"einops",
+	"sknw==0.12",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+]

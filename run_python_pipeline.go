@@ -336,6 +336,130 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 	return cmdArgs
 }
 
+// Function to prepare command arguments for uv execution
+// Expects segment.Environment to be of the form "uv:<group>"
+func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) []string {
+	// Determine the correct uv runner prefix, installing or falling back to pipx if needed
+	cmdArgs := getUvRunnerPrefix(mainProgramDir)
+
+	// Extract group name after prefix uv:
+	envLower := strings.ToLower(segment.Environment)
+	group := strings.TrimPrefix(envLower, "uv:")
+	if group != envLower { // prefix existed
+		if group != "" {
+			cmdArgs = append(cmdArgs, "--group", group)
+		}
+	}
+
+	// Loop through commands similar to Python/ImageJ path handling
+	for _, cmd := range segment.Commands {
+		switch v := cmd.(type) {
+		case string:
+			resolved := resolvePath(v, mainProgramDir, yamlDir)
+			cmdArgs = append(cmdArgs, resolved)
+		case map[interface{}]interface{}:
+			for flag, value := range v {
+				cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
+				if value != nil && value != "null" {
+					valStr := fmt.Sprintf("%v", value)
+					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+					cmdArgs = append(cmdArgs, resolved)
+				}
+			}
+		default:
+			log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+		}
+	}
+
+	return cmdArgs
+}
+
+// getUvRunnerPrefix ensures `uv` is available and returns the appropriate command prefix:
+// - ["cmd","/C","uv","run"] when uv is on PATH
+// - ["cmd","/C","pipx","run","uv","run"] as a fallback when uv is not on PATH but pipx is available
+// It will attempt `pipx install uv` when uv is missing.
+func getUvRunnerPrefix(mainProgramDir string) []string {
+	have := func(name string) bool { _, err := exec.LookPath(name); return err == nil }
+
+	// Prefer a repo-bundled uv.exe if present (no system install needed)
+	externalUV := filepath.Join(mainProgramDir, "external", "UV")
+	localCandidates := []string{
+		filepath.Join(externalUV, "uv.exe"),
+		filepath.Join(externalUV, "bin", "uv.exe"),
+		filepath.Join(mainProgramDir, "uv.exe"),
+		filepath.Join(mainProgramDir, "uv", "uv.exe"),
+		filepath.Join(mainProgramDir, "tools", "uv.exe"),
+		filepath.Join(mainProgramDir, "tools", "uv", "uv.exe"),
+		filepath.Join(mainProgramDir, "bin", "uv.exe"),
+	}
+	for _, p := range localCandidates {
+		if isFile(p) {
+			return []string{"cmd", "/C", p, "run"}
+		}
+	}
+
+	// Attempt an in-repo standalone install into external/UV using the official installer
+	// Only try if uv isn't on PATH
+	if !have("uv") {
+		// Ensure destination dir exists
+		_ = os.MkdirAll(externalUV, 0755)
+		// PowerShell command to set install dir and run installer
+		psCmd := fmt.Sprintf("$env:UV_INSTALL_DIR = '%s'; irm https://astral.sh/uv/0.8.18/install.ps1 | iex", externalUV)
+		fmt.Printf("Attempting standalone uv install into %s...\n", externalUV)
+		install := exec.Command("powershell", "-ExecutionPolicy", "ByPass", "-NoProfile", "-Command", psCmd)
+		install.Stdout = os.Stdout
+		install.Stderr = os.Stderr
+		_ = install.Run()
+
+		// Re-check local candidates after installation
+		for _, p := range localCandidates {
+			if isFile(p) {
+				fmt.Printf("Found uv at %s after install.\n", p)
+				return []string{"cmd", "/C", p, "run"}
+			}
+		}
+	}
+
+	if have("uv") {
+		return []string{"cmd", "/C", "uv", "run"}
+	}
+
+	// Try pipx-based options
+	if have("pipx") {
+		// Quick ephemeral check: pipx run uv --version
+		testCmd := exec.Command("cmd", "/C", "pipx", "run", "uv", "--version")
+		if err := testCmd.Run(); err == nil {
+			fmt.Println("uv not found; using 'pipx run uv' for this session.")
+			return []string{"cmd", "/C", "pipx", "run", "uv", "run"}
+		}
+
+		// Try installing uv for persistent availability
+		fmt.Println("uv not found; attempting 'pipx install uv' ...")
+		install := exec.Command("cmd", "/C", "pipx", "install", "uv")
+		install.Stdout = os.Stdout
+		install.Stderr = os.Stderr
+		_ = install.Run()
+
+		// Re-evaluate availability
+		if have("uv") {
+			return []string{"cmd", "/C", "uv", "run"}
+		}
+
+		// Fallback to pipx run if it now works
+		testCmd2 := exec.Command("cmd", "/C", "pipx", "run", "uv", "--version")
+		if err := testCmd2.Run(); err == nil {
+			fmt.Println("Using 'pipx run uv' as fallback. Consider adding uv to PATH via 'pipx install uv'.")
+			return []string{"cmd", "/C", "pipx", "run", "uv", "run"}
+		}
+	}
+
+	// If we get here, we couldn't find or install uv automatically
+	fmt.Println("ERROR: 'uv' is not available and automatic installation failed.")
+	fmt.Println("Please install uv manually, e.g. 'pipx install uv' or download the standalone binary.")
+	log.Fatal("uv is required for 'uv:' environments")
+	return []string{"cmd", "/C", "uv", "run"}
+}
+
 // Function to prepare command arguments for ImageJ execution
 func makeImageJCommand(segment Segment, imageJPath, mainProgramDir, yamlDir string) []string {
 	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"} // Initialize command arguments
@@ -484,7 +608,7 @@ func main() {
 		// Prepare command arguments for executing the environment and subsequent commands
 		var cmdArgs []string // Declare cmdArgs here
 
-		// Determine if the environment is going to be imageJ or Python
+		// Determine if the environment is going to be imageJ, uv, or conda-based Python
 		fmt.Println(segment.Environment)
 		if strings.ToLower(segment.Environment) == "imagej" {
 			fmt.Println("running imageJ")
@@ -496,6 +620,9 @@ func main() {
 			}
 
 			cmdArgs = makeImageJCommand(segment, imageJPath, mainProgramDir, yamlDir)
+		} else if strings.HasPrefix(strings.ToLower(segment.Environment), "uv:") {
+			// uv-managed environment: no conda activation
+			cmdArgs = makeUvCommand(segment, mainProgramDir, yamlDir)
 		} else {
 			anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 			if err != nil {

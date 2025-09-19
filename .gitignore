@@ -10,4 +10,4 @@ _*
 pipeline_configs/*/
 
 # Ignore all files and folders inside external/
-external/*/
+external/ERnet-v2/*

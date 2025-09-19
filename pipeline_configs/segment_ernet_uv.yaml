@@ -1,0 +1,43 @@
+run:
+- name: Generate synthetic ER (UV)
+  environment: uv:segment-ernet
+  commands:
+  - python
+  - '%REPO%/standard_code/python/generate_synthetic_er.py'
+  - --output-folder: '%YAML%/input_ER'
+  - --N: 1
+  - --radius: 250
+  - --dpi: 64
+  - --break-prob: 0
+  - --num-seeds: 400
+  - --sigma: 2
+  - --darkness
+  last_processed: "2025-09-19"
+  code_version: 0.0.9
+  run_duration: 19.968338s
+- name: Segment ER with ERnet-v2 (UV synthetic)
+  environment: uv:segment-ernet
+  commands:
+  - python
+  - '%REPO%/standard_code/python/_segment_ernet.py'
+  - --input-search-pattern: '%YAML%/input_ER/*_IN_snr*.png'
+  - --output-dir: '%YAML%/ernet_output_uv'
+  - --ernet-dir: '%REPO%/external/ERnet-v2'
+  - --weights: https://github.com/charlesnchr/ERnet-v2/releases/download/v2.0/20220306_ER_4class_swinir_nch1.pth
+  - --tile-size: 512
+  - --channel-index: 0
+  - --mask-class: tubule
+  - --output-ome-tif
+  last_processed: "2025-09-19"
+  code_version: 0.0.9
+  run_duration: 20.9548871s
+- name: Compare ERnet vs synthetic GT (UV)
+  environment: uv:segment-ernet
+  commands:
+  - python
+  - '%REPO%/standard_code/python/compare_ernet_synthetic.py'
+  - --synthetic-folder: '%YAML%/input_ER'
+  - --ernet-mask: '%YAML%/ernet_output_uv/*_ernet_mask.tif'
+  last_processed: "2025-09-19"
+  code_version: 0.0.9
+  run_duration: 8.428484s

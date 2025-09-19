@@ -283,10 +283,7 @@ def process_folder(args: argparse.Namespace, parallel: bool = True) -> None:
     destination_folder = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
     os.makedirs(destination_folder, exist_ok=True)
 
-    # Safety: Bio-Formats/JVM is not friendly with multi-proc + threaded Dask. If IMS present, run sequentially.
-    if parallel and any(str(f).lower().endswith(".ims") for f in files_to_process):
-        logging.warning("IMS detected; disabling parallel processing to avoid JVM/threading crashes.")
-        parallel = False
+    # Parallel processing is allowed for .ims since we now use a pure-Python reader (no JVM/Bio-Formats).
 
     def process_single_file(input_file_path):
         output_tif_file_path: str = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)
