@@ -9,7 +9,7 @@ from bioio.writers import OmeTiffWriter
 import logging
 
 # Local imports
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 
 def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_path=None):
@@ -57,13 +57,13 @@ def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_pa
         new_indexed_masks[t, channel_zero_base, z][slice_mask == original_label] = row.particle + 1
 
     if output_mask_path:
-        OmeTiffWriter.save(new_indexed_masks, output_mask_path, dim_order="TCZYX")
+    rp.save_tczyx_image(new_indexed_masks, output_mask_path, dim_order="TCZYX")
 
     return df_tracked, new_indexed_masks
 
 
 def process_file(input_file_path: str, output_file_path: str, tracking_channel: int):
-    masks = rp.load_bioio(input_file_path).data
+    masks = rp.load_tczyx_image(input_file_path).data
     df, new_mask = track_labels_with_trackpy(masks, channel_zero_base=tracking_channel, output_mask_path=output_file_path)
     # print(f"Tracked {len(df['particle'].unique())} objects in file: {os.path.basename(input_file_path)}")
     return df

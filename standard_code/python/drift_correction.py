@@ -9,7 +9,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 # Local helper used throughout the repo
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 # CPU registration (StackReg)
 from pystackreg import StackReg
@@ -91,7 +91,11 @@ def drift_correct_xy_parallel(
     video: np.ndarray,
     drift_correct_channel: int = 0,
     transform_threads: int = 0,
+    logger: Optional[Any] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    if logger is None:
+        import logging
+        logger = logging
     """
     CPU baseline using pystackreg (translation only), identical to convert_to_tif.py.
     video shape: (T, C, Z, Y, X)
@@ -134,7 +138,11 @@ def drift_correct_xy_parallel(
 def drift_correct_xy_pygpureg(
     video: np.ndarray,
     drift_correct_channel: int = 0,
+    logger: Optional[Any] = None,
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    if logger is None:
+        import logging
+        logger = logging
     """
     GPU alternative using pyGPUreg if available.
     Strategy:
@@ -383,7 +391,11 @@ def drift_correct_xy_cupy(
     use_running_ref: bool = True,
     highpass_pix: Optional[float] = None,
     lowpass_pix: Optional[float] = None,
+    logger: Optional[Any] = None,
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    if logger is None:
+        import logging
+        logger = logging
     """
     Drift-correct using CuPy phase correlation on Z-max projections.
 
@@ -498,10 +510,10 @@ def drift_correct_xy_cupy(
 
 def load_first_T_timepoints(input_file: str, max_T: Optional[int] = None) -> np.ndarray:
     """
-    Loads the image via rp.load_bioio and returns the first max_T timepoints as a numpy array.
+    Loads the image via rp.load_tczyx_image and returns the first max_T timepoints as a numpy array.
     Assumes shape TCZYX. If data is a Dask array, compute only the needed slice.
     """
-    img = rp.load_bioio(input_file)
+    img = rp.load_tczyx_image(input_file)
     if img is None:
         raise RuntimeError(f"Could not load image: {input_file}")
 
@@ -577,7 +589,7 @@ def correct_image(
 
     def _save_outputs(arr: np.ndarray, suffix: str) -> str:
         out_tif = os.path.join(out_dir, f"{base}_T{T}_drift_{suffix}.tif")
-        OmeTiffWriter.save(arr, out_tif, dim_order="TCZYX")
+        rp.save_tczyx_image(arr, out_tif, dim_order="TCZYX")
         return out_tif
 
     # Try cupy first, then gpu then cpu if requested/auto

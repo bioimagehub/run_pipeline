@@ -9,7 +9,7 @@ import pandas as pd
 from skimage.feature import peak_local_max
 from tqdm import tqdm
 
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 def find_maxima_in_image(image_path: str, output_csv: str, min_distance, threshold_abs, mask_patterns=None, search_subfolders=False):
     """
@@ -18,7 +18,7 @@ def find_maxima_in_image(image_path: str, output_csv: str, min_distance, thresho
     threshold_abs supports: absolute value, mean, median, 2*mean, 2*median, or -1 (skip channel).
     If mask_patterns is provided, for each maxima, extract the value at XY in each mask and store in <masklabel>_label columns.
     """
-    img = rp.load_bioio(image_path)
+    img = rp.load_tczyx_image(image_path)
     T, C, Z, Y, X = img.shape
     all_results = []
     # Expand min_distance to per-channel list
@@ -87,7 +87,7 @@ def find_maxima_in_image(image_path: str, output_csv: str, min_distance, thresho
             if len(mask_files) == 0:
                 mask_data.append(None)
                 continue
-            mask = rp.load_bioio(mask_files[0])
+            mask = rp.load_tczyx_image(mask_files[0])
             mask_data.append(mask)
 
     for t in range(T):

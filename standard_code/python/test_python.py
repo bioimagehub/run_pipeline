@@ -14,7 +14,7 @@ def main():
 
     # Example: process files using get_files_to_process2
     try:
-        import run_pipeline_helper_functions as rp
+    import bioimage_pipeline_utils as rp
         files = rp.get_files_to_process2(args.input_search_pattern, False)
     except Exception as e:
         files = []

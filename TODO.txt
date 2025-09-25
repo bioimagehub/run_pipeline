@@ -1,1 +1,62 @@
-remove mamba
+# BIPHUB Pipeline Manager TODO List
+
+## Current Tasks  
+- make all standard code
+- ✅ Updated module name from run_python_pipeline to run_pipeline (reflects universal nature) 
+
+## Code Quality & Standards
+- Add MIT license headers to all Python files in standard_code/python/
+- Add MIT license headers to Go files (run_pipeline.go, go/find_anaconda_path/)
+- Review and enhance type hints in all Python modules
+- Add comprehensive docstrings to all functions following Google style
+- Implement consistent error handling across all modules
+- Add unit tests for critical functions
+
+## Documentation
+- Create comprehensive README.md with installation instructions
+- Document all pipeline configuration options
+- Create API documentation for Python modules
+- Add usage examples for each supported analysis type
+- Document environment setup procedures
+
+## Environment & Dependencies
+- **PRIORITY: Migrate to UV as primary package manager**
+  - Convert all pipeline configs to use UV by default (like segment_ernet_uv.yaml)
+  - Update Go orchestrator to prefer UV environments over Conda
+  - Create UV lock files for reproducible dependency management
+  - Test UV performance vs Conda for environment creation speed
+  - Document UV migration benefits and usage patterns
+- Keep Conda environments as backup/legacy support
+  - Maintain existing conda_envs/ folder for compatibility
+  - Update documentation to show both UV and Conda options
+  - Test fallback mechanisms when UV is unavailable
+- Test cross-platform compatibility (Windows/macOS/Linux) with UV
+- Optimize UV environment creation and activation times
+- Create hybrid approach: UV for most cases, Conda for complex dependencies
+
+## Pipeline Improvements
+- Add pipeline validation and dry-run capabilities
+- Implement pipeline progress reporting
+- Add support for pipeline parallelization
+- Create template generator for new pipeline types
+- Add pipeline performance benchmarking
+
+## External Integrations
+- Update ERnet integration to latest version
+- Test and document Cellpose integration
+- Improve ImageJ ROI export functionality
+- Add support for additional segmentation tools
+
+## Multi-Language Support (Universal Orchestration)
+- **R scripts** for statistical analysis - create test examples with YAML variable passing
+- **ImageJ macros** for image processing - debug current issues and create working examples
+- **Shell commands** for file operations - demonstrate cross-platform shell script orchestration
+- Create comprehensive test suite showing string, int, list, and complex data types
+- Document variable type conversion between YAML and target languages
+- make a yaml pipeline config that shows how to use all test scripts lke i have for test python
+
+## Testing & Validation
+- Create automated test suite for pipelines
+- Add example datasets for testing
+- Implement regression testing for output validation
+- Create CI/CD pipeline for automated testing

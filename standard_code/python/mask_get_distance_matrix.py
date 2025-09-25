@@ -6,12 +6,12 @@ from scipy.ndimage import distance_transform_edt
 from bioio.writers import OmeTiffWriter
 
 
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 def process_file(mask_path: str, output_folder_path: str) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
     
-    mask = rp.load_bioio(mask_path)  # TCZYX
+    mask = rp.load_tczyx_image(mask_path)  # TCZYX
     # Check if mask is correctly loaded and has valid data
     if mask is None or mask.data is None:
         print(f"Error: Mask data is None for file {mask_path}. Skipping this file.")
@@ -66,7 +66,7 @@ def process_file(mask_path: str, output_folder_path: str) -> None:
 
     # Save the overall distance matrix
     output_file_path = f"{output_file_basename}_distance_matrix.tif"
-    OmeTiffWriter.save(overall_distance_matrix, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
+    rp.save_tczyx_image(overall_distance_matrix, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
 
 
 

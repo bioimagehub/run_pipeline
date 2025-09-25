@@ -9,7 +9,7 @@ from typing import Callable, List, Optional, Tuple, Union, Literal, Dict
 
 
 # local imports
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 
 

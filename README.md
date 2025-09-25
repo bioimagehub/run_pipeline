@@ -121,12 +121,12 @@ cd run_pipeline
 
 Build a versioned binary (optional ldflags):
 ```powershell
-go build -ldflags "-X main.Version=v0.3.0" -o run_pipeline.exe run_python_pipeline.go
+go build -ldflags "-X main.Version=v0.3.0" -o run_pipeline.exe run_pipeline.go
 ```
 
 Or just run directly:
 ```powershell
-go run run_python_pipeline.go path\to\your_config.yaml
+go run run_pipeline.go path\to\your_config.yaml
 ```
 
 ### Conda Environments

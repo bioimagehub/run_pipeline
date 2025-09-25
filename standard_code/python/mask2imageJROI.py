@@ -3,7 +3,7 @@ import argparse
 import os
 from roifile import ImagejRoi, roiwrite
 import numpy as np
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 
 
@@ -64,7 +64,7 @@ def main():
 
     def process_file(file_path):
         try:
-            img = rp.load_bioio(file_path)
+            img = rp.load_tczyx_image(file_path)
             mask = img.data if hasattr(img, 'data') else np.array(img)
             rois = mask_to_rois(mask)
             base = os.path.splitext(os.path.basename(file_path))[0]

@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import multiprocessing
 from typing import List, Tuple
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 from bioio.writers import OmeTiffWriter
 import re
 import os
@@ -13,8 +13,8 @@ def process_file(mask1_path: str, mask2_path: str, output_path: str, output_suff
     Subtracts mask2 from mask1 (set mask1 pixels to 0 where mask2 is nonzero). Optionally, remove all mask regions in mask1 and mask2 that do not overlap any region in the other mask.
     Always saves the subtracted mask1. If ensure_overlap is set, also saves the filtered mask2.
     """
-    mask1_img = rp.load_bioio(mask1_path)
-    mask2_img = rp.load_bioio(mask2_path)
+    mask1_img = rp.load_tczyx_image(mask1_path)
+    mask2_img = rp.load_tczyx_image(mask2_path)
     physical_pixel_sizes = mask1_img.physical_pixel_sizes if mask1_img.physical_pixel_sizes is not None else (None, None, None)
     mask1 = mask1_img.data[0, 0, :, :, :] if mask1_img.data.ndim == 5 else mask1_img.data
     mask2 = mask2_img.data[0, 0, :, :, :] if mask2_img.data.ndim == 5 else mask2_img.data
@@ -35,11 +35,11 @@ def process_file(mask1_path: str, mask2_path: str, output_path: str, output_suff
     # Save outputs
     base_name = os.path.splitext(os.path.basename(mask1_path))[0]
     output_tif_file_path = os.path.join(output_path, f"{base_name}{output_suffix}")
-    OmeTiffWriter.save(result_mask1, output_tif_file_path, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
+    rp.save_tczyx_image(result_mask1, output_tif_file_path, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
     if enforce_one_to_one_overlap:
         base_name2 = os.path.splitext(os.path.basename(mask2_path))[0]
         output_tif_file_path2 = os.path.join(output_path, f"{base_name2}{output_suffix2}")
-        OmeTiffWriter.save(filtered_mask2, output_tif_file_path2, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
+    rp.save_tczyx_image(filtered_mask2, output_tif_file_path2, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
 
 
 

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 import yaml
 
 # Local imports
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 # ---------------------------------------------------------------------------
 # Things to implement in the future
@@ -175,7 +175,7 @@ def save_intermediate(mask: Optional[np.ndarray] = None, labelinfo=None, rois=No
     if not isinstance(path, str):
         return
     if mask is not None:
-        OmeTiffWriter.save(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
+    rp.save_tczyx_image(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
     if labelinfo is not None:
         LabelInfo.save(labelinfo, path + "_labelinfo.yaml")
     if rois is not None:
@@ -915,7 +915,7 @@ def process_file(
     # 1. Load image
     # -------------------------------------------------------------------------
     try:
-        img = rp.load_bioio(str(input_path_p))  # External lib
+    img = rp.load_tczyx_image(str(input_path_p))  # External lib
     except Exception as e:
         return _safe_return("Error loading image", e, current_results)
 
@@ -940,7 +940,7 @@ def process_file(
         tif = path_base.with_suffix(".tif")
         if not tif.exists():
             return None, None
-        mask_local = rp.load_bioio(str(tif)).data  # Load mask
+    mask_local = rp.load_tczyx_image(str(tif)).data  # Load mask
         li_path = tif.with_name(f"{path_base.name}_labelinfo.yaml")
         li_local = LabelInfo.load(str(li_path)) if li_path.exists() else None  # Load label info
         return mask_local, li_local
@@ -1024,7 +1024,7 @@ def process_file(
         cache_base = _make_cache_path(input_path_p, channels, len(steps) + 1, step_name, tmp_dir_p)
         try:
             if cache_base and cache_base.with_suffix(".tif").exists():
-                current_mask = rp.load_bioio(str(cache_base.with_suffix(".tif"))).data  # Load cached mask
+                current_mask = rp.load_tczyx_image(str(cache_base.with_suffix(".tif"))).data  # Load cached mask
                 current_labelinfo = LabelInfo.load(str(cache_base.with_name(f"{cache_base.name}_labelinfo.yaml")))  # Load cached label info
             else:
                 from track_indexed_mask import track_labels_with_trackpy  # Local import

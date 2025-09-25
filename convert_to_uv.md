@@ -8,7 +8,7 @@
 ## Current Layout
 - Conda YAML specs live under `conda_envs/` (e.g. `conda_envs/segment_ernet.yml`).
 - Pipeline config files in `pipeline_configs/` reference environments by name (e.g. `environment: ernet-gpu`).
-- `run_python_pipeline.go` activates conda environments by calling `conda activate <name>` before running the segment commands.
+- `run_pipeline.go` activates conda environments by calling `conda activate <name>` before running the segment commands.
 
 ## uv Structure
 - Add one `pyproject.toml` + `uv.lock` at the repo root.
@@ -42,7 +42,7 @@
 - `environment: uv:<group>` signals the runner to use uv.
 - Maintain existing YAML (`segment_ernet.yaml`) so users can fall back to conda until the uv path is proven.
 
-## Runner Adjustments (`run_python_pipeline.go`)
+## Runner Adjustments (`run_pipeline.go`)
 - Split the current `makePythonCommand` into:
   - `makeCondaPythonCommand` (existing behavior).
   - `makeUvCommand` that builds `cmd /C uv run --group <name> ...`.

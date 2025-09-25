@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"path/filepath" // Added for handling file paths
 	"reflect"
-	"run_python_pipeline/go/find_anaconda_path"
+	"run_pipeline/go/find_anaconda_path"
 	"strings"
 	"time"
 

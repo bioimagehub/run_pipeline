@@ -9,7 +9,7 @@ from skimage.graph import MCP_Geometric
 from scipy.spatial.distance import cdist
 
 from bioio.writers import OmeTiffWriter
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 
 def get_coordinates_from_metadata(yaml_path: str) -> Optional[List[tuple[int, int]]]:
@@ -99,7 +99,7 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
     basename = os.path.splitext(os.path.basename(mask_path))[0]
     output_path = os.path.join(output_dir, f"{basename}_{distance_method}.tif")
 
-    mask = rp.load_bioio(mask_path)
+    mask = rp.load_tczyx_image(mask_path)
     if not mask or mask.data is None:
         print(f"[ERROR] Mask data is None: {mask_path}")
         return
@@ -164,7 +164,7 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
     #     metadata=metadata
     # )
 
-    OmeTiffWriter.save(distance_mask, output_path, dim_order="TCZYX", physical_pixel_sizes=physical_sizes)
+    rp.save_tczyx_image(distance_mask, output_path, dim_order="TCZYX", physical_pixel_sizes=physical_sizes)
     # print(f"[INFO] Saved: {output_path}")
 
 

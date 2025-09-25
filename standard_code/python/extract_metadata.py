@@ -6,10 +6,10 @@ import yaml
 from nd2reader import ND2Reader
 import os
 
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 def get_core_metadata(input_file):
-    img = rp.load_bioio(input_file)
+    img = rp.load_tczyx_image(input_file)
 
     # Image dimensions
     t, c, z, y, x = img.dims.T, img.dims.C, img.dims.Z, img.dims.Y, img.dims.X

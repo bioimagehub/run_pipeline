@@ -13,7 +13,7 @@ import numpy as np
 
 
 # local imports
-import run_pipeline_helper_functions  as rp  
+import bioimage_pipeline_utils as rp  
 from extract_metadata import get_all_metadata
 
 from skimage.transform import resize
@@ -38,7 +38,7 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
                 yaml.dump(metadata, f)
         
         # Load image and metadata
-        img = rp.load_bioio(input_file_path)
+    img = rp.load_tczyx_image(input_file_path)
         physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
 
         img_np = img.data  # TCZYX
@@ -105,7 +105,7 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
 
         # Save output
         if output_format == "tif":
-            OmeTiffWriter.save(out_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
+            rp.save_tczyx_image(out_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
         elif output_format == "npy":
             # Rearrange dimensions if needed
             if output_dim_order == "TZYXC":

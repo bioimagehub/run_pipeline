@@ -7,7 +7,7 @@ from tqdm import tqdm
 from skimage import measure
 
 # Local imports
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 
 def measure_masked_image(image_path: str, mask_path: str, output_csv: str):
@@ -15,9 +15,9 @@ def measure_masked_image(image_path: str, mask_path: str, output_csv: str):
     Measures properties of regions in a mask for each T, C, Z in a TCZYX image.
     Saves results to a CSV file.
     """
-    # Load images using rp.load_bioio
-    img = rp.load_bioio(image_path)
-    mask = rp.load_bioio(mask_path)
+    # Load images using rp.load_tczyx_image
+    img = rp.load_tczyx_image(image_path)
+    mask = rp.load_tczyx_image(mask_path)
 
     # Handle mask shape logic
     T, C, Z, Y, X = img.shape

@@ -15,7 +15,7 @@ import uuid
 
 from segment_threshold import LabelInfo, remove_small_or_large_labels, remove_on_edges, fill_holes_indexed
 from track_indexed_mask import track_labels_with_trackpy
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 from skimage.filters import median
 from skimage.morphology import disk
 
@@ -54,7 +54,7 @@ def _save_empty_output(args, input_file: str, output_tif_file_path: str) -> None
 
     # Save empty image
     try:
-        OmeTiffWriter.save(empty, output_tif_file_path, dim_order="TCZYX")
+    rp.save_tczyx_image(empty, output_tif_file_path, dim_order="TCZYX")
     except Exception as e:
         logging.error(f"Failed to save empty output for {input_file}: {e}")
         return
@@ -177,7 +177,7 @@ def process_file(args, input_file):
     # return if no unique values found
     if len(unique_values) == 0:
         print(f"No unique values found in {input_file}.")
-        OmeTiffWriter.save(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
+    rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
         return
 
     # make a dataset like data_tczyx byt with the len(unique_values) channels
@@ -216,7 +216,7 @@ def process_file(args, input_file):
         print(unique_npixels)
 
         print(f"No labels left after min-max filtering in {input_file}.")
-        OmeTiffWriter.save(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
+    rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
         return
     
     label_info_list = label_info_list_new
@@ -288,7 +288,7 @@ def process_file(args, input_file):
         output_data = scaled
 
     # Save as OME-TIFF
-    OmeTiffWriter.save(output_data, output_tif_file_path, dim_order="TCZYX")
+    rp.save_tczyx_image(output_data, output_tif_file_path, dim_order="TCZYX")
 
     # --- Save metadata YAML ---
     input_metadata_file_path = os.path.splitext(input_file)[0] + "_metadata.yaml"
@@ -322,7 +322,7 @@ def process_file(args, input_file):
         for i, value in enumerate(unique_values):
             per_class = output_data[:, i:i+1, ...]  # keep channel dimension as 1
             per_class_path = os.path.splitext(output_tif_file_path)[0] + f"_class{int(value)}.tif"
-            OmeTiffWriter.save(per_class, per_class_path, dim_order="TCZYX")
+            rp.save_tczyx_image(per_class, per_class_path, dim_order="TCZYX")
             # Write per-class metadata
             per_class_meta_path = os.path.splitext(per_class_path)[0] + "_metadata.yaml"
             per_meta = dict(metadata) if isinstance(metadata, dict) else {}

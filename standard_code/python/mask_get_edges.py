@@ -6,12 +6,12 @@ import numpy.typing as npt
 from scipy.ndimage import distance_transform_edt
 from bioio.writers import OmeTiffWriter
 
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 
 def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
     
-    mask = rp.load_bioio(mask_path)  # Load the mask
+    mask = rp.load_tczyx_image(mask_path)  # Load the mask
     
     if mask is None or mask.data is None:
         print(f"Error: Mask data is None for file {mask_path}. Skipping this file.")
@@ -84,7 +84,7 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
 
     # Save the indexed mask
     output_file_path = f"{output_file_basename}_edge.tif"
-    OmeTiffWriter.save(indexed_mask, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
+    rp.save_tczyx_image(indexed_mask, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
   
 def process_folder(args: argparse.Namespace):
     files_to_process = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)

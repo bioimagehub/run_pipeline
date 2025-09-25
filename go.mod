@@ -1,4 +1,4 @@
-module run_python_pipeline
+module run_pipeline
 
 go 1.23.5
 
