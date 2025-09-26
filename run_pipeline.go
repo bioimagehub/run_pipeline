@@ -733,8 +733,18 @@ func main() {
 		fmt.Println("") // Add some space between the segment prints
 	}
 
-	// Prompt the user that processing is complete and wait for input
-	fmt.Print("Processing complete. Press Enter to exit...")
-	reader := bufio.NewReader(os.Stdin)
-	_, _ = reader.ReadString('\n') // Wait for user input before exiting
+	// Prompt the user that processing is complete and wait for input, but auto-close after 10 seconds
+	fmt.Print("Processing complete. Press Enter to exit (auto-closes in 10 seconds)...")
+	inputCh := make(chan struct{})
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		_, _ = reader.ReadString('\n')
+		inputCh <- struct{}{}
+	}()
+	select {
+	case <-inputCh:
+		// User pressed Enter
+	case <-time.After(10 * time.Second):
+		fmt.Println("\nNo input detected. Exiting automatically.")
+	}
 }

@@ -80,7 +80,6 @@ def _configure_bioformats_safe_io(input_path: str) -> None:
         os.environ.setdefault("org.slf4j.simpleLogger.defaultLogLevel", "warn")
         os.environ.setdefault("scijava.log.level", "WARN")
 
-def load_bioio(path: str) -> BioImage:
 
 def load_tczyx_image(path: str) -> BioImage:
     """
@@ -140,7 +139,10 @@ def save_tczyx_image(img: Union[BioImage, np.ndarray], path: str, **kwargs) -> N
     Save a BioImage or numpy array to disk as OME-TIFF, ensuring TCZYX order.
     This function should be used for all image saving to guarantee consistency.
     """
-    from bioio.writers import OmeTiffWriter
+    try:
+        from bioio.writers import OmeTiffWriter
+    except ImportError:
+        from bioio_ome_tiff import OmeTiffWriter
     # If BioImage, extract .data; if np.ndarray, use as is
     arr = getattr(img, 'data', img)
     # Ensure 5D TCZYX
@@ -148,7 +150,23 @@ def save_tczyx_image(img: Union[BioImage, np.ndarray], path: str, **kwargs) -> N
     arr = np.asarray(arr)
     while arr.ndim < 5:
         arr = arr[np.newaxis, ...]
-    OmeTiffWriter.save(arr, path, dim_order="TCZYX", **kwargs)
+    # Remove dim_order from kwargs if present to avoid multiple values error
+    if "dim_order" in kwargs:
+        kwargs.pop("dim_order")
+
+    ome_xml = None
+    # Only try to preserve OME-XML if input is BioImage
+    from bioio import BioImage
+    if isinstance(img, BioImage):
+        if hasattr(img, 'ome_xml') and img.ome_xml is not None:
+            ome_xml = img.ome_xml
+        elif hasattr(img, 'metadata') and isinstance(img.metadata, dict):
+            ome_xml = img.metadata.get('ome_xml', None)
+
+    if ome_xml is not None:
+        OmeTiffWriter.save(arr, path, dim_order="TCZYX", ome_xml=ome_xml, **kwargs)
+    else:
+        OmeTiffWriter.save(arr, path, dim_order="TCZYX", **kwargs)
 
 # Deprecated alias for backward compatibility
 def save_bioio(img, path, **kwargs):
@@ -246,7 +264,7 @@ def split_comma_separated_intstring(value:str) -> list[int]:
 
 if __name__ == "__main__":
     # # Example usage
-    # folder_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input_tif"
+    folder_path = r"Z:\Schink\Oyvind\biphub_user_data\6849908 - IMB - Coen - Sarah - Photoconv\input_tif"
     # extension = ".tif"
     # search_subfolders = False
 
