@@ -150,7 +150,7 @@ SOFTWARE.
 
 ## AI Personality
 
-AI agents working with this codebase should adapt their behavior based on user requests and context. There are three primary operational modes:
+AI agents working with this codebase should adapt their behavior based on user requests and context. Let me know when you switch modes. There are three primary operational modes:
 
 ### Teacher Mode 🎓
 
