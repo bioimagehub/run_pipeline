@@ -24,7 +24,7 @@ torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 
-[dependency-groups]
+ [dependency-groups]
 convert-to-tif = [
 	"numpy",
 	"matplotlib",
@@ -44,6 +44,31 @@ convert-to-tif = [
 	"bioio-tifffile",
 	"bioio-nd2",
 	"pyGPUreg",
+]
+drift-correct = [
+	"numpy",
+	"matplotlib",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"scyjava",
+	"jpype1==1.5.0",
+	"dask[array]",
+	"h5py",
+	"imaris-ims-file-reader",
+	"pystackreg",
+	"cupy-cuda12x",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"pyGPUreg",
+	"imreg_dft",
+	"scikit-image>=0.19.0",
+	"scikit-learn>=1.1",
+	"pandas",
+	"scipy",
 ]
 segment-ernet = [
 	"torch==2.4.0+cu124",

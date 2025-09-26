@@ -1,0 +1,208 @@
+run:
+- name: XY Translation drift correction using skimage sequential method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _skimage_sequential
+  - --method: skimage
+  - --drift-channel: 0
+  - --reference-frame: first
+  - --upsample-factor: 20
+  - --gaussian-filter: 1
+  - --registration-strategy: sequential
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 36.177674s
+- name: XY Translation drift correction using pystackreg method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _pystackreg
+  - --method: pystackreg
+  - --drift-channel: 0
+  - --reference-frame: first
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 1m20.3527937s
+- name: XY Translation drift correction using skimage to_mean method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _skimage_to_mean
+  - --method: skimage
+  - --drift-channel: 0
+  - --reference-frame: mean
+  - --upsample-factor: 20
+  - --gaussian-filter: 1
+  - --registration-strategy: to_mean
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 37.983111s
+- name: XY Translation drift correction using skimage running_mean method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _skimage_running_mean
+  - --method: skimage
+  - --drift-channel: 0
+  - --reference-frame: first
+  - --upsample-factor: 20
+  - --gaussian-filter: 1
+  - --registration-strategy: running_mean
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 37.8208355s
+- name: XY Translation drift correction using imreg_dft method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _imreg_dft
+  - --method: imreg_dft
+  - --drift-channel: 0
+  - --reference-frame: first
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 1m16.7589021s
+- name: XY Translation drift correction using pygpureg method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _pygpureg
+  - --method: pygpureg
+  - --drift-channel: 0
+  - --reference-frame: first
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 49.9193253s
+- name: XY Translation drift correction using mvregfus weighted average method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _mvregfus_weighted
+  - --method: mvregfus
+  - --drift-channel: 0
+  - --fusion-strategy: weighted_average
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 38.6989354s
+- name: XY Translation drift correction using mvregfus best quality method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _mvregfus_best
+  - --method: mvregfus
+  - --drift-channel: 0
+  - --fusion-strategy: best_quality
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 36.7411188s
+- name: XY Translation drift correction using nanopyx high precision method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _nanopyx_precision
+  - --method: nanopyx
+  - --drift-channel: 0
+  - --subpixel-precision: 0.01
+  - --use-gradient-correlation: true
+  - --adaptive-window: true
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 33.5848566s
+- name: XY Translation drift correction using nanopyx standard method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _nanopyx_standard
+  - --method: nanopyx
+  - --drift-channel: 0
+  - --subpixel-precision: 0.1
+  - --use-gradient-correlation: false
+  - --adaptive-window: false
+  - --evaluate-quality
+  - --quality-method: variance
+  - --spatial-weight: gradient
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 34.3372672s
+- name: Enable force mode mid-pipeline
+  type: force
+  message: Reprocessing all subsequent steps.
+- name: XY Translation drift correction using greedy_psr method
+  environment: uv:drift_correct
+  commands:
+  - python
+  - ./standard_code/python/drift_correction_2.py
+  - --input: '%YAML%/input_nd2_drift/1_crop.tif'
+  - --output-dir: '%YAML%/input_nd2_drift/_drift_corrected'
+  - --output-file-name-extension: _greedy_psr
+  - --method: greedy_psr
+  - --drift-channel: 0
+  - --reference-frame: previous
+  - --greedy-step-px: 1
+  - --greedy-max-iters: 10
+  - --greedy-neighborhood: 8
+  - --greedy-thumb-max-size: 256
+  - --evaluate-quality
+  - --quality-method: psr_residual
+  - --thumb-max-size: 256
+  last_processed: "2025-09-25"
+  code_version: 0.0.9
+  run_duration: 27.254786s

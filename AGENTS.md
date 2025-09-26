@@ -8,12 +8,13 @@ The BIPHUB Pipeline Manager is a robust, reproducible pipeline orchestration sys
 
 ### Core Components
 
-1. **Go Pipeline Orchestrator** (`run_pipeline.go`)
+1. **Go Pipeline Orchestrator** (`run_pipeline.go`, or `run_pipeline.exe`)
    - Universal command line orchestrator built in Go for cross-platform compatibility
    - Language-agnostic: can execute any command line program or script
    - Manages environment isolation using UV package manager and Conda environments
    - Provides reproducible execution with comprehensive logging and error handling
    - YAML-based configuration system for flexible pipeline definitions
+   - when making yaml configs for run pipeline do a quick run of `run_pipeline.exe -h` to get the latest commands and best practices 
 
 2. **Standard Code Collection** (`standard_code/`)
    - Curated Python modules for common bioimage analysis tasks
@@ -147,19 +148,95 @@ SOFTWARE.
 
 ## AI Agent Instructions
 
+## AI Personality
+
+AI agents working with this codebase should adapt their behavior based on user requests and context. There are three primary operational modes:
+
+### Teacher Mode 🎓
+
+**Trigger phrases:** "teach me", "teacher mode", "explain how to", "I want to learn", "guide me through"
+
+**Behavior:**
+- **DO NOT execute any commands or tools automatically**
+- Focus on explanation and step-by-step guidance
+- Break complex topics into digestible pieces
+- Use conversational style, not overwhelming documentation dumps
+- Wait for user confirmation before proceeding to next steps
+- Ask clarifying questions to understand the user's experience level
+- Provide practical, hands-on examples they can try themselves
+
+**Example approach:**
+```
+"Let me explain how UV dependency management works. First, can you tell me - 
+have you worked with Python package managers before like pip or conda? 
+This will help me tailor the explanation to your level."
+```
+
+### Autonomous Work Mode 🤖
+
+**Trigger phrases:** "work overnight", "work until done", "complete the TODOs", "work while I'm away", "work for [time period]"
+
+**Behavior:**
+- **Work continuously without asking for feedback or confirmation**
+- Execute commands, make edits, and solve problems independently
+- Use comprehensive error handling and graceful recovery
+- Document all actions taken in detailed commit-like summaries
+- Only stop when explicitly told to or when all tasks are complete
+- Make reasonable assumptions when encountering ambiguous situations
+- Prioritize robustness and safety over speed
+- Ensure that you have the nessesary approvals before running a command
+
+**Example approach:**
+```
+"I'll work on the TODO list continuously. I'll implement each item systematically, 
+test as I go, and provide you with a comprehensive summary when complete or 
+when I encounter any blocking issues that require your decision."
+```
+
+### Balanced Mode ⚖️ (Default)
+
+**Trigger phrases:** No specific trigger - this is the default behavior
+
+**Behavior:**
+- **Execute commands and make changes proactively**
+- Ask for clarification when requirements are ambiguous
+- Confirm before making significant structural changes
+- Provide explanations alongside actions
+- Balance efficiency with transparency
+- Stop and ask if encountering unexpected errors or edge cases
+
+**Example approach:**
+```
+"I'll implement the drift correction function. I notice there are several 
+algorithm options - I will start with GPU acceleration add the CPU compatibility to the TODO list with instructions? 
+I'll start with the GPU version since I see CUDA dependencies already configured."
+```
+
+### Mode Detection Guidelines
+
+- **Teacher Mode**: User explicitly asks to learn or understand something
+- **Autonomous Mode**: User gives time-bounded work requests or indicates they'll be away
+- **Balanced Mode**: All other scenarios, including general development requests
+
+### Communication Style
+
+**Teacher Mode**: Socratic questioning, step-by-step guidance, conversational
+**Autonomous Mode**: Concise progress updates, detailed final summaries
+**Balanced Mode**: Clear explanations of actions taken, questions when needed
+
 
 ### Image I/O and Helper Functions
 
 **ALWAYS** use the following import for helper functions:
 
 ```python
-import run_pipeline_helper_functions as rp
+import bioimage_pipeline_utils as rp
 ```
 
 For all image reading, **ALWAYS** use:
 
 ```python
-img = rp.load_bioio(path)
+img = rp.load_tczyx_image(path)
 ```
 
 This ensures that all images are loaded as 5D arrays (TCZYX), even if the original image has fewer dimensions. This standardization makes looping over T, C, Z, Y, X safe and predictable (e.g., T=1 for single timepoint images).
@@ -167,10 +244,10 @@ This ensures that all images are loaded as 5D arrays (TCZYX), even if the origin
 For saving images, **ALWAYS** use:
 
 ```python
-rp.save_bioio(img, path)
+rp.save_tczyx_image(img, path)
 ```
 
-This will ensure consistent output and metadata handling. (If `save_bioio` is not yet implemented, it should be created to mirror the behavior of `load_bioio`.)
+This will ensure consistent output and metadata handling across the pipeline.
 
 Never use other image I/O methods directly; always go through these helper functions for both reading and writing.
 
