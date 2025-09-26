@@ -70,8 +70,8 @@ def apply_shift_to_frame(frame: np.ndarray, shift: np.ndarray, mode: str = 'cons
     """
     try:
         from scipy.ndimage import shift as scipy_shift
-        # scipy.ndimage.shift expects shift in opposite direction
-        return scipy_shift(frame, -shift, mode=mode, cval=cval, order=1, prefilter=False)
+        # Apply the detected shift directly (phase correlation returns the correction shift)
+        return scipy_shift(frame, shift, mode=mode, cval=cval, order=1, prefilter=False)
     except ImportError:
         logger.error("SciPy is required for applying shifts. Install with: pip install scipy")
         return frame
@@ -195,9 +195,9 @@ def drift_correct_image_stack(
         'is_3d': is_3d,
         'shifts_applied': apply_correction,
         'shift_mode': shift_mode if apply_correction else None,
-        'mean_error': np.mean(errors) if errors else 0.0,
-        'max_error': np.max(errors) if errors else 0.0,
-        'max_shift': np.max(np.abs(shifts)) if len(shifts) > 0 else 0.0,
+        'mean_error': float(np.mean(errors)) if errors else 0.0,
+        'max_error': float(np.max(errors)) if errors else 0.0,
+        'max_shift': float(np.max(np.abs(shifts))) if len(shifts) > 0 else 0.0,
         'processing_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     }
     
@@ -368,24 +368,16 @@ def main() -> None:
     )
     
     # Input/output arguments
-    parser.add_argument("--input-search-pattern", type=str,
-                       help="Input file pattern or folder path")
-    parser.add_argument("--output-folder", type=str,
-                       help="Output folder (default: input_folder + '_drift_corrected')")
-    parser.add_argument("--search-subfolders", action="store_true",
-                       help="Search subfolders recursively")
-    parser.add_argument("--collapse-delimiter", type=str, default="__",
-                       help="Delimiter for collapsing nested folder names")
-    parser.add_argument("--output-file-name-extension", type=str, default="_drift_corrected",
-                       help="Extension to add to output filenames")
+    parser.add_argument("--input-search-pattern", type=str,help="Input file pattern or folder path")
+    parser.add_argument("--output-folder", type=str,help="Output folder (default: input_folder + '_drift_corrected')")
+    parser.add_argument("--search-subfolders", action="store_true",help="Search subfolders recursively")
+    parser.add_argument("--collapse-delimiter", type=str, default="__",help="Delimiter for collapsing nested folder names")
+    parser.add_argument("--output-file-name-extension", type=str, default="_drift_corrected",help="Extension to add to output filenames")
     
     # Drift correction parameters
-    parser.add_argument("--reference-channel", type=int, default=0,
-                       help="Channel index to use for drift detection (0-based)")
-    parser.add_argument("--reference-timepoint", type=int, default=0,
-                       help="Timepoint to use as reference (0-based)")
-    parser.add_argument("--algorithm", type=str, default="phase_correlation",
-                       choices=list(ALGORITHMS.keys()),
+    parser.add_argument("--reference-channel", type=int, default=0,help="Channel index to use for drift detection (0-based)")
+    parser.add_argument("--reference-timepoint", type=int, default=0,help="Timepoint to use as reference (0-based)")
+    parser.add_argument("--algorithm", type=str, default="phase_correlation", choices=list(ALGORITHMS.keys()),
                        help="Drift correction algorithm to use")
     parser.add_argument("--upsample-factor", type=int, default=1,
                        help="Subpixel precision factor (1=pixel, higher=subpixel)")
@@ -464,15 +456,31 @@ def main() -> None:
         )
         base_folder = os.path.dirname(args.input_search_pattern) or "."
     else:
-        pattern = os.path.join(args.input_search_pattern, "**", "*") if args.search_subfolders else os.path.join(args.input_search_pattern, "*")
-        input_files = rp.get_files_to_process2(pattern, args.search_subfolders)
-        base_folder = args.input_search_pattern
+        # Check if it's a single file or a directory
+        if os.path.isfile(args.input_search_pattern):
+            # Single file
+            input_files = [args.input_search_pattern]
+            base_folder = os.path.dirname(args.input_search_pattern) or "."
+        else:
+            # Directory - search within it
+            pattern = os.path.join(args.input_search_pattern, "**", "*") if args.search_subfolders else os.path.join(args.input_search_pattern, "*")
+            input_files = rp.get_files_to_process2(pattern, args.search_subfolders)
+            base_folder = args.input_search_pattern
+
     
     # Determine output directory
     if args.output_folder:
         output_dir = args.output_folder
     else:
-        output_dir = base_folder + "_drift_corrected"
+        # For glob patterns, use a sensible default
+        if is_glob:
+            if base_folder == ".":
+                output_dir = "drift_corrected"
+            else:
+                parent_dir = os.path.dirname(base_folder) or "."
+                output_dir = os.path.join(parent_dir, "drift_corrected")
+        else:
+            output_dir = base_folder + "_drift_corrected"
     
     os.makedirs(output_dir, exist_ok=True)
     

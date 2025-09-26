@@ -73,6 +73,7 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 	// New explicit tokens (non-breaking):
 	//   %REPO%/path -> resolved relative to mainProgramDir (repo/program root)
 	//   %YAML%/path -> resolved relative to folder containing the YAML file
+	//   %VAR%/path  -> resolved using variable VAR from .env file
 	// These take precedence when present at the start of the string.
 	if strings.HasPrefix(v, "%REPO%") {
 		sub := strings.TrimPrefix(v, "%REPO%")
@@ -83,6 +84,24 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 		sub := strings.TrimPrefix(v, "%YAML%")
 		sub = strings.TrimLeft(sub, "/\\")
 		return filepath.Join(yamlDir, filepath.FromSlash(sub))
+	}
+
+	// Check for custom environment variables from .env file
+	if strings.HasPrefix(v, "%") && strings.Contains(v[1:], "%") {
+		// Extract variable name between % signs
+		endIdx := strings.Index(v[1:], "%")
+		if endIdx != -1 {
+			varName := v[1 : endIdx+1]
+			envValue := getEnvValue(varName)
+			if envValue != "" {
+				sub := v[endIdx+2:] // Everything after the second %
+				sub = strings.TrimLeft(sub, "/\\")
+				if sub == "" {
+					return envValue // Just return the env value if no path follows
+				}
+				return filepath.Join(envValue, filepath.FromSlash(sub))
+			}
+		}
 	}
 
 	// Backward-compatible behavior for leading ./
@@ -236,6 +255,30 @@ func saveToEnvFile(key, value string) {
 		log.Fatalf("Error writing to .env file: %v", err)
 	}
 	fmt.Printf("%s path saved to .env file.\n", key)
+}
+
+// getEnvValue retrieves a value for the specified key from the .env file.
+// Returns empty string if the key is not found or if there's an error reading the file.
+func getEnvValue(key string) string {
+	envFilePath := filepath.Join(GetBaseDir(), ".env")
+	file, err := os.ReadFile(envFilePath)
+	if err != nil {
+		return "" // Return empty string if .env file doesn't exist or can't be read
+	}
+
+	// Split the file content into lines
+	lines := strings.Split(string(file), "\n")
+
+	// Look for the specified key
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, key+"=") {
+			// Return the value, stripping the key and any surrounding whitespace
+			return strings.TrimSpace(strings.TrimPrefix(line, key+"="))
+		}
+	}
+
+	return "" // Key not found
 }
 
 // getGitVersion returns a descriptive git version string for the current repository.
@@ -548,6 +591,12 @@ func main() {
 			fmt.Println("")
 			fmt.Println("Arguments:")
 			fmt.Println("  <path_to_yaml>       The path to the YAML configuration file.")
+			fmt.Println("")
+			fmt.Println("Path resolution tokens (can be used in YAML paths):")
+			fmt.Println("  %REPO%/path          Resolves relative to program root directory")
+			fmt.Println("  %YAML%/path          Resolves relative to YAML file directory")
+			fmt.Println("  %VARNAME%/path       Resolves using VARNAME from .env file")
+			fmt.Println("  ./path               Deprecated, use %REPO%/ or %YAML%/ instead")
 			fmt.Println("")
 			fmt.Println("YAML step types (for easy copy-paste):")
 			fmt.Println("  # - type: normal (default) - Runs commands as usual.")
