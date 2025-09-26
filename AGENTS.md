@@ -237,6 +237,13 @@ For all image reading, **ALWAYS** use:
 
 ```python
 img = rp.load_tczyx_image(path)
+img.data  # returns 5D TCZYX numpy array
+img.dask_data  # returns 5D TCZYX dask array
+img.dims  # returns a Dimensions object
+img.dims.order  # returns string "TCZYX"
+img.dims.X  # returns size of X dimension
+img.shape  # returns tuple of dimension sizes in TCZYX order
+img.get_image_data("CZYX", T=0)  # returns 4D CZYX numpy array
 ```
 
 This ensures that all images are loaded as 5D arrays (TCZYX), even if the original image has fewer dimensions. This standardization makes looping over T, C, Z, Y, X safe and predictable (e.g., T=1 for single timepoint images).
