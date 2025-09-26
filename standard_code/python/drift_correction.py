@@ -2,7 +2,7 @@ import argparse
 import os
 import time
 import logging
-from typing import Optional, Tuple, Any, Dict, Iterable, List
+from typing import Optional, Tuple, Any, Dict, Iterable, List, Union
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -96,6 +96,20 @@ def drift_correct_xy_parallel(
     if logger is None:
         import logging
         logger = logging
+    # --- Input validation and shape normalization ---
+    arr = video
+    if not isinstance(arr, np.ndarray):
+        raise TypeError(f"Input video must be a numpy ndarray, got {type(arr)}")
+    if arr.ndim < 5:
+        arr = arr[(None,) * (5 - arr.ndim)]
+    if arr.ndim != 5:
+        raise ValueError(f"Input video must be 5D (TCZYX), got shape {arr.shape}")
+    if not np.issubdtype(arr.dtype, np.number):
+        raise TypeError(f"Input video must have a numeric dtype, got {arr.dtype}")
+    T, C, Z, _, _ = arr.shape
+    if not (0 <= drift_correct_channel < C):
+        raise ValueError(f"drift_correct_channel {drift_correct_channel} is out of bounds for {C} channels.")
+    video = arr
     """
     CPU baseline using pystackreg (translation only), identical to convert_to_tif.py.
     video shape: (T, C, Z, Y, X)
@@ -139,10 +153,24 @@ def drift_correct_xy_pygpureg(
     video: np.ndarray,
     drift_correct_channel: int = 0,
     logger: Optional[Any] = None,
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[list]]:
     if logger is None:
         import logging
         logger = logging
+    # --- Input validation and shape normalization ---
+    arr = video
+    if not isinstance(arr, np.ndarray):
+        raise TypeError(f"Input video must be a numpy ndarray, got {type(arr)}")
+    if arr.ndim < 5:
+        arr = arr[(None,) * (5 - arr.ndim)]
+    if arr.ndim != 5:
+        raise ValueError(f"Input video must be 5D (TCZYX), got shape {arr.shape}")
+    if not np.issubdtype(arr.dtype, np.number):
+        raise TypeError(f"Input video must have a numeric dtype, got {arr.dtype}")
+    T, C, Z, _, _ = arr.shape
+    if not (0 <= drift_correct_channel < C):
+        raise ValueError(f"drift_correct_channel {drift_correct_channel} is out of bounds for {C} channels.")
+    video = arr
     """
     GPU alternative using pyGPUreg if available.
     Strategy:
@@ -152,11 +180,12 @@ def drift_correct_xy_pygpureg(
 
     Returns: corrected video and an array of shifts per timepoint (Tx2) if available, else None.
     """
+    errors = []
     try:
         import pyGPUreg as reg  # type: ignore
     except Exception as e:
-        logger.info(f"pyGPUreg not available: {e}. Skipping GPU drift correction.")
-        return video, None
+        logger.warning(f"pyGPUreg not available: {e}. Returning original video WITHOUT drift correction.")
+        return video, None, [{'type': 'import_failed', 'error': str(e), 'message': 'No drift correction applied - original video returned'}]
 
     T, C, Z, Y, X = video.shape
     corrected = np.zeros_like(video)
@@ -194,7 +223,7 @@ def drift_correct_xy_pygpureg(
         reg.init()
     except Exception as e:
         logger.warning(f"pyGPUreg init failed for size {size}: {e}. Skipping GPU drift correction.")
-        return video, None
+        return video, None, [{"type": "init_failed", "error": str(e)}]
 
     # Optional enums (fallback to library defaults if unavailable)
     # Prefer more accurate options when available
@@ -253,29 +282,23 @@ def drift_correct_xy_pygpureg(
                     reg_kwargs["edge_mode"] = EDGE
                 if isinstance(INTERP, int):
                     reg_kwargs["interpolation_mode"] = INTERP
-                # Register ref to template (returns ref aligned to template and the (dy,dx) shift)
                 _, shift = reg.register(template_pad, ref_pad, **reg_kwargs)
-                # shift is expected as (dy, dx) or similar
                 if isinstance(shift, (list, tuple, np.ndarray)) and len(shift) >= 2:
                     shifts[t, 0] = float(shift[0])
                     shifts[t, 1] = float(shift[1])
             except Exception as e:
-                # If estimation fails, leave shift zeros and still try per-plane register
                 logger.warning(f"pyGPUreg shift estimate failed at t={t}: {e}")
+                errors.append({"type": "shift_estimate", "t": t, "error": str(e)})
 
-            # Apply the SAME estimated shift to every plane for this timepoint to match CPU behavior.
             for c in range(C):
                 for z in range(Z):
-                    # IMPORTANT: do NOT window the plane used for output; apply shift to original
                     plane = video[t, c, z].astype(np.float32)
                     plane_pad, py0, px0 = _pad_center(plane, size)
                     try:
-                        # If we have a fast path to apply a known shift, use it.
                         reg_plane = None
                         if apply_shift_fn is not None:
                             try:
                                 if (shifts[t, 0] == 0.0 and shifts[t, 1] == 0.0):
-                                    # No shift to apply; keep original plane
                                     reg_plane = plane_pad
                                 else:
                                     kwargs2: dict[str, Any] = {}
@@ -283,42 +306,42 @@ def drift_correct_xy_pygpureg(
                                         kwargs2["edge_mode"] = EDGE
                                     if isinstance(INTERP, int):
                                         kwargs2["interpolation_mode"] = INTERP
-                                    # Accept (dy, dx) as shift
                                     reg_plane = apply_shift_fn(
                                         plane_pad,
                                         (float(shifts[t, 0]), float(shifts[t, 1])),
                                         **kwargs2,
                                     )
-                            except Exception:
+                            except Exception as e:
                                 reg_plane = None
+                                errors.append({"type": "apply_shift_fn", "t": t, "c": c, "z": z, "error": str(e)})
                         if reg_plane is None:
-                            # Fallback: re-register this plane (slower/less consistent)
-                            reg_kwargs: dict[str, Any] = {"apply_shift": True}
-                            if isinstance(SUBPIX, int):
-                                reg_kwargs["subpixel_mode"] = SUBPIX
-                            if isinstance(EDGE, int):
-                                reg_kwargs["edge_mode"] = EDGE
-                            if isinstance(INTERP, int):
-                                reg_kwargs["interpolation_mode"] = INTERP
-                            # Register without windowing the plane to avoid imprinting a taper
-                            reg_plane, _ = reg.register(template_pad, plane_pad, **reg_kwargs)
-                        # Ensure ndarray then crop back to original image size
+                            try:
+                                reg_kwargs: dict[str, Any] = {"apply_shift": True}
+                                if isinstance(SUBPIX, int):
+                                    reg_kwargs["subpixel_mode"] = SUBPIX
+                                if isinstance(EDGE, int):
+                                    reg_kwargs["edge_mode"] = EDGE
+                                if isinstance(INTERP, int):
+                                    reg_kwargs["interpolation_mode"] = INTERP
+                                reg_plane, _ = reg.register(template_pad, plane_pad, **reg_kwargs)
+                            except Exception as e:
+                                errors.append({"type": "register_fallback", "t": t, "c": c, "z": z, "error": str(e)})
+                                reg_plane = plane_pad
                         reg_plane = np.asarray(reg_plane, dtype=np.float32)
                         reg_plane = _crop_center(reg_plane, py0, px0, Y, X)
-                        # Cast back to original dtype if possible
                         if np.issubdtype(video.dtype, np.integer):
                             reg_plane = np.clip(reg_plane, np.iinfo(video.dtype).min, np.iinfo(video.dtype).max)
                             corrected[t, c, z] = reg_plane.astype(video.dtype)
                         else:
                             corrected[t, c, z] = reg_plane.astype(video.dtype)
                     except Exception as e:
-                        # On failure, fall back to original plane
                         logger.debug(f"Plane apply failed at t={t}, c={c}, z={z}: {e}")
+                        errors.append({"type": "plane_apply", "t": t, "c": c, "z": z, "error": str(e)})
                         corrected[t, c, z] = video[t, c, z]
-        return corrected, shifts
+        return corrected, shifts, errors if errors else None
     except Exception as e:
         logger.error(f"pyGPUreg path failed ({e}); returning original frames.")
-        return video, None
+        return video, None, [{"type": "fatal", "error": str(e)}]
 
 def phase_cross_correlation_cupy(a, b, upsample_factor=1):
     """
@@ -339,11 +362,28 @@ def phase_cross_correlation_cupy(a, b, upsample_factor=1):
     b = b.astype(cp.float32, copy=False)
     H, W = a.shape
 
-    # Cross power spectrum
-    Fa = cp.fft.fft2(a)
-    Fb = cp.fft.fft2(b)
+    # Normalize to reduce bias from intensity variations
+    a_mean = cp.mean(a)
+    b_mean = cp.mean(b)
+    a_norm = a - a_mean
+    b_norm = b - b_mean
+    
+    # Apply window function to reduce edge effects (critical for accuracy)
+    if H > 32 and W > 32:  # Only for reasonably sized images
+        wy = cp.hanning(H)[:, cp.newaxis]
+        wx = cp.hanning(W)[cp.newaxis, :]
+        window = wy * wx
+        a_norm = a_norm * window
+        b_norm = b_norm * window
+
+    # Cross power spectrum with better normalization
+    Fa = cp.fft.fft2(a_norm)
+    Fb = cp.fft.fft2(b_norm)
     R = Fa * cp.conj(Fb)
-    R /= (cp.abs(R) + 1e-12)
+    # More robust normalization
+    R_abs = cp.abs(R)
+    R_abs[R_abs < 1e-12] = 1e-12
+    R = R / R_abs
     r = cp.fft.ifft2(R).real
 
     # Coarse peak (wrap-aware)
@@ -356,30 +396,54 @@ def phase_cross_correlation_cupy(a, b, upsample_factor=1):
     if upsample_factor <= 1:
         return (cp.asarray([float(py), float(px)]), 1.0 - float(r.max()), 0.0)
 
-    # --- Subpixel via 2D quadratic fit in a 3x3 neighborhood ---
-    def _parabolic_offset(vals_c, vals_l, vals_r):
-        # one-dimensional 3-point parabolic peak offset (in pixels)
-        denom = (vals_l - 2*vals_c + vals_r)
-        return 0.5 * (vals_l - vals_r) / (denom + 1e-12)
-
-    # Wrap indices for neighbors
-    y0 = (py + H) % H
-    x0 = (px + W) % W
-    y1 = (y0 - 1) % H
-    y2 = (y0 + 1) % H
-    x1 = (x0 - 1) % W
-    x2 = (x0 + 1) % W
-
-    # 1D fits along y and x through the peak
-    cy = r[y0, x0]
-    dy_off = _parabolic_offset(cy, r[y1, x0], r[y2, x0])
-    dx_off = _parabolic_offset(cy, r[y0, x1], r[y0, x2])
-
-    dy = float(py + dy_off)
-    dx = float(px + dx_off)
-
-    err = 1.0 - float(r[y0, x0] / (cp.sqrt((a*a).sum()) * cp.sqrt((b*b).sum()) + 1e-12))
-    return (cp.asarray([dy, dx]), err, 0.0)
+    # --- Enhanced subpixel estimation using 5x5 neighborhood for better accuracy ---
+    def _improved_subpixel_fit(r_local, center_y, center_x, H, W):
+        """
+        Improved subpixel fitting using larger neighborhood and weighted fitting
+        """
+        # Get 5x5 neighborhood around peak
+        neighborhood = cp.zeros((5, 5), dtype=cp.float32)
+        for dy in range(-2, 3):
+            for dx in range(-2, 3):
+                ny = (center_y + dy + H) % H
+                nx = (center_x + dx + W) % W
+                neighborhood[dy+2, dx+2] = r_local[ny, nx]
+        
+        # Find the maximum in the neighborhood
+        max_idx = cp.argmax(neighborhood)
+        max_y, max_x = divmod(int(max_idx), 5)
+        
+        # If peak is at edge, fall back to simple parabolic fit
+        if max_y == 0 or max_y == 4 or max_x == 0 or max_x == 4:
+            # Simple parabolic fit
+            y0, x0 = (center_y + H) % H, (center_x + W) % W
+            y1, y2 = (y0 - 1) % H, (y0 + 1) % H
+            x1, x2 = (x0 - 1) % W, (x0 + 1) % W
+            
+            cy = r_local[y0, x0]
+            dy_off = 0.5 * (r_local[y1, x0] - r_local[y2, x0]) / (r_local[y1, x0] - 2*cy + r_local[y2, x0] + 1e-12)
+            dx_off = 0.5 * (r_local[y0, x1] - r_local[y0, x2]) / (r_local[y0, x1] - 2*cy + r_local[y0, x2] + 1e-12)
+            
+            return float(center_y + dy_off), float(center_x + dx_off)
+        
+        # Use center of mass for subpixel estimation (more robust)
+        total_weight = cp.sum(neighborhood)
+        if total_weight > 1e-12:
+            y_indices, x_indices = cp.meshgrid(cp.arange(5, dtype=cp.float32) - 2, 
+                                               cp.arange(5, dtype=cp.float32) - 2, indexing='ij')
+            cm_y = cp.sum(y_indices * neighborhood) / total_weight
+            cm_x = cp.sum(x_indices * neighborhood) / total_weight
+            return float(center_y + cm_y), float(center_x + cm_x)
+        else:
+            return float(center_y), float(center_x)
+    
+    dy_sub, dx_sub = _improved_subpixel_fit(r, py, px, H, W)
+    
+    # Better error estimate
+    max_val = float(r.max())
+    err = max(0.0, 1.0 - max_val)
+    
+    return (cp.asarray([dy_sub, dx_sub]), err, 0.0)
 
 
 def drift_correct_xy_cupy(
@@ -392,10 +456,24 @@ def drift_correct_xy_cupy(
     highpass_pix: Optional[float] = None,
     lowpass_pix: Optional[float] = None,
     logger: Optional[Any] = None,
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[list]]:
     if logger is None:
         import logging
         logger = logging
+    # --- Input validation and shape normalization ---
+    arr = video
+    if not isinstance(arr, np.ndarray):
+        raise TypeError(f"Input video must be a numpy ndarray, got {type(arr)}")
+    if arr.ndim < 5:
+        arr = arr[(None,) * (5 - arr.ndim)]
+    if arr.ndim != 5:
+        raise ValueError(f"Input video must be 5D (TCZYX), got shape {arr.shape}")
+    if not np.issubdtype(arr.dtype, np.number):
+        raise TypeError(f"Input video must have a numeric dtype, got {arr.dtype}")
+    T, C, Z, _, _ = arr.shape
+    if not (0 <= drift_correct_channel < C):
+        raise ValueError(f"drift_correct_channel {drift_correct_channel} is out of bounds for {C} channels.")
+    video = arr
     """
     Drift-correct using CuPy phase correlation on Z-max projections.
 
@@ -412,23 +490,22 @@ def drift_correct_xy_cupy(
     - corrected video (numpy array, same dtype/shape)
     - shifts (numpy float32 array of shape (T, 2)) or None if CuPy path unavailable
     """
+    errors = []
     try:
         import cupy as cp  # type: ignore
         from cupyx.scipy import ndimage as cndi  # type: ignore
     except Exception as e:
-        logger.info(f"CuPy/cuCIM not available: {e}. Skipping CuPy drift correction.")
-        return video, None
+        logger.warning(f"CuPy/cuCIM not available: {e}. Returning original video WITHOUT drift correction.")
+        return video, None, [{'type': 'import_failed', 'error': str(e), 'message': 'No drift correction applied - original video returned'}]
 
     try:
         T, C, Z, Y, X = video.shape
         corrected = np.zeros_like(video)
 
-        # Build reference stack (T, Y, X) on host, move to device lazily
         ref_stack_np = np.max(video[:, drift_correct_channel, :, :, :], axis=1).astype(np.float32, copy=False)
 
         def _preprocess_2d(img2d_cp: "cp.ndarray") -> "cp.ndarray":
             x = cp.asarray(img2d_cp, dtype=cp.float32)
-            # Optional bandpass
             if highpass_pix is not None and float(highpass_pix) > 0.0:
                 x = x - cndi.gaussian_filter(x, sigma=float(highpass_pix))
             if lowpass_pix is not None and float(lowpass_pix) > 0.0:
@@ -441,7 +518,6 @@ def drift_correct_xy_cupy(
         shifts = np.zeros((T, 2), dtype=np.float32)
 
         if use_running_ref:
-            # Running reference: accumulate per-frame shifts so all align to frame 0
             prev_proc = _preprocess_2d(cp.asarray(ref_stack_np[0]))
             cum = np.array([0.0, 0.0], dtype=np.float32)
             shifts[0] = cum
@@ -449,18 +525,15 @@ def drift_correct_xy_cupy(
                 cur_proc = _preprocess_2d(cp.asarray(ref_stack_np[t]))
                 try:
                     shift_yx, err, _ = phase_cross_correlation_cupy(prev_proc, cur_proc, upsample_factor=max(1, int(refine_upsample)))
-                    # Scale back to full-res coordinates
                     sh = cp.asnumpy(shift_yx).astype(np.float32) * float(max(1, downsample))
                 except Exception as e:
                     logger.debug(f"CuPy phase corr failed at t={t}: {e}")
+                    errors.append({"type": "phase_corr", "t": t, "error": str(e)})
                     sh = np.array([0.0, 0.0], dtype=np.float32)
                 cum += sh
                 shifts[t] = cum
-                # Update running reference to current (unshifted) frame for next delta
                 prev_proc = cur_proc
         else:
-            # Static template: mean of preprocessed refs
-            # Preprocess each frame then average
             template_np = ref_stack_np.mean(axis=0)
             template_proc = _preprocess_2d(cp.asarray(template_np))
             for t in range(T):
@@ -470,16 +543,14 @@ def drift_correct_xy_cupy(
                     sh = cp.asnumpy(shift_yx).astype(np.float32) * float(max(1, downsample))
                 except Exception as e:
                     logger.debug(f"CuPy phase corr failed at t={t}: {e}")
+                    errors.append({"type": "phase_corr", "t": t, "error": str(e)})
                     sh = np.array([0.0, 0.0], dtype=np.float32)
                 shifts[t] = sh
 
-        # Apply per-timepoint shifts to every (C, Z) plane
-        # Use cubic interpolation with reflect edges to match CPU quality
         mode = 'reflect'
         order = 3
         for t in range(T):
             dy, dx = float(shifts[t, 0]), float(shifts[t, 1])
-            # Skip work if no shift
             do_shift = not (abs(dy) < 1e-6 and abs(dx) < 1e-6)
             for c in range(C):
                 for z in range(Z):
@@ -491,11 +562,11 @@ def drift_correct_xy_cupy(
                             out_np = cp.asnumpy(shifted_cp)
                         except Exception as e:
                             logger.debug(f"CuPy apply shift failed at t={t}, c={c}, z={z}: {e}")
+                            errors.append({"type": "apply_shift", "t": t, "c": c, "z": z, "error": str(e)})
                             out_np = plane_np.astype(np.float32, copy=False)
                     else:
                         out_np = plane_np.astype(np.float32, copy=False)
 
-                    # Cast back to original dtype with clipping if integer
                     if np.issubdtype(video.dtype, np.integer):
                         info = np.iinfo(video.dtype)
                         out_np = np.clip(out_np, info.min, info.max).astype(video.dtype, copy=False)
@@ -503,10 +574,334 @@ def drift_correct_xy_cupy(
                         out_np = out_np.astype(video.dtype, copy=False)
                     corrected[t, c, z] = out_np
 
-        return corrected, shifts
+        # Release GPU memory after processing
+        try:
+            mempool = cp.get_default_memory_pool()
+            freed = mempool.used_bytes()
+            mempool.free_bytes()
+            logger.info(f"CuPy memory pool released {freed} bytes after drift correction.")
+        except Exception as e:
+            logger.debug(f"Could not release CuPy memory: {e}")
+        # Validate drift correction quality
+        validation_info = _validate_drift_correction(ref_stack_np, shifts)
+        if errors:
+            errors.extend(validation_info.get('warnings', []))
+        else:
+            errors = validation_info.get('warnings', None)
+            
+        # Calculate drift correction quality using pixel variance analysis
+        try:
+            quality_metrics = evaluate_drift_correction_quality(
+                video, corrected, drift_correct_channel, return_details=True
+            )
+            validation_info['pixel_variance_quality'] = quality_metrics
+            
+            logger.info(f"CuPy drift correction completed. Max shift: {validation_info['max_shift']:.2f}px, "
+                       f"Mean shift: {validation_info['mean_shift']:.2f}px, "
+                       f"Shift quality: {validation_info['quality_score']:.3f}, "
+                       f"Drift quality: {quality_metrics['drift_quality']:.2f} "
+                       f"({quality_metrics['quality_interpretation']['drift_quality_category']})")
+            
+            if validation_info['quality_score'] < 0.5:
+                logger.warning("Poor shift pattern detected. Consider using CPU method or different parameters.")
+            if quality_metrics['drift_quality'] < 1.1:
+                logger.warning(f"Limited drift correction improvement detected (quality: {quality_metrics['drift_quality']:.2f}). "
+                              f"{quality_metrics['quality_interpretation']['recommendation']}")
+        except Exception as e:
+            logger.warning(f"Could not calculate drift quality metrics: {e}")
+            import traceback
+            logger.debug(f"Full traceback: {traceback.format_exc()}")
+            logger.info(f"CuPy drift correction completed. Max shift: {validation_info['max_shift']:.2f}px, "
+                       f"Mean shift: {validation_info['mean_shift']:.2f}px, "
+                       f"Shift quality: {validation_info['quality_score']:.3f} (pixel variance analysis failed)")
+        
+        return corrected, shifts, errors if errors else None
     except Exception as e:
         logger.error(f"CuPy drift correction path failed ({e}); returning original frames.")
-        return video, None
+        return video, None, [{"type": "fatal", "error": str(e)}]
+
+def evaluate_drift_correction_quality(
+    input_video: np.ndarray,           # Original TCZYX
+    corrected_video: np.ndarray,       # Drift-corrected TCZYX  
+    drift_channel: int = 0,            # Channel used for drift estimation
+    method: str = "variance",          # "variance", "mad", "iqr"
+    spatial_weight: str = "gradient",  # "uniform", "gradient", "center"
+    exclude_background: bool = True,   # Mask low-intensity regions
+    patch_size: Optional[int] = None,  # For patch-based analysis
+    return_details: bool = False       # Return breakdown of metrics
+) -> Union[float, Dict[str, Any]]:
+    """
+    Evaluate drift correction quality using pixel variance analysis across time.
+    
+    The core idea: if we're imaging the same object over time and it's drifting,
+    pixel variance across time will be high with drift and low after correction.
+    
+    Returns:
+    - drift_quality (float): Improvement ratio (input_variance / output_variance)
+      Values > 1.0 indicate improvement, < 1.0 indicate degradation
+    - If return_details=True: Dict with comprehensive metrics breakdown
+    """
+    # Input validation
+    if input_video.shape != corrected_video.shape:
+        raise ValueError(f"Input and corrected video shapes must match: {input_video.shape} vs {corrected_video.shape}")
+    
+    if input_video.ndim != 5:
+        raise ValueError(f"Videos must be 5D (TCZYX), got {input_video.ndim}D")
+    
+    T, C, Z, Y, X = input_video.shape
+    if not (0 <= drift_channel < C):
+        raise ValueError(f"drift_channel {drift_channel} out of bounds for {C} channels")
+    
+    # Extract drift channel and create max projections (T, Y, X)
+    input_proj = np.max(input_video[:, drift_channel, :, :, :], axis=1).astype(np.float32)
+    corrected_proj = np.max(corrected_video[:, drift_channel, :, :, :], axis=1).astype(np.float32)
+    
+    # Create background mask (exclude low-intensity regions)
+    background_mask = None
+    if exclude_background:
+        # Use mean intensity across time to identify background
+        mean_intensity = np.mean(input_proj, axis=0)
+        # Threshold at mean + 0.5 * std to exclude noise/background
+        threshold = np.mean(mean_intensity) + 0.5 * np.std(mean_intensity)
+        background_mask = mean_intensity > threshold
+        if np.sum(background_mask) < 0.1 * Y * X:  # If too restrictive, use lower threshold
+            threshold = np.mean(mean_intensity)
+            background_mask = mean_intensity > threshold
+    
+    # Create spatial weighting map
+    spatial_weights = np.ones((Y, X), dtype=np.float32)
+    
+    if spatial_weight == "gradient":
+        # Weight by local gradient (edge pixels are more informative)
+        mean_frame = np.mean(input_proj, axis=0)
+        gy, gx = np.gradient(mean_frame)
+        gradient_mag = np.sqrt(gy**2 + gx**2)
+        # Normalize and add small constant to avoid zero weights
+        spatial_weights = (gradient_mag / (np.max(gradient_mag) + 1e-6)) + 0.1
+        
+    elif spatial_weight == "center":
+        # Weight central pixels higher (drift effects more visible at edges)
+        cy, cx = Y // 2, X // 2
+        yy, xx = np.meshgrid(np.arange(Y), np.arange(X), indexing='ij')
+        dist_from_center = np.sqrt((yy - cy)**2 + (xx - cx)**2)
+        max_dist = np.sqrt(cy**2 + cx**2)
+        spatial_weights = 1.0 - (dist_from_center / max_dist) * 0.8  # Range [0.2, 1.0]
+    
+    # Apply background mask to weights
+    if background_mask is not None:
+        spatial_weights *= background_mask.astype(np.float32)
+    
+    # Calculate variance metrics
+    def _calculate_weighted_variance(proj_stack, weights, method_name):
+        """Calculate weighted variance across time for each pixel."""
+        if method_name == "variance":
+            # Standard variance
+            temporal_var = np.var(proj_stack, axis=0, ddof=1)
+        elif method_name == "mad":
+            # Median Absolute Deviation (more robust to outliers)
+            temporal_median = np.median(proj_stack, axis=0)
+            temporal_var = np.median(np.abs(proj_stack - temporal_median[None, :, :]), axis=0)
+        elif method_name == "iqr":
+            # Interquartile Range
+            q75 = np.percentile(proj_stack, 75, axis=0)
+            q25 = np.percentile(proj_stack, 25, axis=0)
+            temporal_var = q75 - q25
+        else:
+            raise ValueError(f"Unknown method: {method_name}")
+        
+        # Apply spatial weighting
+        weighted_var = temporal_var * weights
+        
+        # Return weighted average (most common pixel variance equivalent)
+        total_weight = np.sum(weights)
+        if total_weight > 0:
+            return np.sum(weighted_var) / total_weight
+        else:
+            return 0.0
+    
+    # Calculate patch-based analysis if requested
+    patch_results = None
+    if patch_size is not None and patch_size > 10:
+        patch_results = []
+        n_patches_y = max(1, Y // patch_size)
+        n_patches_x = max(1, X // patch_size)
+        
+        for py in range(n_patches_y):
+            for px in range(n_patches_x):
+                y1 = py * patch_size
+                y2 = min((py + 1) * patch_size, Y)
+                x1 = px * patch_size
+                x2 = min((px + 1) * patch_size, X)
+                
+                patch_weights = spatial_weights[y1:y2, x1:x2]
+                input_patch_var = _calculate_weighted_variance(
+                    input_proj[:, y1:y2, x1:x2], patch_weights, method
+                )
+                corrected_patch_var = _calculate_weighted_variance(
+                    corrected_proj[:, y1:y2, x1:x2], patch_weights, method
+                )
+                
+                patch_quality = input_patch_var / (corrected_patch_var + 1e-12)
+                patch_results.append({
+                    'patch_coords': (y1, y2, x1, x2),
+                    'input_variance': input_patch_var,
+                    'corrected_variance': corrected_patch_var,
+                    'quality_ratio': patch_quality
+                })
+    
+    # Calculate main metrics
+    input_variance = _calculate_weighted_variance(input_proj, spatial_weights, method)
+    corrected_variance = _calculate_weighted_variance(corrected_proj, spatial_weights, method)
+    
+    # Main drift quality metric (improvement ratio)
+    drift_quality = input_variance / (corrected_variance + 1e-12)
+    
+    # Additional complementary metrics
+    def _edge_sharpness_improvement():
+        """Measure how much sharper edges become after correction."""
+        try:
+            from scipy import ndimage
+            
+            # Calculate edge strength using Sobel filter
+            def edge_strength(img_stack):
+                edge_strengths = []
+                for t in range(T):
+                    sx = ndimage.sobel(img_stack[t], axis=1)
+                    sy = ndimage.sobel(img_stack[t], axis=0)
+                    edge_mag = np.sqrt(sx**2 + sy**2)
+                    edge_strengths.append(np.mean(edge_mag))
+                return np.mean(edge_strengths)
+            
+            input_sharpness = edge_strength(input_proj)
+            corrected_sharpness = edge_strength(corrected_proj)
+            return corrected_sharpness / (input_sharpness + 1e-12)
+        except ImportError:
+            return 1.0  # Neutral if scipy not available
+    
+    def _temporal_consistency():
+        """Measure smoothness of intensity profiles over time."""
+        # Calculate standard deviation of frame-to-frame differences
+        input_diffs = np.diff(input_proj, axis=0)
+        corrected_diffs = np.diff(corrected_proj, axis=0)
+        
+        input_consistency = np.mean(np.std(input_diffs, axis=0))
+        corrected_consistency = np.mean(np.std(corrected_diffs, axis=0))
+        
+        return input_consistency / (corrected_consistency + 1e-12)
+    
+    edge_improvement = _edge_sharpness_improvement()
+    temporal_improvement = _temporal_consistency()
+    
+    # Composite score (weighted combination)
+    composite_score = (
+        0.6 * drift_quality +           # Main metric (60%)
+        0.25 * edge_improvement +       # Edge sharpness (25%) 
+        0.15 * temporal_improvement     # Temporal consistency (15%)
+    )
+    
+    if return_details:
+        details = {
+            'drift_quality': float(drift_quality),
+            'input_variance': float(input_variance),
+            'corrected_variance': float(corrected_variance),
+            'edge_sharpness_improvement': float(edge_improvement),
+            'temporal_consistency_improvement': float(temporal_improvement),
+            'composite_score': float(composite_score),
+            'method': method,
+            'spatial_weight': spatial_weight,
+            'background_pixels_excluded': int(np.sum(~background_mask)) if background_mask is not None else 0,
+            'total_pixels_analyzed': int(np.sum(spatial_weights > 0)),
+            'patch_analysis': patch_results,
+            'quality_interpretation': _interpret_quality_score(drift_quality, composite_score)
+        }
+        return details
+    else:
+        return float(drift_quality)
+
+
+def _interpret_quality_score(drift_quality: float, composite_score: float) -> Dict[str, str]:
+    """Provide human-readable interpretation of quality scores."""
+    
+    def _categorize_score(score: float) -> str:
+        if score > 2.0:
+            return "Excellent improvement"
+        elif score > 1.5:
+            return "Good improvement"
+        elif score > 1.2:
+            return "Modest improvement"
+        elif score > 0.95:
+            return "Minimal change"
+        else:
+            return "Degradation or no improvement"
+    
+    return {
+        'drift_quality_category': _categorize_score(drift_quality),
+        'composite_score_category': _categorize_score(composite_score),
+        'recommendation': (
+            "Drift correction appears successful" if composite_score > 1.2
+            else "Consider different correction parameters or method" if composite_score > 0.8
+            else "Drift correction may have failed - investigate parameters"
+        )
+    }
+
+
+def _validate_drift_correction(ref_stack: np.ndarray, shifts: np.ndarray) -> Dict[str, Any]:
+    """
+    Validate the quality of drift correction by analyzing shift patterns and consistency.
+    
+    Returns dict with quality metrics and warnings.
+    """
+    validation_info = {
+        'warnings': [],
+        'max_shift': 0.0,
+        'mean_shift': 0.0,
+        'quality_score': 1.0
+    }
+    
+    if shifts is None or len(shifts) == 0:
+        validation_info['warnings'].append({
+            'type': 'no_shifts', 
+            'message': 'No shift data available for validation'
+        })
+        validation_info['quality_score'] = 0.0
+        return validation_info
+    
+    # Calculate shift magnitudes
+    shift_magnitudes = np.sqrt(np.sum(shifts**2, axis=1))
+    validation_info['max_shift'] = float(np.max(shift_magnitudes))
+    validation_info['mean_shift'] = float(np.mean(shift_magnitudes))
+    
+    # Check for unreasonably large shifts
+    if validation_info['max_shift'] > min(ref_stack.shape[-2:]) * 0.25:  # >25% of image size
+        validation_info['warnings'].append({
+            'type': 'large_shifts',
+            'message': f"Very large shifts detected (max: {validation_info['max_shift']:.1f}px). Results may be unreliable."
+        })
+        validation_info['quality_score'] *= 0.3
+    
+    # Check for sudden jumps in shifts (indicating potential failures)
+    if len(shifts) > 1:
+        shift_diffs = np.diff(shift_magnitudes)
+        max_jump = float(np.max(np.abs(shift_diffs)))
+        if max_jump > validation_info['mean_shift'] * 3 and max_jump > 5.0:
+            validation_info['warnings'].append({
+                'type': 'sudden_jumps',
+                'message': f"Sudden shift jumps detected (max: {max_jump:.1f}px). Registration may have failed for some frames."
+            })
+            validation_info['quality_score'] *= 0.5
+    
+    # Check shift consistency (should be relatively smooth for real drift)
+    if len(shifts) > 5:
+        smoothness = np.std(shift_diffs) / (validation_info['mean_shift'] + 0.1)
+        if smoothness > 2.0:
+            validation_info['warnings'].append({
+                'type': 'irregular_shifts',
+                'message': f"Irregular shift pattern detected (smoothness: {smoothness:.2f}). Consider different parameters."
+            })
+            validation_info['quality_score'] *= 0.7
+    
+    return validation_info
+
 
 def load_first_T_timepoints(input_file: str, max_T: Optional[int] = None) -> np.ndarray:
     """
@@ -579,7 +974,7 @@ def correct_image(
     os.makedirs(out_dir, exist_ok=True)
 
     chosen = method.lower()
-    corrected: np.ndarray
+    corrected: Optional[np.ndarray] = None
     info: Dict[str, Any] = {}
     npy_path = None
     eff: Optional[Dict[str, Any]] = None
@@ -597,7 +992,6 @@ def correct_image(
     gpu_used = False
     
     if chosen in {"cupy", "auto"} and not info.get("method"):  # try GPU CuPy if auto
-        # Resolve preset + overrides
         eff = _resolve_cupy_params(
             preset=cupy_preset,
             downsample=cupy_downsample,
@@ -610,7 +1004,7 @@ def correct_image(
             "Attempting GPU drift correction (CuPy/cuCIM) with: preset=%s, downsample=%s, refine_upsample=%s, highpass=%s, lowpass=%s, running_ref=%s",
             cupy_preset or "(none)", eff["downsample"], eff["refine_upsample"], eff["highpass_pix"], eff["lowpass_pix"], eff["use_running_ref"],
         )
-        corrected_gpu, gpu_shifts = drift_correct_xy_cupy(
+        corrected_gpu, gpu_shifts, gpu_errors = drift_correct_xy_cupy(
             data,
             drift_correct_channel=drift_channel,
             downsample=int(eff["downsample"]),
@@ -627,15 +1021,26 @@ def correct_image(
                 npy_path = os.path.join(out_dir, f"{base}_T{T}_drift_CuPy_shifts.npy")
                 np.save(npy_path, gpu_shifts)
                 info["shifts_npy"] = npy_path
+            if gpu_errors:
+                info["drift_errors"] = gpu_errors
+                # Check for critical errors that indicate failure
+                critical_errors = [e for e in gpu_errors if e.get('type') in ['import_failed', 'fatal']]
+                if critical_errors:
+                    logger.error(f"CuPy drift correction had critical errors: {critical_errors}")
             info["method"] = "cupy"
             info["time_sec_gpu_cupy"] = time.perf_counter() - t0
+            logger.info(f"✅ CuPy drift correction completed successfully in {info['time_sec_gpu_cupy']:.2f}s")
             gpu_used = True  
         else:
-            logger.info("CuPy/cuCIM path unavailable; continuing.")
+            if chosen == "cupy":
+                logger.error("❌ CuPy method specifically requested but failed. No fallback attempted.")
+                raise RuntimeError("CuPy drift correction failed and no fallback allowed for method='cupy'")
+            else:
+                logger.warning("⚠️ CuPy/cuCIM path unavailable; will attempt CPU fallback.")
 
     elif chosen in {"gpu", "auto"} and not gpu_used:
         logger.info("Attempting GPU drift correction (pyGPUreg)...")
-        corrected_gpu, gpu_shifts = drift_correct_xy_pygpureg(data, drift_correct_channel=drift_channel)
+        corrected_gpu, gpu_shifts, gpu_errors = drift_correct_xy_pygpureg(data, drift_correct_channel=drift_channel)
         if gpu_shifts is None:
             gpu_failed = True
             logger.info("GPU drift correction unavailable or failed; will fallback if allowed.")
@@ -648,12 +1053,17 @@ def correct_image(
                 npy_path = os.path.join(out_dir, f"{base}_T{T}_drift_GPU_shifts.npy")
                 np.save(npy_path, gpu_shifts)
                 info["shifts_npy"] = npy_path
+            if gpu_errors:
+                info["drift_errors"] = gpu_errors
             info["method"] = "gpu"
             info["time_sec_gpu"] = time.perf_counter() - t0
 
     # CPU path if requested or GPU failed in auto
     if (chosen == "cpu") or (chosen == "auto" and not gpu_used):
-        logger.info("Running CPU drift correction (pystackreg)...")
+        if chosen == "auto" and not gpu_used:
+            logger.info("🔄 GPU methods failed/unavailable, falling back to CPU drift correction (pystackreg)...")
+        else:
+            logger.info("Running CPU drift correction (pystackreg)...")
         t1 = time.perf_counter()
         corrected_cpu, tmats = drift_correct_xy_parallel(
             data, drift_correct_channel=drift_channel, transform_threads=cpu_threads
@@ -667,6 +1077,34 @@ def correct_image(
             info["tmats_npy"] = npy_path
         info["method"] = "cpu" if not gpu_used else info.get("method", "cpu")
         info["time_sec_cpu"] = time.perf_counter() - t1
+        logger.info(f"✅ CPU drift correction completed successfully in {info['time_sec_cpu']:.2f}s")
+    
+    # Final validation check
+    if not info.get("output_tif"):
+        logger.error("❌ No drift correction method succeeded!")
+        raise RuntimeError("All drift correction methods failed")
+
+    # Calculate comprehensive drift correction quality for final report
+    if corrected is not None:
+        try:
+            final_quality = evaluate_drift_correction_quality(
+                data, corrected, drift_channel, return_details=True
+            )
+            info["drift_quality_analysis"] = final_quality
+            
+            logger.info(f"📊 Drift Quality Analysis:")
+            logger.info(f"   • Drift Quality: {final_quality['drift_quality']:.2f} ({final_quality['quality_interpretation']['drift_quality_category']})")
+            logger.info(f"   • Edge Sharpness: {final_quality['edge_sharpness_improvement']:.2f}x improvement")
+            logger.info(f"   • Temporal Consistency: {final_quality['temporal_consistency_improvement']:.2f}x improvement")
+            logger.info(f"   • Composite Score: {final_quality['composite_score']:.2f}")
+            logger.info(f"   • Recommendation: {final_quality['quality_interpretation']['recommendation']}")
+            
+        except Exception as e:
+            logger.warning(f"Could not calculate final drift quality analysis: {e}")
+            import traceback
+            logger.debug(f"Full traceback: {traceback.format_exc()}")
+    else:
+        logger.warning("No corrected video available for quality analysis")
 
     info.update({
         "input_path": input_path,
@@ -736,8 +1174,8 @@ def correct_directory(
             return {"input_path": img_path, "error": str(e)}
 
     if parallel and is_batch:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor() as ex:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        with ProcessPoolExecutor() as ex:
             futures = [ex.submit(_one, p) for p in image_files]
             for f in tqdm(as_completed(futures), total=len(image_files), desc="Drift correcting"):
                 yield f.result()
@@ -804,6 +1242,59 @@ def main(argv: Optional[List[str]] = None) -> int:
             logger.info(f"Done: {res.get('output_tif')} ({res.get('method')})")
 
     return 0
+
+
+def test_drift_quality_on_files(
+    input_file: str,
+    corrected_file: str,
+    drift_channel: int = 0,
+    show_details: bool = True
+) -> Union[float, Dict[str, Any]]:
+    """
+    Standalone function to evaluate drift correction quality between two files.
+    
+    Usage example:
+        quality = test_drift_quality_on_files(
+            "original.tif", 
+            "drift_corrected.tif",
+            drift_channel=0
+        )
+        print(f"Drift quality: {quality['drift_quality']:.2f}")
+    """
+    # Use the same helper functions import as the rest of the module
+    # import run_pipeline_helper_functions as rp  # Already imported as rp at module level
+    
+    # Load both videos
+    logger.info(f"Loading input video: {input_file}")
+    input_video = rp.load_bioio(input_file)
+    
+    logger.info(f"Loading corrected video: {corrected_file}")
+    corrected_video = rp.load_bioio(corrected_file)
+    
+    # Evaluate quality - always request details for proper reporting
+    logger.info("Evaluating drift correction quality...")
+    quality_results = evaluate_drift_correction_quality(
+        input_video, corrected_video, drift_channel, return_details=True
+    )
+    
+    if show_details and isinstance(quality_results, dict):
+        logger.info("📊 Drift Correction Quality Results:")
+        logger.info(f"   • Drift Quality: {quality_results['drift_quality']:.3f}")
+        logger.info(f"   • Category: {quality_results['quality_interpretation']['drift_quality_category']}")
+        logger.info(f"   • Edge Sharpness Improvement: {quality_results['edge_sharpness_improvement']:.3f}")
+        logger.info(f"   • Temporal Consistency: {quality_results['temporal_consistency_improvement']:.3f}")
+        logger.info(f"   • Composite Score: {quality_results['composite_score']:.3f}")
+        logger.info(f"   • Recommendation: {quality_results['quality_interpretation']['recommendation']}")
+        logger.info(f"   • Pixels analyzed: {quality_results['total_pixels_analyzed']}")
+        
+        if quality_results.get('patch_analysis'):
+            patch_qualities = [p['quality_ratio'] for p in quality_results['patch_analysis']]
+            logger.info(f"   • Patch analysis: {len(patch_qualities)} patches, "
+                       f"quality range [{min(patch_qualities):.2f}, {max(patch_qualities):.2f}]")
+    elif isinstance(quality_results, (int, float)):
+        logger.info(f"📊 Drift Quality: {quality_results:.3f}")
+    
+    return quality_results
 
 
 if __name__ == "__main__":
