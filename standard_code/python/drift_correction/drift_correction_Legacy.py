@@ -210,7 +210,6 @@ def _phase_cross_correlation_numpy(a: np.ndarray, b: np.ndarray, upsample_factor
         error = 1.0 - r.max()
         return np.array([float(py), float(px)]), error, 0.0
 
-
 def extract_translation_from_matrix(tmat: np.ndarray) -> np.ndarray:
     """
     Extract translation components from a transformation matrix.
@@ -229,7 +228,6 @@ def extract_translation_from_matrix(tmat: np.ndarray) -> np.ndarray:
     dx = tmat[0, 2]  # X translation
     
     return np.array([dy, dx], dtype=np.float32)
-
 
 def apply_shift(image: np.ndarray, shift_yx: np.ndarray, mode: str = 'constant', order: int = 3) -> np.ndarray:
     """
@@ -250,7 +248,6 @@ def apply_shift(image: np.ndarray, shift_yx: np.ndarray, mode: str = 'constant',
         return _apply_shift_cupy(image, shift_yx, mode, order)
     except ImportError:
         return _apply_shift_numpy(image, shift_yx, mode, order)
-
 
 def _apply_shift_cupy(image: np.ndarray, shift_yx: np.ndarray, mode: str = 'constant', order: int = 3) -> np.ndarray:
     """CuPy-accelerated shift application."""
@@ -274,7 +271,6 @@ def _apply_shift_cupy(image: np.ndarray, shift_yx: np.ndarray, mode: str = 'cons
         
     return shifted_np
 
-
 def _apply_shift_numpy(image: np.ndarray, shift_yx: np.ndarray, mode: str = 'constant', order: int = 3) -> np.ndarray:
     """NumPy/SciPy fallback shift application."""
     try:
@@ -293,7 +289,6 @@ def _apply_shift_numpy(image: np.ndarray, shift_yx: np.ndarray, mode: str = 'con
     except ImportError:
         logger.error("SciPy not available for shift application")
         return image  # Return unchanged if no shift capability
-
 
 # ------------------------------
 # Algorithm-specific implementations

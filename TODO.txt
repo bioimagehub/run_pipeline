@@ -65,3 +65,7 @@
 - for each file in standard code check if a package or theory that needs citing is used.
 - find a way to add this to the config file
 
+## in run_pipeline.go add option for new %folder name% handles
+- currently we are using %REPO% and %YAML% as relative paths. but lets add the option for more
+- for example if %TEST_FOLDER% are found then look in the .env file for a tag called TEST_FOLDER.
+- if not found then ask the user to either type in the path or add to env. if the path is not found then trow an error. 

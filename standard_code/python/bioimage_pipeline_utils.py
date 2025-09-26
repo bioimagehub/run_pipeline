@@ -86,8 +86,27 @@ def load_tczyx_image(path: str) -> BioImage:
     Load an image as a BioImage object, ensuring the data is always 5D (TCZYX).
     The file format is determined by the file extension. This function standardizes
     all images to TCZYX order for safe downstream processing.
+
+
+    example use:
+    from bioio import BioImage
+
+    # Get a BioImage object
+    img = BioImage("my_file.tiff")  # selects the first scene found
+    img.data  # returns 5D TCZYX numpy array
+    img.xarray_data  # returns 5D TCZYX xarray data array backed by numpy
+    img.dims  # returns a Dimensions object
+    img.dims.order  # returns string "TCZYX"
+    img.dims.X  # returns size of X dimension
+    img.shape  # returns tuple of dimension sizes in TCZYX order
+    img.get_image_data("CZYX", T=0)  # returns 4D CZYX numpy array
+
     """
-    # Load the image using the appropriate reader based on the file extension   
+    # Load the image using the appropriate reader based on the file extension
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"File not found: {path}")
+    
+    
     if path.endswith(".tif"):
         try: # Will work for ometif
             img = BioImage(path, reader=bioio_ome_tiff.Reader)
@@ -100,6 +119,11 @@ def load_tczyx_image(path: str) -> BioImage:
         except Exception:
             pass
         try: 
+            img = BioImage(path)
+            return img
+        except Exception:
+            pass
+        try: # For imageJ tifs
             img = BioImage(path)
             return img
         except Exception:
