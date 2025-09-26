@@ -60,3 +60,8 @@
 - Add example datasets for testing
 - Implement regression testing for output validation
 - Create CI/CD pipeline for automated testing
+
+## Add citations to the yaml config file 
+- for each file in standard code check if a package or theory that needs citing is used.
+- find a way to add this to the config file
+
