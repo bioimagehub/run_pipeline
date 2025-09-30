@@ -12,7 +12,7 @@ from bioio.writers import OmeTiffWriter  # type: ignore
 from bioio import BioImage
 
 # Local helpers
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Use standard import since bioimage_pipeline_utils is in same directory
 import bioimage_pipeline_utils as rp  
 
 

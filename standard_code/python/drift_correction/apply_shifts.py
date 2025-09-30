@@ -296,3 +296,79 @@ def apply_shifts_to_tczyx_stack(stack: np.ndarray, shifts: np.ndarray, mode: str
         raise ValueError(f"Shifts must have shape (T, 2) or (T, 3), got shape {shifts.shape}")
     
     return shifted_stack
+
+
+if __name__ == "__main__":
+    # Test script for apply_shifts_to_tczyx_stack
+    print("Testing drift correction with simulated drift...")
+    
+    # Define drift pattern - how much the sample drifted over time
+    # These represent the DETECTED drift (how far the image moved from reference)
+    # Using smaller drift values to stay within image bounds (Z=0-4, Y=0-99, X=0-99)
+    drift_detected = np.array([[0,0,0], [0.5,1,1], [1,2,2], [1.5,1,-1], [2,-1,0]], dtype=float)
+    
+    # Create correction shifts (negative of detected drift to move back to reference)
+    correction_shifts = -drift_detected
+    
+    # Make a blank image stack (T=5, C=1, Z=5, Y=100, X=100)
+    stack = np.zeros((5, 1, 5, 100, 100), dtype=np.uint8)
+    
+    # Place a bright spot that drifts over time (moves in SAME direction as detected drift)
+    # This simulates a drifted dataset where the spot moves away from center
+    # Use smaller drift that stays within bounds
+    center_z, center_y, center_x = 2, 50, 50  # Reference position (where spot should be)
+    
+    print("Creating drifted image stack...")
+    spots_placed = []
+    for t, drift in enumerate(drift_detected):
+        # Spot moves AWAY from center by the drift amount (simulating sample drift)
+        drifted_z = int(center_z + drift[0])  # Z drift
+        drifted_y = int(center_y + drift[1])  # Y drift  
+        drifted_x = int(center_x + drift[2])  # X drift
+        
+        # Check bounds and place spot if possible
+        if 0 <= drifted_z < 5 and 0 <= drifted_y < 100 and 0 <= drifted_x < 100:
+            stack[t, 0, drifted_z, drifted_y, drifted_x] = 255
+            spots_placed.append((t, drifted_z, drifted_y, drifted_x))
+            print(f"  T={t}: spot at Z={drifted_z}, Y={drifted_y}, X={drifted_x} (drift: {drift})")
+        else:
+            print(f"  T={t}: spot would be out of bounds at Z={drifted_z}, Y={drifted_y}, X={drifted_x} - skipping")
+    
+    # Apply correction shifts to undo the drift
+    print("\nApplying drift correction...")
+    corrected_stack = apply_shifts_to_tczyx_stack(stack, correction_shifts)
+    
+    # Verify correction worked - check if spots are back at center
+    print("\nVerifying drift correction...")
+    all_corrected = True
+    spots_checked = 0
+    
+    for t, orig_z, orig_y, orig_x in spots_placed:
+        # Find where the bright spot ended up after correction
+        spot_coords = np.where(corrected_stack[t, 0] > 128)  # Find bright pixels
+        if len(spot_coords[0]) > 0:
+            corrected_z = spot_coords[0][0] 
+            corrected_y = spot_coords[1][0]
+            corrected_x = spot_coords[2][0]
+            print(f"  T={t}: spot corrected to Z={corrected_z}, Y={corrected_y}, X={corrected_x}")
+            
+            # Check if close to original center (allow small rounding error)
+            if abs(corrected_z - center_z) > 1 or abs(corrected_y - center_y) > 1 or abs(corrected_x - center_x) > 1:
+                print(f"    WARNING: Not properly centered! Expected Z={center_z}, Y={center_y}, X={center_x}")
+                all_corrected = False
+            spots_checked += 1
+        else:
+            print(f"  T={t}: No bright spot found after correction!")
+            all_corrected = False
+    
+    if all_corrected and spots_checked > 0:
+        print(f"\n✓ SUCCESS: Drift correction working properly - all {spots_checked} spots returned to center!")
+    elif spots_checked == 0:
+        print("\n⚠ WARNING: No spots could be placed within image bounds for testing.")
+    else:
+        print(f"\n✗ FAILURE: Drift correction not working as expected for {spots_checked} spots tested.")
+        
+    print(f"\nOriginal drift pattern: {drift_detected.tolist()}")
+    print(f"Correction shifts applied: {correction_shifts.tolist()}")
+    print(f"Expected final position: Z={center_z}, Y={center_y}, X={center_x}")
+    

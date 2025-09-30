@@ -2,8 +2,15 @@
 Create synthetic test data with large known drifts to verify the algorithm works correctly.
 """
 import sys
-sys.path.append(r'e:\Oyvind\OF_git\run_pipeline\standard_code\python')
-import bioimage_pipeline_utils as rp
+# Use relative import to parent directory
+try:
+    from .. import bioimage_pipeline_utils as rp
+except ImportError:
+    # Fallback for when script is run directly (not as module)
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import bioimage_pipeline_utils as rp
 import numpy as np
 from phase_cross_correlation import phase_cross_correlation
 import apply_shifts

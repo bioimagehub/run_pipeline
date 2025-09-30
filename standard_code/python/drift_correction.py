@@ -13,12 +13,15 @@ from tqdm import tqdm
 # Local helper used throughout the repo
 import bioimage_pipeline_utils as rp
 
+# Set up logging before imports
+logger = logging.getLogger(__name__)
+
 # Import phase correlation functions
 try:
     # Try relative import first
     from drift_correction.phase_cross_correlation import (
-        phase_cross_correlation_cupy,
-        phase_cross_correlation_cupy_3d
+        phase_cross_correlation,
+        _phase_cross_correlation_3d_cupy
     )
 except ImportError:
     # Fallback: add drift_correction subfolder to path
@@ -27,15 +30,15 @@ except ImportError:
         sys.path.append(drift_correction_path)
     try:
         from phase_cross_correlation import (
-            phase_cross_correlation_cupy,
-            phase_cross_correlation_cupy_3d
+            phase_cross_correlation,
+            _phase_cross_correlation_3d_cupy
         )
     except ImportError as e:
         logger.warning(f"Could not import phase correlation functions: {e}")
         # Define placeholder functions
-        def phase_cross_correlation_cupy(*args, **kwargs):
+        def phase_cross_correlation(*args, **kwargs):
             raise ImportError("Phase correlation functions not available")
-        def phase_cross_correlation_cupy_3d(*args, **kwargs):
+        def _phase_cross_correlation_3d_cupy(*args, **kwargs):
             raise ImportError("Phase correlation functions not available")
 
 # Module logger
@@ -45,8 +48,8 @@ logger = logging.getLogger(__name__)
 # Drift correction algorithm registry
 ALGORITHMS = {
     'phase_correlation': {
-        '2d': phase_cross_correlation_cupy,
-        '3d': phase_cross_correlation_cupy_3d,
+        '2d': phase_cross_correlation,
+        '3d': _phase_cross_correlation_3d_cupy,
         'description': 'GPU-accelerated phase cross-correlation (CuPy required)'
     }
     # Future algorithms can be added here:

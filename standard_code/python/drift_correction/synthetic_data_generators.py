@@ -15,7 +15,15 @@ import numpy as np
 import sys
 import os
 from typing import Tuple, List, Dict, Any
-sys.path.append(r'e:\Oyvind\OF_git\run_pipeline\standard_code\python')
+# Use relative import to parent directory
+try:
+    from .. import bioimage_pipeline_utils as rp
+except ImportError:
+    # Fallback for when script is run directly (not as module)
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import bioimage_pipeline_utils as rp
 
 import bioimage_pipeline_utils as rp
 

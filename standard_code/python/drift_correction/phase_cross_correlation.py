@@ -123,7 +123,6 @@ Example:
 
 from typing import Optional, Tuple
 import numpy as np
-import logging
 import sys
 import os
 import json
@@ -133,12 +132,19 @@ from skimage.filters import threshold_triangle, threshold_otsu
 import numpy as np
 
 
-sys.path.append(r'e:\Oyvind\OF_git\run_pipeline\standard_code\python')
-import bioimage_pipeline_utils as rp
+# Use relative import to parent directory
+try:
+    from .. import bioimage_pipeline_utils as rp
+except ImportError:
+    # Fallback for when script is run directly (not as module)
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import bioimage_pipeline_utils as rp
 import apply_shifts
 
 
-
+import logging
 logger = logging.getLogger(__name__)
 
 
@@ -478,10 +484,10 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
     'previous':
       - Compare each frame to its immediate predecessor
       - Best for: Live cell imaging, dynamic biological samples
-      - Output: Incremental shifts (frame-to-frame changes)
+      - Output: Cumulative shifts relative to first frame (auto-accumulated)
       - shifts[0] = [0.0, 0.0, 0.0] (first frame is reference)
       - Minimizes errors from biological changes over time
-      - For absolute correction, accumulate shifts: cumsum(shifts, axis=0)
+      - Internal: Detects frame-to-frame drift, then accumulates for absolute correction
       
     'mean':
       - Compare all frames to temporal average of entire stack
@@ -606,7 +612,7 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
     shifts = np.zeros((T, 3), dtype=np.float32)
     
     if reference_frame == 'previous':
-        # Handle 'previous' reference frame iteratively
+        # Handle 'previous' reference frame iteratively with cumulative shift accumulation
         for t in range(T):
             if t == 0:
                 # First frame has no shift (it's the initial reference)
@@ -619,17 +625,22 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
                 shift_result = _phase_cross_correlation_3d_cupy(reference_volume, current_volume, upsample_factor=upsample_factor, use_triangle_threshold=use_triangle_threshold)
                 # Phase correlation already returns correction shifts (due to F_ref * conj(F_img) convention)
                 # No negation needed - the algorithm directly gives us the shift to apply
-                raw_shift = shift_result[0]  # Direct use of correction shifts for apply_shifts
+                frame_to_frame_shift = shift_result[0]  # Shift from t-1 to t
                 
                 # Validate shift magnitude for random drift (allowing larger shifts)
-                shift_magnitude = np.linalg.norm(raw_shift)
+                shift_magnitude = np.linalg.norm(frame_to_frame_shift)
                 if shift_magnitude > max_shift_per_frame:
-                    logger.warning(f"Extremely large shift detected at t={t}: {raw_shift} (magnitude={shift_magnitude:.2f})")
+                    logger.warning(f"Extremely large shift detected at t={t}: {frame_to_frame_shift} (magnitude={shift_magnitude:.2f})")
                     logger.warning(f"This may indicate registration failure or stage malfunction")
                     # Still cap to prevent complete failure, but allow larger shifts for random drift
-                    raw_shift = raw_shift * (max_shift_per_frame / shift_magnitude)
+                    frame_to_frame_shift = frame_to_frame_shift * (max_shift_per_frame / shift_magnitude)
                 
-                shifts[t] = raw_shift
+                # CRITICAL: Accumulate shifts for 'previous' reference mode
+                # Each frame needs the cumulative shift relative to the first frame
+                # shifts[t] = sum of all frame-to-frame shifts from 0 to t
+                shifts[t] = shifts[t-1] + frame_to_frame_shift
+                
+                logger.debug(f"Frame {t}: frame-to-frame shift {frame_to_frame_shift}, cumulative shift {shifts[t]}")
     else:
         # Handle other reference frame types (first, last, mean, mean10)
         # Extract the reference frame to compare against all timepoints
@@ -656,580 +667,26 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
     return shifts
 
 
-# ==================== SYNTHETIC DATA GENERATION ====================
 
-def create_synthetic_drift_image(input_file: str, output_file: str, num_timepoints: int = 10, max_shift: float = 20.0) -> np.ndarray:
-    """
-    Create a synthetic drift image by taking the first timepoint from an input file
-    and applying known shifts to simulate drift over time.
-    
-    Args:
-        input_file (str): Path to input image file (any format supported by bioimage_pipeline_utils)
-        output_file (str): Path to save synthetic drift image as TIFF
-        num_timepoints (int): Number of timepoints to generate (default: 10)
-        max_shift (float): Maximum shift in pixels (default: 20.0)
-        
-    Returns:
-        np.ndarray: Array of applied shifts for each timepoint (T, 3) in ZYX order
-    """
-    logger.info(f"Creating synthetic drift image from {input_file}")
-    
-    # Load the input image
-    img = rp.load_tczyx_image(input_file)
-    input_data = img.data.astype(np.float32)
-    T, C, Z, Y, X = input_data.shape
-    
-    logger.info(f"Input image shape: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
-    
-    # Use the first timepoint as the base image for all synthetic timepoints
-    base_timepoint = input_data[0:1]  # Keep as (1, C, Z, Y, X)
-    
-    # Generate known shifts for each timepoint
-    # Create progressive drift pattern that's realistic
-    applied_shifts = np.zeros((num_timepoints, 3), dtype=np.float32)  # ZYX order
-    
-    # Generate cumulative drift pattern (more realistic than random jumps)
-    np.random.seed(42)  # For reproducible results
-    
-    for t in range(1, num_timepoints):
-        # Generate small random drift increments
-        # For single-slice images (Z=1), don't generate Z drift
-        if Z > 1:
-            dz = np.random.normal(0, max_shift / 20)  # Smaller Z drift (typical of microscopy)
-        else:
-            dz = 0.0  # No Z drift for single-slice images
-            
-        dy = np.random.normal(0, max_shift / 10)  # Y drift
-        dx = np.random.normal(0, max_shift / 10)  # X drift
-        
-        # Cumulative drift (add to previous position)
-        applied_shifts[t] = applied_shifts[t-1] + np.array([dz, dy, dx])
-    
-    # Limit maximum cumulative shift
-    for i in range(3):
-        applied_shifts[:, i] = np.clip(applied_shifts[:, i], -max_shift, max_shift)
-    
-    logger.info(f"Generated shifts ranging from {applied_shifts.min():.2f} to {applied_shifts.max():.2f} pixels")
-    
-    # Create synthetic drift stack
-    synthetic_stack = np.zeros((num_timepoints, C, Z, Y, X), dtype=np.float32)
-    
-    # Track the actually applied shifts (after rounding to integers for np.roll)
-    actually_applied_shifts = np.zeros_like(applied_shifts)
-    
-    for t in range(num_timepoints):
-        dz, dy, dx = applied_shifts[t]
-        
-        # Round shifts to integers for np.roll application
-        dz_int, dy_int, dx_int = int(round(dz)), int(round(dy)), int(round(dx))
-        actually_applied_shifts[t] = [dz_int, dy_int, dx_int]
-        
-        # Apply shifts to each channel
-        for c in range(C):
-            # Get the base volume for this channel
-            base_volume = base_timepoint[0, c]  # Shape: (Z, Y, X)
-            
-            # Apply integer shifts using numpy roll (for simplicity and speed)
-            # Note: This creates periodic boundary conditions
-            shifted_volume = base_volume.copy()
-            
-            # Only apply Z shift if Z > 1
-            if Z > 1 and dz_int != 0:
-                shifted_volume = np.roll(shifted_volume, dz_int, axis=0)
-            
-            # Apply Y and X shifts
-            if dy_int != 0:
-                shifted_volume = np.roll(shifted_volume, dy_int, axis=1)  
-            if dx_int != 0:
-                shifted_volume = np.roll(shifted_volume, dx_int, axis=2)
-            
-            synthetic_stack[t, c] = shifted_volume
-    
-    # Save the synthetic drift image
-    logger.info(f"Saving synthetic drift image to {output_file}")
-    rp.save_tczyx_image(synthetic_stack, output_file)
-    
-    # Save the known shifts as JSON file next to the image
-    shifts_file = os.path.splitext(output_file)[0] + "_known_shifts.json"
-    shifts_data = {
-        "description": "Known shifts applied to create synthetic drift image",
-        "input_file": input_file,
-        "output_file": output_file,
-        "num_timepoints": num_timepoints,
-        "max_shift": max_shift,
-        "random_seed": 42,
-        "shifts_format": "ZYX order (timepoint, [dz, dy, dx])",
-        "generated_shifts": applied_shifts.tolist(),  # Original fractional shifts generated
-        "actually_applied_shifts": actually_applied_shifts.tolist(),  # Integer shifts actually applied
-        "shifts": actually_applied_shifts.tolist()  # For compatibility, use actually applied shifts
-    }
-    
-    with open(shifts_file, 'w') as f:
-        json.dump(shifts_data, f, indent=2)
-    
-    logger.info(f"Saved known shifts to {shifts_file}")
-    logger.info(f"Successfully created synthetic drift image with {num_timepoints} timepoints")
-    logger.info(f"Generated shifts (ZYX): min={applied_shifts.min(axis=0)}, max={applied_shifts.max(axis=0)}")
-    logger.info(f"Actually applied shifts (ZYX): min={actually_applied_shifts.min(axis=0)}, max={actually_applied_shifts.max(axis=0)}")
-    
-    return actually_applied_shifts  # Return the actually applied shifts for consistency
-
-
-# ==================== TEST FUNCTIONS ====================
-# Two separate test functions for different use cases:
-# 1. test_synthetic_data(): Clean testing with known shifts
-# 2. test_real_data(): Testing with actual image files and optional ground truth
-
-def test_synthetic_data():
-    """Test phase cross-correlation with synthetic data and known shifts."""
-    print("=== Testing Phase Cross-Correlation with Synthetic Data ===")
-    
-    # Create test TCZYX stack
-    T, C, Z, Y, X = 3, 2, 4, 64, 64
-    reference_stack = np.zeros((T, C, Z, Y, X), dtype=np.float32)
-    reference_stack[:, :, 1:3, 20:40, 20:40] = 1.0  # Cube in all timepoints
-    
-    # Create drifted version with known shifts
-    applied_shifts = np.array([
-        [0.0, 0.0, 0.0],    # T=0: no shift (reference frame)
-        [1.0, 2.0, -1.0],   # T=1: shift [dz, dy, dx] 
-        [-1.0, -3.0, 2.0]   # T=2: different shift
-    ])
-    
-    # Apply shifts to create drifted stack
-    drifted_stack = np.empty_like(reference_stack)
-    for t in range(T):
-        dz, dy, dx = applied_shifts[t]
-        for c in range(C):
-            volume = reference_stack[0, c]  # Use first frame as base for all
-            shifted = np.roll(np.roll(np.roll(volume, int(dz), axis=0), int(dy), axis=1), int(dx), axis=2)
-            drifted_stack[t, c] = shifted
-    
-    # Test phase cross-correlation
-    print("\n1. Testing with 'first' reference frame:")
-    detected_shifts_first = phase_cross_correlation(drifted_stack, reference_frame='first', channel=0, upsample_factor=100)
-    
-    print("Phase Cross-Correlation Results:")
-    for t in range(T):
-        print(f"  T={t}: Applied {applied_shifts[t]} -> Detected {detected_shifts_first[t]}")
-    
-    # Verify detection accuracy
-    # After sign fix: detected shifts should now directly match applied shifts (positive correction values)
-    expected_shifts_first = applied_shifts.copy()
-    expected_shifts_first[0] = [0.0, 0.0, 0.0]  # First frame is reference, so no shift
-    
-    # Check first frame (should be zero)
-    assert np.allclose(detected_shifts_first[0], [0.0, 0.0, 0.0], atol=0.1), f"First frame should have zero shift, got {detected_shifts_first[0]}"
-    
-    # Check other frames (allowing reasonable tolerance for sub-pixel accuracy with enhanced algorithm)  
-    # Note: Enhanced algorithms may have slightly different accuracy in Z vs XY dimensions
-    for t in range(1, T):
-        z_error = abs(detected_shifts_first[t, 0] - expected_shifts_first[t, 0])
-        xy_error = np.linalg.norm(detected_shifts_first[t, 1:] - expected_shifts_first[t, 1:])
-        
-        # Z-dimension may have larger error due to lower resolution in test data
-        z_tolerance = 0.9  # More lenient for Z  
-        xy_tolerance = 0.15  # Stricter for X,Y
-        
-        print(f"  T={t}: Z error={z_error:.3f} (tol={z_tolerance}), XY error={xy_error:.3f} (tol={xy_tolerance})")
-        
-        assert z_error < z_tolerance, f"T={t}: Z shift error {z_error:.3f} > tolerance {z_tolerance}"
-        assert xy_error < xy_tolerance, f"T={t}: XY shift error {xy_error:.3f} > tolerance {xy_tolerance}"
-    
-    print("\n2. Testing with 'mean' reference frame:")
-    detected_shifts_mean = phase_cross_correlation(drifted_stack, reference_frame='mean', channel=0, upsample_factor=100)
-    
-    print("Phase Cross-Correlation Results (mean reference):")
-    for t in range(T):
-        print(f"  T={t}: Detected {detected_shifts_mean[t]}")
-    
-    print("\n2b. Testing with 'previous' reference frame:")
-    detected_shifts_previous = phase_cross_correlation(drifted_stack, reference_frame='previous', channel=0, upsample_factor=100)
-    
-    print("Phase Cross-Correlation Results (previous reference):")
-    for t in range(T):
-        print(f"  T={t}: Detected {detected_shifts_previous[t]}")
-    
-    # For 'previous' reference, we expect:
-    # T=0: [0, 0, 0] (no shift for first frame)
-    # T=1: relative shift from T=0 to T=1
-    # T=2: relative shift from T=1 to T=2
-    assert np.allclose(detected_shifts_previous[0], [0.0, 0.0, 0.0], atol=0.1), f"First frame should have zero shift for 'previous' reference, got {detected_shifts_previous[0]}"
-    print("  + 'Previous' reference frame test passed")
-    
-    # Test shift application and correction
-    print("\n3. Testing shift application and correction:")
-    corrected_stack = apply_shifts.apply_shifts_to_tczyx_stack(drifted_stack, detected_shifts_first, mode='constant')
-    
-    # Measure correction quality (compare corrected stack to original reference)
-    reference_for_comparison = reference_stack[0:1].repeat(T, axis=0)  # Repeat first frame T times
-    mse = np.mean((corrected_stack - reference_for_comparison)**2)
-    print(f"Correction MSE: {mse:.6f}")
-    
-    if mse < 0.01:
-        print("+ Correction quality: Excellent")
-    elif mse < 0.05:
-        print("+ Correction quality: Good")  
-    else:
-        print(f"! Correction quality may be suboptimal (MSE={mse:.6f})")
-    
-    print("\n4. Testing different upsample factors:")
-    shifts_coarse = phase_cross_correlation(drifted_stack, reference_frame='first', upsample_factor=1)
-    shifts_fine = phase_cross_correlation(drifted_stack, reference_frame='first', upsample_factor=100)
-    
-    print("Upsample factor comparison:")
-    for t in range(T):
-        print(f"  T={t}: Coarse {shifts_coarse[t]} vs Fine {shifts_fine[t]}")
-    
-    print("\n+ All synthetic data tests passed!")
-    return True
-
-
-def test_real_data(input_file: str, gaussian_blur:int = 1, drift_channel = 0, ground_truth_file: Optional[str] = None, output_path: Optional[str] = None, reference_frame = 'first', use_triangle_threshold: bool = True):
-    """
-    Test phase cross-correlation with real data files.
-    
-    Args:
-        input_file (str): Path to input TCZYX image stack file
-        gaussian_blur (int): Gaussian blur sigma for preprocessing (default: 1)
-        drift_channel (int): Channel to use for drift detection (default: 0)
-        ground_truth_file (str, optional): Path to ground truth file:
-            - .json file: Contains known shifts for validation
-            - .tif/.tiff file: Drift-corrected reference image
-        output_path (str, optional): Path to save corrected image and detected shifts
-        reference_frame (str): Reference frame selection ('first', 'last', 'mean', 'previous')
-        use_triangle_threshold (bool): Apply triangle thresholding (default: True)
-    """
-    print("=== Testing Phase Cross-Correlation with Real Data ===")
-    
-    # Load input file
-    print(f"Loading input file: {input_file}")
-    img = rp.load_tczyx_image(input_file)
-    img_data = img.data.astype(np.float32)
-    print(f"Loaded image stack with shape: {img_data.shape}")
-    
-    T, C, Z, Y, X = img_data.shape
-    print(f"Image dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
-    
-    # Crop to first 20 timepoints for faster testing
-    max_frames = min(20, T)
-    if T > max_frames:
-        print(f"Cropping from {T} to {max_frames} timepoints for faster testing...")
-        img_data = img_data[:max_frames]
-        T = max_frames
-    
-    # Optional Gaussian blur preprocessing to reduce noise
-    img_data_processed = img_data.copy()
-    if gaussian_blur > 0:
-        print(f"Applying Gaussian blur with sigma={gaussian_blur}...")
-        try:
-            # Try to use CuPy's GPU-accelerated Gaussian filter
-            import cupy as cp
-            from cupyx.scipy.ndimage import gaussian_filter as gpu_gaussian_filter
-            print("Using GPU-accelerated Gaussian filter (CuPy)")
-            
-            for t in range(max_frames):
-                for z in range(Z):
-                    # Transfer to GPU, apply filter, transfer back
-                    gpu_slice = cp.asarray(img_data_processed[t, drift_channel, z])
-                    gpu_filtered = gpu_gaussian_filter(gpu_slice, sigma=gaussian_blur)
-                    img_data_processed[t, drift_channel, z] = cp.asnumpy(gpu_filtered)
-                    
-                    # Clean up GPU memory for this iteration
-                    del gpu_slice, gpu_filtered
-            
-            # Final GPU memory cleanup
-            cp.get_default_memory_pool().free_all_blocks()
-            print("GPU memory cleaned up after Gaussian filtering")
-            
-        except ImportError:
-            # Fallback to CPU version if CuPy not available
-            print("CuPy not available, using CPU Gaussian filter (scipy)")
-            from scipy.ndimage import gaussian_filter
-            for t in range(max_frames):
-                for z in range(Z):
-                    img_data_processed[t, drift_channel, z] = gaussian_filter(img_data_processed[t, drift_channel, z], sigma=gaussian_blur)
-    
-    # Load ground truth data if provided (either image or shifts JSON)
-    ground_truth_stack = None
-    ground_truth_shifts = None
-    
-    if ground_truth_file is not None:
-        if ground_truth_file.endswith('.json'):
-            # Load ground truth shifts from JSON file
-            print(f"Loading ground truth shifts from JSON: {ground_truth_file}")
-            with open(ground_truth_file, 'r') as f:
-                shifts_data = json.load(f)
-            ground_truth_shifts = np.array(shifts_data['shifts'])
-            print(f"Loaded ground truth shifts with shape: {ground_truth_shifts.shape}")
-            
-            # Crop ground truth shifts to match input timepoints if needed
-            if ground_truth_shifts.shape[0] > max_frames:
-                print(f"Cropping ground truth shifts from {ground_truth_shifts.shape[0]} to {max_frames} timepoints...")
-                ground_truth_shifts = ground_truth_shifts[:max_frames]
-                
-        elif ground_truth_file.endswith('.tif') or ground_truth_file.endswith('.tiff'):
-            # Load ground truth image (existing functionality)
-            print(f"Loading ground truth image: {ground_truth_file}")
-            ground_truth_img = rp.load_tczyx_image(ground_truth_file)
-            ground_truth_stack = ground_truth_img.data
-            print(f"Loaded ground truth image with shape: {ground_truth_stack.shape}")
-            
-            # Crop ground truth to match input timepoints
-            if ground_truth_stack.shape[0] > max_frames:
-                print(f"Cropping ground truth from {ground_truth_stack.shape[0]} to {max_frames} timepoints...")
-                ground_truth_stack = ground_truth_stack[:max_frames]
-        else:
-            print(f"Warning: Unsupported ground truth file format: {ground_truth_file}")
-            print("Supported formats: .json (for shifts), .tif/.tiff (for images)")
-        
-    
-    # Test phase cross-correlation with different reference frames
-    print(f"\n1. Testing with '{reference_frame}' reference frame:")
-    detected_shifts_first = phase_cross_correlation(img_data_processed, reference_frame=reference_frame, channel=drift_channel, upsample_factor=100, use_triangle_threshold=use_triangle_threshold)
-    print("Phase Cross-Correlation Results (first frame reference):")
-    for t in range(max_frames):
-        if t % 5 == 0: # show every 5th frame since we only have 20 frames now
-            print(f"  T={t}: Detected {detected_shifts_first[t]}") 
-
-    # Apply shifts     
-    img_corrected = apply_shifts.apply_shifts_to_tczyx_stack(img_data, detected_shifts_first, mode='constant') # apply shifts to original data not processed
-    
-    # Compare with ground truth if available
-    if ground_truth_shifts is not None:
-        print("\nComparing detected shifts with ground truth shifts:")
-        
-        # Ensure we have matching number of timepoints
-        min_frames = min(T, len(ground_truth_shifts), len(detected_shifts_first))
-        
-        print("Shift comparison (ZYX format):")
-        errors = []
-        for t in range(min_frames):
-            error = np.abs(ground_truth_shifts[t] - detected_shifts_first[t])
-            errors.append(error)
-            
-            if t % 5 == 0 or t < 3:  # Show first 3 and every 5th frame
-                print(f"  T={t}: GT {ground_truth_shifts[t]} -> Detected {detected_shifts_first[t]}")
-                print(f"      Error: {error} (magnitude: {np.linalg.norm(error):.3f})")
-        
-        # Calculate overall statistics
-        errors_array = np.array(errors)
-        mean_error = np.mean(errors_array, axis=0)
-        max_error = np.max(errors_array, axis=0)
-        rms_error = np.sqrt(np.mean(errors_array**2, axis=0))
-        
-        print(f"\nShift detection accuracy statistics:")
-        print(f"  Mean absolute error (ZYX): {mean_error}")
-        print(f"  RMS error (ZYX): {rms_error}")
-        print(f"  Max error (ZYX): {max_error}")
-        print(f"  Overall RMS error: {np.sqrt(np.mean(errors_array**2)):.3f} pixels")
-        
-        # Quality assessment for shift detection
-        overall_rms = np.sqrt(np.mean(errors_array**2))
-        if overall_rms < 0.1:
-            print("  + Excellent shift detection accuracy")
-        elif overall_rms < 0.5:
-            print("  + Good shift detection accuracy")
-        elif overall_rms < 1.0:
-            print("  ! Moderate shift detection accuracy")
-        else:
-            print("  - Poor shift detection accuracy")
-            
-    elif ground_truth_stack is not None:
-        print("\nComparing with ground truth (drift-corrected reference image):")
-        
-        # Handle size differences between corrected image and ground truth
-        # (ImageJ might add padding during drift correction)
-        gt_shape = ground_truth_stack.shape
-        corr_shape = img_corrected.shape
-        
-        if gt_shape[2:] != corr_shape[2:]:  # Different Y,X dimensions
-            print(f"  Note: Size mismatch - GT: {gt_shape[2:]} vs Corrected: {corr_shape[2:]}")
-            print("  Cropping ground truth to match corrected image size...")
-            
-            # Calculate crop region to center-crop ground truth to match corrected size
-            y_diff = gt_shape[3] - corr_shape[3]
-            x_diff = gt_shape[4] - corr_shape[4]
-            y_start = y_diff // 2
-            x_start = x_diff // 2
-            y_end = y_start + corr_shape[3]
-            x_end = x_start + corr_shape[4]
-            
-            # Crop ground truth to match corrected image size
-            ground_truth_cropped = ground_truth_stack[:, :, :, y_start:y_end, x_start:x_end]
-        else:
-            ground_truth_cropped = ground_truth_stack
-        
-        # Compare corrected image with ground truth image
-        # Calculate MSE between our correction and the ground truth
-        min_frames = min(T, ground_truth_cropped.shape[0])
-        mse_per_frame = []
-        
-        
-        for t in range(min_frames):
-            # Calculate MSE for this frame
-            frame_mse = np.mean((img_corrected[t] - ground_truth_cropped[t])**2)
-            mse_per_frame.append(frame_mse)
-            
-            # Also calculate normalized cross-correlation for similarity measure
-            corr_coef = np.corrcoef(img_corrected[t].flatten(), ground_truth_cropped[t].flatten())[0, 1]
-
-            if t % 5 == 0: # show every 5th frame since we only have 20 frames now
-                print(f"  T={t}: MSE={frame_mse:.6f}, Correlation={corr_coef:.4f}")
-        
-        # Overall statistics
-        mean_mse = np.mean(mse_per_frame)
-        mean_correlation = np.mean([np.corrcoef(img_corrected[t].flatten(), ground_truth_cropped[t].flatten())[0, 1] 
-                                   for t in range(min_frames)])
-        
-        print(f"\nOverall comparison statistics:")
-        print(f"  Mean MSE: {mean_mse:.6f}")
-        print(f"  Mean correlation: {mean_correlation:.4f}")
-        
-        # Quality assessment
-        if mean_correlation > 0.95:
-            print("  + Excellent match with ground truth")
-        elif mean_correlation > 0.90:
-            print("  + Good match with ground truth")
-        elif mean_correlation > 0.80:
-            print("  ! Moderate match with ground truth")
-        else:
-            print("  - Poor match with ground truth")
-            
-        # Calculate improvement over original (uncorrected) image
-        uncorrected_mse = np.mean([(np.mean((img_data[t] - ground_truth_cropped[t])**2)) 
-                                   for t in range(min_frames)])
-        improvement_ratio = uncorrected_mse / mean_mse
-        print(f"  Improvement factor: {improvement_ratio:.2f}x better than uncorrected")
-
-    if output_path is not None:
-        # Save the corrected image
-        print(f"\nSaving corrected image to: {output_path}")
-        rp.save_tczyx_image(img_corrected, output_path)
-        
-        # Save detected shifts to numpy file
-        shifts_output_path = output_path.replace('.tif', '_shifts.npy')
-        np.save(shifts_output_path, detected_shifts_first)
-        print(f"Detected shifts saved to: {shifts_output_path}")
-
-    return detected_shifts_first
-
-def drift_correction_score(image_path: str, channel: int = 0, reference: str = "first", # "first", "median", or "previous"
-                           central_crop: float = 0.8, # fraction of XY kept (e.g., 0.8 keeps central 80%) 
-                           z_project: str | None = "mean", # None, "mean", "max", or "median" 
-                           ) -> float: 
-    """
-    Compute a single alignment score for a time series by measuring frame-to-frame similarity using z-normalized Pearson correlation, focusing on the central region.
-
-    Args:
-        image_path: Path to T×C×Z×Y×X image.
-        channel: Channel index to analyze.
-        reference: Which reference to compare each timepoint against.
-            - "first": compare each frame to the first frame (default)
-            - "median": compare each frame to the temporal median frame
-            - "previous": compare each frame to the immediately previous frame
-        central_crop: Fraction (0–1] of the XY extent retained centered. 0.8 avoids edge artifacts.
-        z_project: If not None, project along Z to 2D before scoring.
-            - "mean", "max", "median" supported. None keeps 3D.
-
-    Returns:
-        A single scalar score in [-1, 1], where 1 indicates near-identical frames.
-        If the series has <2 timepoints, returns NaN.
-    """
-
-    # Load image as T×C×Z×Y×X
-    img = rp.load_tczyx_image(image_path)
-    data = img.data
-    if data.ndim != 5:
-        raise ValueError(f"Expected TCZYX, got shape {data.shape}")
-    T, C, Z, Y, X = data.shape
-    if T < 2:
-        return float("nan")
-    if not (0 <= channel < C):
-        raise IndexError(f"Channel {channel} out of range [0, {C-1}]")
-
-    # Select channel
-    series = data[:, channel, ...]  # shape T×Z×Y×X
-
-    # Optional Z projection
-    if z_project is not None:
-        if z_project == "mean":
-            series = series.mean(axis=1)      # T×Y×X
-        elif z_project == "max":
-            series = series.max(axis=1)       # T×Y×X
-        elif z_project == "median":
-            series = np.median(series, axis=1)
-        else:
-            raise ValueError(f"Unsupported z_project: {z_project}")
-
-    # Central crop on XY
-    def central_xy_crop(arr, frac):
-        if frac >= 1.0:
-            return arr
-        # Support 2D (Y×X) or 3D (Z×Y×X)
-        if arr.ndim == 3:
-            Z_, Y_, X_ = arr.shape
-            cy = int(Y_ * (1 - frac) / 2)
-            cx = int(X_ * (1 - frac) / 2)
-            return arr[:, cy:Y_-cy, cx:X_-cx]
-        elif arr.ndim == 2:
-            Y_, X_ = arr.shape
-            cy = int(Y_ * (1 - frac) / 2)
-            cx = int(X_ * (1 - frac) / 2)
-            return arr[cy:Y_-cy, cx:X_-cx]
-        else:
-            raise ValueError("Unexpected array dimensionality for cropping.")
-
-    series = np.array([central_xy_crop(frame, central_crop) for frame in series], dtype=np.float32)
-
-    # Build reference(s)
-    if reference == "first":
-        ref = series[0]
-        compare_pairs = [(ref, series[t]) for t in range(1, T)]
-    elif reference == "median":
-        ref = np.median(series, axis=0)
-        compare_pairs = [(ref, series[t]) for t in range(T)]
-    elif reference == "previous":
-        compare_pairs = [(series[t-1], series[t]) for t in range(1, T)]
-    else:
-        raise ValueError(f"Unsupported reference: {reference}")
-
-    # Fast Pearson correlation on flattened, z-normalized data
-    def pearson_centered(x, y):
-        x = x.ravel().astype(np.float64)
-        y = y.ravel().astype(np.float64)
-        x -= x.mean()
-        y -= y.mean()
-        # Avoid division by zero
-        x_norm = np.linalg.norm(x)
-        y_norm = np.linalg.norm(y)
-        if x_norm == 0 or y_norm == 0:
-            return np.nan
-        return float(np.dot(x, y) / (x_norm * y_norm))
-
-    corrs = []
-    for ref_frame, cur_frame in compare_pairs:
-        corrs.append(pearson_centered(ref_frame, cur_frame))
-
-    # Final score: mean correlation across comparisons
-    score = float(np.nanmean(corrs)) if len(corrs) > 0 else float("nan")
-    return score
 
 if __name__ == "__main__":
     # Example usage: Basic drift correction
-    input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+    # input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+    input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif"
     output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
-    
-    # Create output filename
-    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + "_corrected_first.tif")
-    
+
+    # Test 1: First frame as reference
+    print("\n=== Example: Drift Correction with Phase Cross-Correlation using first frame as reference ===")
+    reference_frame = "first"  # or "first", "mean", etc.
+    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
+
     # Load image and apply drift correction
     image_stack = rp.load_tczyx_image(input_file).data
 
 
     detected_shifts = phase_cross_correlation(
         image_stack, 
-        reference_frame='first',  # Use first frame as reference for better results
+        reference_frame=reference_frame,  # Use previous frame as reference for better results
         channel=0, 
         upsample_factor=20,  # Higher precision
         max_shift_per_frame=50.0, 
@@ -1249,3 +706,68 @@ if __name__ == "__main__":
     score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
     print(f"Output image drift correction score: {score:.4f}")
     
+    #########################################
+    # Test 2: Previous frame as reference
+    print("\n=== Example: Drift Correction with Phase Cross-Correlation using previous frame as reference ===")
+    reference_frame = "previous"  # or "first", "mean", etc.
+    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
+
+    # Load image and apply drift correction
+    image_stack = rp.load_tczyx_image(input_file).data
+
+
+    detected_shifts = phase_cross_correlation(
+        image_stack, 
+        reference_frame=reference_frame,  # Use previous frame as reference for better results
+        channel=0, 
+        upsample_factor=20,  # Higher precision
+        max_shift_per_frame=50.0, 
+        use_triangle_threshold=True  # Enable thresholding for better accuracy
+    )
+
+    # Apply correction shifts and save result
+    corrected_image = apply_shifts.apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+    rp.save_tczyx_image(corrected_image, output_file)
+
+    print(f"Drift correction completed. Saved to: {output_file}")
+
+    # Validate the drift correction quality
+    score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    print(f"Input image drift correction score: {score_input:.4f}")
+
+    score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    print(f"Output image drift correction score: {score:.4f}")
+
+    ##########################################
+    # Test 3 Run with live cell data without known shifts
+    print("\n=== Example: Testing with Real Data ===")
+    input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+
+    reference_frame = "previous"  # or "first", "mean", etc.
+    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
+
+    # Load image and apply drift correction
+    image_stack = rp.load_tczyx_image(input_file).data
+
+
+    detected_shifts = phase_cross_correlation(
+        image_stack, 
+        reference_frame=reference_frame,  # Use previous frame as reference for better results
+        channel=0, 
+        upsample_factor=20,  # Higher precision
+        max_shift_per_frame=50.0, 
+        use_triangle_threshold=True  # Enable thresholding for better accuracy
+    )
+
+    # Apply correction shifts and save result
+    corrected_image = apply_shifts.apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+    rp.save_tczyx_image(corrected_image, output_file)
+
+    print(f"Drift correction completed. Saved to: {output_file}")
+
+    # Validate the drift correction quality
+    score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    print(f"Input image drift correction score: {score_input:.4f}")
+
+    score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    print(f"Output image drift correction score: {score:.4f}")
