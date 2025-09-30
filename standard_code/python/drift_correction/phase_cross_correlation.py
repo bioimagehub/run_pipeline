@@ -125,9 +125,8 @@ from typing import Optional, Tuple
 import numpy as np
 import sys
 import os
-import json
 
-from skimage.filters import threshold_triangle, threshold_otsu
+from skimage.filters import threshold_triangle#, threshold_otsu
 
 import numpy as np
 
@@ -141,8 +140,9 @@ except ImportError:
     import os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import bioimage_pipeline_utils as rp
-import apply_shifts
 
+from apply_shifts import apply_shifts_to_tczyx_stack
+from drift_correct_utils import drift_correction_score
 
 import logging
 logger = logging.getLogger(__name__)
@@ -427,8 +427,6 @@ def _subpixel_fit_3d(r, center_z: int, center_y: int, center_x: int,
     else:
         return float(center_z), float(center_y), float(center_x)
 
-
-
 def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'first', channel: int = 0, upsample_factor: int = 100,
                              max_shift_per_frame: float = 50.0, use_triangle_threshold: bool = True) -> np.ndarray:
     """
@@ -694,7 +692,7 @@ if __name__ == "__main__":
     )
 
     # Apply correction shifts and save result
-    corrected_image = apply_shifts.apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+    corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
     rp.save_tczyx_image(corrected_image, output_file)
     
     print(f"Drift correction completed. Saved to: {output_file}")
@@ -726,7 +724,7 @@ if __name__ == "__main__":
     )
 
     # Apply correction shifts and save result
-    corrected_image = apply_shifts.apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+    corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
     rp.save_tczyx_image(corrected_image, output_file)
 
     print(f"Drift correction completed. Saved to: {output_file}")
@@ -760,14 +758,14 @@ if __name__ == "__main__":
     )
 
     # Apply correction shifts and save result
-    corrected_image = apply_shifts.apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+    corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
     rp.save_tczyx_image(corrected_image, output_file)
 
     print(f"Drift correction completed. Saved to: {output_file}")
 
     # Validate the drift correction quality
-    score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    score_input = drift_correction_score(input_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
     print(f"Input image drift correction score: {score_input:.4f}")
 
-    score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    score = drift_correction_score(output_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
     print(f"Output image drift correction score: {score:.4f}")
