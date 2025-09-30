@@ -141,12 +141,11 @@ except ImportError:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import bioimage_pipeline_utils as rp
 
-from apply_shifts import apply_shifts_to_tczyx_stack
-from drift_correct_utils import drift_correction_score
+from drift_correct_utils import drift_correction_score, gaussian_blur_2d_gpu, apply_shifts_to_tczyx_stack
 
 import logging
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.WARNING)  # Only show WARNING and above (ERROR, CRITICAL)
 
 def _apply_threshold_triangle_mask(image: np.ndarray) -> np.ndarray:
     """
@@ -181,7 +180,7 @@ def _apply_threshold_triangle_mask(image: np.ndarray) -> np.ndarray:
         logger.warning(f"Thresholding failed: {e}, using original image")
         return image
 
-def _phase_cross_correlation_3d_cupy(reference: np.ndarray, image: np.ndarray, upsample_factor: int = 1, use_triangle_threshold: bool = True) -> Tuple[np.ndarray, float, float]:
+def _phase_cross_correlation_3d_cupy(reference: np.ndarray, image: np.ndarray, upsample_factor: int = 1, use_triangle_threshold: bool = True, gaussian_blur_sigma: float = 0.0) -> Tuple[np.ndarray, float, float]:
     """
     Enhanced CuPy implementation of 3D phase cross-correlation optimized for random drift.
     
@@ -193,12 +192,35 @@ def _phase_cross_correlation_3d_cupy(reference: np.ndarray, image: np.ndarray, u
         image: Image volume to register (ZYX)  
         upsample_factor: Sub-pixel accuracy factor
         use_triangle_threshold: Apply triangle thresholding to focus on high-information pixels
+        gaussian_blur_sigma: Gaussian blur preprocessing sigma (0.0 = disabled)
     """
     import cupy as cp
     
     reference = cp.asarray(reference, dtype=cp.float32)
     image = cp.asarray(image, dtype=cp.float32)
     Z, H, W = reference.shape
+
+    # Apply Gaussian blur preprocessing if requested
+    if gaussian_blur_sigma > 0.0:
+        logger.debug(f"Applying Gaussian blur preprocessing with sigma={gaussian_blur_sigma}")
+        # Convert to CPU, apply blur, then back to GPU for memory efficiency
+        reference_cpu = cp.asnumpy(reference)
+        image_cpu = cp.asnumpy(image)
+        
+        # Create temporary 5D arrays for blur function (T=1, C=1, Z, Y, X)
+        ref_5d = reference_cpu[np.newaxis, np.newaxis, :, :, :]
+        img_5d = image_cpu[np.newaxis, np.newaxis, :, :, :]
+        
+        # Apply blur using the GPU function from drift_correct_utils
+        # Specify channel=0 since we have only one channel (C=1) in the 5D arrays
+        ref_blurred_5d = gaussian_blur_2d_gpu(ref_5d, sigma=gaussian_blur_sigma, channel=0)
+        img_blurred_5d = gaussian_blur_2d_gpu(img_5d, sigma=gaussian_blur_sigma, channel=0)
+        
+        # Extract back to 3D and transfer to GPU
+        reference = cp.asarray(ref_blurred_5d[0, 0, :, :, :], dtype=cp.float32)
+        image = cp.asarray(img_blurred_5d[0, 0, :, :, :], dtype=cp.float32)
+        
+        logger.debug("Gaussian blur preprocessing completed")
 
     # Apply triangle thresholding to focus on high-information pixels
     if use_triangle_threshold:
@@ -428,7 +450,7 @@ def _subpixel_fit_3d(r, center_z: int, center_y: int, center_x: int,
         return float(center_z), float(center_y), float(center_x)
 
 def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'first', channel: int = 0, upsample_factor: int = 100,
-                             max_shift_per_frame: float = 50.0, use_triangle_threshold: bool = True) -> np.ndarray:
+                             max_shift_per_frame: float = 50.0, use_triangle_threshold: bool = True, gaussian_blur_sigma: float = 0.0) -> np.ndarray:
     """
     Detect drift in time-lapse images and compute correction shifts using phase cross-correlation.
     
@@ -537,6 +559,14 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
             - False: Use all pixel intensities (may include noise)
             - Triangle thresholding automatically excludes background
             - Improves robustness in noisy or low-contrast images
+            
+        gaussian_blur_sigma (float): Gaussian blur preprocessing sigma (default: 0.0)
+            - 0.0: No blur preprocessing (disabled)
+            - >0.0: Apply Gaussian blur before correlation analysis
+            - Recommended range: 0.5-2.0 for noise reduction
+            - Higher values reduce noise but may blur fine features
+            - Applied to both reference and target images for consistency
+            - Uses GPU-accelerated implementation with automatic cleanup
     
     Returns:
         np.ndarray: Correction shifts with shape (T, 3)
@@ -562,6 +592,9 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
         
         # High precision drift detection 
         shifts = phase_cross_correlation(img_stack, upsample_factor=1000)
+        
+        # Noisy images: use Gaussian blur preprocessing
+        shifts = phase_cross_correlation(img_stack, gaussian_blur_sigma=1.0)
         
         # Multi-channel: detect on channel 1, apply to all
         shifts = phase_cross_correlation(img_stack, channel=1)
@@ -620,7 +653,7 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
                 reference_volume = image_stack[t-1, channel]
                 current_volume = image_stack[t, channel]
                 
-                shift_result = _phase_cross_correlation_3d_cupy(reference_volume, current_volume, upsample_factor=upsample_factor, use_triangle_threshold=use_triangle_threshold)
+                shift_result = _phase_cross_correlation_3d_cupy(reference_volume, current_volume, upsample_factor=upsample_factor, use_triangle_threshold=use_triangle_threshold, gaussian_blur_sigma=gaussian_blur_sigma)
                 # Phase correlation already returns correction shifts (due to F_ref * conj(F_img) convention)
                 # No negation needed - the algorithm directly gives us the shift to apply
                 frame_to_frame_shift = shift_result[0]  # Shift from t-1 to t
@@ -647,7 +680,7 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
         reference_volume = reference_stack[0, channel]  # Reference is always the single frame
 
         for t in range(T):
-            shift_result = _phase_cross_correlation_3d_cupy(reference_volume, image_stack[t, channel], upsample_factor=upsample_factor, use_triangle_threshold=use_triangle_threshold)
+            shift_result = _phase_cross_correlation_3d_cupy(reference_volume, image_stack[t, channel], upsample_factor=upsample_factor, use_triangle_threshold=use_triangle_threshold, gaussian_blur_sigma=gaussian_blur_sigma)
             # Phase correlation already returns correction shifts (due to F_ref * conj(F_img) convention)
             # No negation needed - the algorithm directly gives us the shift to apply
             raw_shift = shift_result[0]  # Direct use of correction shifts for apply_shifts
@@ -666,106 +699,151 @@ def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'fir
 
 
 
-
-if __name__ == "__main__":
-    # Example usage: Basic drift correction
-    # input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
-    input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif"
-    output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
+def test_function():
 
     # Test 1: First frame as reference
-    print("\n=== Example: Drift Correction with Phase Cross-Correlation using first frame as reference ===")
-    reference_frame = "first"  # or "first", "mean", etc.
-    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
+    if(False):
+        input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif"
+        output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
 
-    # Load image and apply drift correction
-    image_stack = rp.load_tczyx_image(input_file).data
+        print("\n=== Example: Drift Correction with Phase Cross-Correlation using first frame as reference ===")
+        reference_frame = "first"  # or "first", "mean", etc.
+        output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
 
-
-    detected_shifts = phase_cross_correlation(
-        image_stack, 
-        reference_frame=reference_frame,  # Use previous frame as reference for better results
-        channel=0, 
-        upsample_factor=20,  # Higher precision
-        max_shift_per_frame=50.0, 
-        use_triangle_threshold=True  # Enable thresholding for better accuracy
-    )
-
-    # Apply correction shifts and save result
-    corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
-    rp.save_tczyx_image(corrected_image, output_file)
-    
-    print(f"Drift correction completed. Saved to: {output_file}")
-    
-    # Validate the drift correction quality
-    score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
-    print(f"Input image drift correction score: {score_input:.4f}")
-    
-    score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
-    print(f"Output image drift correction score: {score:.4f}")
-    
-    #########################################
-    # Test 2: Previous frame as reference
-    print("\n=== Example: Drift Correction with Phase Cross-Correlation using previous frame as reference ===")
-    reference_frame = "previous"  # or "first", "mean", etc.
-    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
-
-    # Load image and apply drift correction
-    image_stack = rp.load_tczyx_image(input_file).data
+        # Load image and apply drift correction
+        image_stack = rp.load_tczyx_image(input_file).data
 
 
-    detected_shifts = phase_cross_correlation(
-        image_stack, 
-        reference_frame=reference_frame,  # Use previous frame as reference for better results
-        channel=0, 
-        upsample_factor=20,  # Higher precision
-        max_shift_per_frame=50.0, 
-        use_triangle_threshold=True  # Enable thresholding for better accuracy
-    )
+        detected_shifts = phase_cross_correlation(
+            image_stack, 
+            reference_frame=reference_frame,  # Use previous frame as reference for better results
+            channel=0, 
+            upsample_factor=20,  # Higher precision
+            max_shift_per_frame=50.0, 
+            use_triangle_threshold=True  # Enable thresholding for better accuracy
+        )
 
-    # Apply correction shifts and save result
-    corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
-    rp.save_tczyx_image(corrected_image, output_file)
+        # Apply correction shifts and save result
+        corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+        rp.save_tczyx_image(corrected_image, output_file)
+        
+        print(f"Drift correction completed. Saved to: {output_file}")
+        
+        # Validate the drift correction quality
+        score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+        print(f"Input image drift correction score: {score_input:.4f}")
+        
+        score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+        print(f"Output image drift correction score: {score:.4f}")
+        
+    if(False):
+        input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif"
+        output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
+        #########################################
+        # Test 2: Previous frame as reference
+        print("\n=== Example: Drift Correction with Phase Cross-Correlation using previous frame as reference ===")
+        reference_frame = "previous"  # or "first", "mean", etc.
+        output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
 
-    print(f"Drift correction completed. Saved to: {output_file}")
+        # Load image and apply drift correction
+        image_stack = rp.load_tczyx_image(input_file).data
 
-    # Validate the drift correction quality
-    score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
-    print(f"Input image drift correction score: {score_input:.4f}")
 
-    score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
-    print(f"Output image drift correction score: {score:.4f}")
+        detected_shifts = phase_cross_correlation(
+            image_stack, 
+            reference_frame=reference_frame,  # Use previous frame as reference for better results
+            channel=0, 
+            upsample_factor=20,  # Higher precision
+            max_shift_per_frame=50.0, 
+            use_triangle_threshold=True  # Enable thresholding for better accuracy
+        )
+
+        # Apply correction shifts and save result
+        corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+        rp.save_tczyx_image(corrected_image, output_file)
+
+        print(f"Drift correction completed. Saved to: {output_file}")
+
+        # Validate the drift correction quality
+        score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+        print(f"Input image drift correction score: {score_input:.4f}")
+
+        score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+        print(f"Output image drift correction score: {score:.4f}")
 
     ##########################################
     # Test 3 Run with live cell data without known shifts
-    print("\n=== Example: Testing with Real Data ===")
-    input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+    if(False):
+        print("\n=== Example: Testing with Real Data ===")
+        input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+        output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
 
-    reference_frame = "previous"  # or "first", "mean", etc.
-    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
+        reference_frame = "previous"  # or "first", "mean", etc.
+        output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}.tif")
 
-    # Load image and apply drift correction
-    image_stack = rp.load_tczyx_image(input_file).data
+        # Load image and apply drift correction
+        image_stack = rp.load_tczyx_image(input_file).data
 
 
-    detected_shifts = phase_cross_correlation(
-        image_stack, 
-        reference_frame=reference_frame,  # Use previous frame as reference for better results
-        channel=0, 
-        upsample_factor=20,  # Higher precision
-        max_shift_per_frame=50.0, 
-        use_triangle_threshold=True  # Enable thresholding for better accuracy
-    )
+        detected_shifts = phase_cross_correlation(
+            image_stack, 
+            reference_frame=reference_frame,  # Use previous frame as reference for better results
+            channel=0, 
+            upsample_factor=20,  # Higher precision
+            max_shift_per_frame=50.0, 
+            use_triangle_threshold=True  # Enable thresholding for better accuracy
+        )
 
-    # Apply correction shifts and save result
-    corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
-    rp.save_tczyx_image(corrected_image, output_file)
+        # Apply correction shifts and save result
+        corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+        rp.save_tczyx_image(corrected_image, output_file)
 
-    print(f"Drift correction completed. Saved to: {output_file}")
+        print(f"Drift correction completed. Saved to: {output_file}")
 
-    # Validate the drift correction quality
-    score_input = drift_correction_score(input_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
-    print(f"Input image drift correction score: {score_input:.4f}")
+        # Validate the drift correction quality
+        score_input = drift_correction_score(input_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
+        print(f"Input image drift correction score: {score_input:.4f}")
 
-    score = drift_correction_score(output_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
-    print(f"Output image drift correction score: {score:.4f}")
+        score = drift_correction_score(output_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
+        print(f"Output image drift correction score: {score:.4f}")
+
+    # Test 4: Run with live cell data without known shifts with gaussian blur
+    if(True):
+        print("\n=== Example: Testing with Real Data ===")
+        input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+        output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
+
+        reference_frame = "previous"  # or "first", "mean", etc.
+        output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + f"_corrected_{reference_frame}_gaussian.tif")
+
+        # Load image and apply drift correction
+        image_stack = rp.load_tczyx_image(input_file).data
+
+
+        detected_shifts = phase_cross_correlation(
+            image_stack, 
+            reference_frame=reference_frame,  # Use previous frame as reference for better results
+            channel=0, 
+            upsample_factor=20,  # Higher precision
+            max_shift_per_frame=50.0,
+            gaussian_blur_sigma=2.0,  # Apply Gaussian blur for noise reduction 
+            use_triangle_threshold=True  # Enable thresholding for better accuracy
+        )
+
+        # Apply correction shifts and save result
+        corrected_image = apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+        rp.save_tczyx_image(corrected_image, output_file)
+
+        print(f"Drift correction completed. Saved to: {output_file}")
+
+        # Validate the drift correction quality
+        score_input = drift_correction_score(input_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
+        print(f"Input image drift correction score: {score_input:.4f}")
+
+        score = drift_correction_score(output_file, channel=0, reference='previous', central_crop=0.8, z_project='max')
+        print(f"Output image drift correction score: {score:.4f}")
+
+if __name__ == "__main__":
+    test_function()
+
+    
