@@ -423,7 +423,8 @@ def _subpixel_fit_3d(r, center_z: int, center_y: int, center_x: int,
 
 
 
-def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'first', channel: int = 0, upsample_factor: int = 100, max_shift_per_frame: float = 50.0, use_triangle_threshold: bool = True) -> np.ndarray:
+def phase_cross_correlation(image_stack: np.ndarray, reference_frame: str = 'first', channel: int = 0, upsample_factor: int = 100,
+                             max_shift_per_frame: float = 50.0, use_triangle_threshold: bool = True) -> np.ndarray:
     """
     Detect drift in time-lapse images and compute correction shifts using phase cross-correlation.
     
@@ -1113,167 +1114,138 @@ def test_real_data(input_file: str, gaussian_blur:int = 1, drift_channel = 0, gr
 
     return detected_shifts_first
 
+def drift_correction_score(image_path: str, channel: int = 0, reference: str = "first", # "first", "median", or "previous"
+                           central_crop: float = 0.8, # fraction of XY kept (e.g., 0.8 keeps central 80%) 
+                           z_project: str | None = "mean", # None, "mean", "max", or "median" 
+                           ) -> float: 
+    """
+    Compute a single alignment score for a time series by measuring frame-to-frame similarity using z-normalized Pearson correlation, focusing on the central region.
+
+    Args:
+        image_path: Path to T×C×Z×Y×X image.
+        channel: Channel index to analyze.
+        reference: Which reference to compare each timepoint against.
+            - "first": compare each frame to the first frame (default)
+            - "median": compare each frame to the temporal median frame
+            - "previous": compare each frame to the immediately previous frame
+        central_crop: Fraction (0–1] of the XY extent retained centered. 0.8 avoids edge artifacts.
+        z_project: If not None, project along Z to 2D before scoring.
+            - "mean", "max", "median" supported. None keeps 3D.
+
+    Returns:
+        A single scalar score in [-1, 1], where 1 indicates near-identical frames.
+        If the series has <2 timepoints, returns NaN.
+    """
+
+    # Load image as T×C×Z×Y×X
+    img = rp.load_tczyx_image(image_path)
+    data = img.data
+    if data.ndim != 5:
+        raise ValueError(f"Expected TCZYX, got shape {data.shape}")
+    T, C, Z, Y, X = data.shape
+    if T < 2:
+        return float("nan")
+    if not (0 <= channel < C):
+        raise IndexError(f"Channel {channel} out of range [0, {C-1}]")
+
+    # Select channel
+    series = data[:, channel, ...]  # shape T×Z×Y×X
+
+    # Optional Z projection
+    if z_project is not None:
+        if z_project == "mean":
+            series = series.mean(axis=1)      # T×Y×X
+        elif z_project == "max":
+            series = series.max(axis=1)       # T×Y×X
+        elif z_project == "median":
+            series = np.median(series, axis=1)
+        else:
+            raise ValueError(f"Unsupported z_project: {z_project}")
+
+    # Central crop on XY
+    def central_xy_crop(arr, frac):
+        if frac >= 1.0:
+            return arr
+        # Support 2D (Y×X) or 3D (Z×Y×X)
+        if arr.ndim == 3:
+            Z_, Y_, X_ = arr.shape
+            cy = int(Y_ * (1 - frac) / 2)
+            cx = int(X_ * (1 - frac) / 2)
+            return arr[:, cy:Y_-cy, cx:X_-cx]
+        elif arr.ndim == 2:
+            Y_, X_ = arr.shape
+            cy = int(Y_ * (1 - frac) / 2)
+            cx = int(X_ * (1 - frac) / 2)
+            return arr[cy:Y_-cy, cx:X_-cx]
+        else:
+            raise ValueError("Unexpected array dimensionality for cropping.")
+
+    series = np.array([central_xy_crop(frame, central_crop) for frame in series], dtype=np.float32)
+
+    # Build reference(s)
+    if reference == "first":
+        ref = series[0]
+        compare_pairs = [(ref, series[t]) for t in range(1, T)]
+    elif reference == "median":
+        ref = np.median(series, axis=0)
+        compare_pairs = [(ref, series[t]) for t in range(T)]
+    elif reference == "previous":
+        compare_pairs = [(series[t-1], series[t]) for t in range(1, T)]
+    else:
+        raise ValueError(f"Unsupported reference: {reference}")
+
+    # Fast Pearson correlation on flattened, z-normalized data
+    def pearson_centered(x, y):
+        x = x.ravel().astype(np.float64)
+        y = y.ravel().astype(np.float64)
+        x -= x.mean()
+        y -= y.mean()
+        # Avoid division by zero
+        x_norm = np.linalg.norm(x)
+        y_norm = np.linalg.norm(y)
+        if x_norm == 0 or y_norm == 0:
+            return np.nan
+        return float(np.dot(x, y) / (x_norm * y_norm))
+
+    corrs = []
+    for ref_frame, cur_frame in compare_pairs:
+        corrs.append(pearson_centered(ref_frame, cur_frame))
+
+    # Final score: mean correlation across comparisons
+    score = float(np.nanmean(corrs)) if len(corrs) > 0 else float("nan")
+    return score
 
 if __name__ == "__main__":
-    # First test synthetic data to verify sign convention and accuracy
-    # print("="*60)
-    # print("RUNNING SYNTHETIC DATA TEST")
-    # print("="*60)
-    # test_synthetic_data()
+    # Example usage: Basic drift correction
+    input_file = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2"
+    output_base = "E:/Oyvind/BIP-hub-test-data/drift/output_phase/"
     
-    # print("\n" + "="*60)
-    # print("DIAGNOSTIC: TESTING DIFFERENT PARAMETERS")  
-    # print("="*60)
+    # Create output filename
+    output_file = os.path.join(output_base, os.path.splitext(os.path.basename(input_file))[0] + "_corrected_first.tif")
     
-    input_file = r"E:\Oyvind\BIP-hub-test-data\drift\input\live_cells\1_Meng.nd2"
-    input_file_w_known_drift = r"E:\Oyvind\BIP-hub-test-data\drift\input\live_cells\1_Meng_with_known_drift.tif"
-    
-    output_base = r"E:\Oyvind\BIP-hub-test-data\drift\output_phase\phase_correlation"
+    # Load image and apply drift correction
+    image_stack = rp.load_tczyx_image(input_file).data
 
 
-    # Test 0: take the first timepoint from input file and apply known shifts to create synthetic drift
-    print("\n--- TESTING WITH SYNTHETIC DRIFT DATA AND JSON GROUND TRUTH ---")
-    if not os.path.exists(input_file_w_known_drift):
-        create_synthetic_drift_image(input_file, input_file_w_known_drift)
-        print(f"Synthetic drift image created: {input_file_w_known_drift}")
-    
-    # Use JSON ground truth for validation
-    json_ground_truth = os.path.splitext(input_file_w_known_drift)[0] + "_known_shifts.json"
-    corrected_output_path = output_base + "_test_0.tif"
-    test_real_data(input_file=input_file_w_known_drift, drift_channel=0, gaussian_blur=0,
-                ground_truth_file=json_ground_truth, output_path=corrected_output_path, reference_frame='first',
-                use_triangle_threshold=True) 
+    detected_shifts = phase_cross_correlation(
+        image_stack, 
+        reference_frame='first',  # Use first frame as reference for better results
+        channel=0, 
+        upsample_factor=20,  # Higher precision
+        max_shift_per_frame=50.0, 
+        use_triangle_threshold=True  # Enable thresholding for better accuracy
+    )
 
+    # Apply correction shifts and save result
+    corrected_image = apply_shifts.apply_shifts_to_tczyx_stack(image_stack, detected_shifts, mode='constant')
+    rp.save_tczyx_image(corrected_image, output_file)
     
-    # Test 0.1: Validate drift correction by checking that corrected frames are identical
-    print("\n--- TEST 0.1: Validating perfect drift correction ---")
-    print("Loading corrected synthetic drift image and checking frame consistency...")
+    print(f"Drift correction completed. Saved to: {output_file}")
     
-    # Load the corrected image
-    corrected_img = rp.load_tczyx_image(corrected_output_path)
-    corrected_data = corrected_img.data
-    T, C, Z, Y, X = corrected_data.shape
-    print(f"Corrected image shape: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
+    # Validate the drift correction quality
+    score_input = drift_correction_score(input_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    print(f"Input image drift correction score: {score_input:.4f}")
     
-    # Compare all frames to the first frame (they should be identical)
-    reference_frame = corrected_data[0]  # First timepoint as reference
-    max_differences = []
-    mean_differences = []
-    
-    for t in range(1, T):
-        frame_diff = np.abs(corrected_data[t] - reference_frame)
-        max_diff = np.max(frame_diff)
-        mean_diff = np.mean(frame_diff)
-        max_differences.append(max_diff)
-        mean_differences.append(mean_diff)
-        
-        print(f"  T={t} vs T=0: Max difference = {max_diff:.8f}, Mean difference = {mean_diff:.8f}")
-    
-    # Overall statistics
-    overall_max_diff = np.max(max_differences) if max_differences else 0.0
-    overall_mean_diff = np.mean(mean_differences) if mean_differences else 0.0
-    
-    print(f"\nOverall correction validation statistics:")
-    print(f"  Maximum pixel difference across all frames: {overall_max_diff:.8f}")
-    print(f"  Mean pixel difference across all frames: {overall_mean_diff:.8f}")
-    
-    # Quality assessment for drift correction validation
-    # Note: For synthetic data created with np.roll (periodic boundaries), 
-    # perfect correction is not expected due to boundary condition differences
-    # between np.roll and interpolation-based shift correction
-    
-    print(f"\nNOTE: Synthetic data uses np.roll() (periodic boundaries) while drift")
-    print(f"      correction uses interpolation (padded boundaries). Some differences")
-    print(f"      at image edges are expected and normal.")
-    
-    # Calculate improvement ratio by comparing frame-to-frame consistency
-    if len(mean_differences) > 0:
-        # Compare to the differences we'd expect without correction
-        # For synthetic data, uncorrected differences should be much larger
-        print(f"\nFrame consistency improvement assessment:")
-        
-        # Load original drifted image to compare
-        original_img = rp.load_tczyx_image(input_file)
-        original_data = original_img.data
-        
-        # Calculate frame differences in original (uncorrected) data
-        original_differences = []
-        for t in range(1, min(T, original_data.shape[0])):
-            orig_diff = np.abs(original_data[t] - original_data[0])
-            original_differences.append(np.mean(orig_diff))
-        
-        if original_differences:
-            original_mean_diff = np.mean(original_differences)
-            improvement_ratio = original_mean_diff / overall_mean_diff if overall_mean_diff > 0 else float('inf')
-            
-            print(f"  Original mean frame difference: {original_mean_diff:.3f}")
-            print(f"  Corrected mean frame difference: {overall_mean_diff:.3f}")
-            print(f"  Improvement ratio: {improvement_ratio:.2f}x better")
-            
-            if improvement_ratio > 10:
-                print("  + EXCELLENT: Major improvement in frame consistency")
-            elif improvement_ratio > 5:
-                print("  + GOOD: Significant improvement in frame consistency")
-            elif improvement_ratio > 2:
-                print("  ! MODERATE: Some improvement in frame consistency")
-            else:
-                print("  ! LIMITED: Minimal improvement (may indicate correction issues)")
-        
-        # Additional check: verify the shifts were correctly applied by checking
-        # that the central region (away from edges) is better aligned
-        print(f"\nChecking central region alignment (avoiding edge artifacts):")
-        
-        # Crop to central 80% of image to avoid edge effects
-        crop_y = int(Y * 0.1)
-        crop_x = int(X * 0.1)
-        crop_end_y = int(Y * 0.9)
-        crop_end_x = int(X * 0.9)
-        
-        central_differences = []
-        for t in range(1, T):
-            central_diff = np.abs(
-                corrected_data[t, :, :, crop_y:crop_end_y, crop_x:crop_end_x] - 
-                corrected_data[0, :, :, crop_y:crop_end_y, crop_x:crop_end_x]
-            )
-            central_differences.append(np.mean(central_diff))
-        
-        if central_differences:
-            central_mean_diff = np.mean(central_differences)
-            print(f"  Central region mean difference: {central_mean_diff:.6f}")
-            
-            if central_mean_diff < overall_mean_diff * 0.5:
-                print("  + Central region shows better alignment (edge artifacts confirmed)")
-            else:
-                print("  ! Central region similar to overall (may indicate systematic issue)")
-    else:
-        print("  No frame comparisons available (single frame image)")
-    
-    # Compare first corrected frame to original reference
-    print(f"\nReference frame validation:")
-    original_img = rp.load_tczyx_image(input_file)
-    original_first_frame = original_img.data[0]  # First frame of original drifted image
-    ref_frame_diff = np.abs(corrected_data[0] - original_first_frame)
-    max_ref_diff = np.max(ref_frame_diff)
-    mean_ref_diff = np.mean(ref_frame_diff)
-    
-    print(f"  Corrected T=0 vs Original T=0: Max diff = {max_ref_diff:.6f}, Mean diff = {mean_ref_diff:.6f}")
-    print("  (This should be small since T=0 is the reference frame)")
-    
-    print(f"+ Test 0.1 completed: Drift correction validation")
-    print("="*60)
-
-
-
-
-    # # Test 1: No blur, previous reference, with triangle thresholding
-    # print("\n--- TEST 1: No blur, 'previous' reference, WITH triangle threshold ---")
-    # test_real_data(input_file=input_file, drift_channel=0, gaussian_blur=0,
-    #                ground_truth_file=None, output_path=None, reference_frame='previous',
-    #                use_triangle_threshold=True)
-
-    # # Test 3: Light blur, previous reference, with triangle thresholding
-    # print("\n--- TEST 3: Light blur (σ=5), 'previous' reference, WITH triangle threshold ---")
-    # test_real_data(input_file=input_file, drift_channel=0, gaussian_blur=5,
-    #                ground_truth_file=None, output_path=None, reference_frame='previous',
-    #                use_triangle_threshold=True)
+    score = drift_correction_score(output_file, channel=0, reference='first', central_crop=0.8, z_project='max')
+    print(f"Output image drift correction score: {score:.4f}")
     
