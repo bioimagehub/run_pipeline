@@ -1,5 +1,5 @@
 run:
-- name: XY Translation drift correction using skimage sequential method
+- name: Drift correction on synthetic data
   environment: uv:drift_correct
   commands:
   - python: '%REPO%/standard_code/python/drift_correction.py'
@@ -10,3 +10,29 @@ run:
   last_processed: "2025-09-26"
   code_version: 0.0.10
   run_duration: 30.3701519s
+- name: Enable force mode mid-pipeline
+  type: force
+  message: Reprocessing all subsequent steps.
+- name: Drift correction on live_cells data
+  environment: uv:drift_correct
+  commands:
+  - python: '%REPO%/standard_code/python/drift_correction.py'
+  - --input-search-pattern: '%TEST_FOLDER%/drift/live_cells/input/*.nd2'
+  - --output-folder: '%TEST_FOLDER%/drift/live_cells/corrected'
+  - --output-file-name-extension: _corrected
+  - --algorithm: phase_correlation
+  last_processed: "2025-09-27"
+  code_version: 0.0.10
+  run_duration: 2m24.1010324s
+- name: Drift correction on live_cells data with upsampling
+  environment: uv:drift_correct
+  commands:
+  - python: '%REPO%/standard_code/python/drift_correction.py'
+  - --input-search-pattern: '%TEST_FOLDER%/drift/live_cells/input/*.nd2'
+  - --output-folder: '%TEST_FOLDER%/drift/live_cells/corrected'
+  - --output-file-name-extension: _corrected_upsampled
+  - --upsample-factor: 5
+  - --algorithm: phase_correlation
+  last_processed: "2025-09-27"
+  code_version: 0.0.10
+  run_duration: 1m48.795519s

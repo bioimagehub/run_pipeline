@@ -1,0 +1,45 @@
+name: drift_correct
+channels:
+  - nvidia
+  - conda-forge
+
+dependencies:
+  # Core
+  - python=3.12
+  - numpy
+  - matplotlib
+  - tqdm
+  - joblib
+  - scipy
+  - pandas
+  - scikit-image>=0.19.0
+  - scikit-learn>=1.1
+
+  # I/O + helpers
+  - nd2reader
+  - scyjava
+  - h5py
+  - pystackreg
+
+  # GPU stack (conda-native)
+  - cuda-version=12        # pulls a consistent CUDA 12.x runtime set
+  - cupy                   # CuPy from conda-forge (matches cuda-version)
+  - cudnn                  # optional, but useful to have around
+  - cutensor               # optional, speeds up some tensor ops
+
+  # Image processing
+  - dask
+
+  - pip
+  - pip:
+      # Specialized I/O libraries not available in conda
+      - jpype1==1.5.0
+      - imaris-ims-file-reader
+      - bioio
+      - bioio-bioformats
+      - bioio-ome-tiff
+      - bioio-tifffile
+      - bioio-nd2
+      # GPU registration libraries
+      - pyGPUreg
+      - imreg_dft

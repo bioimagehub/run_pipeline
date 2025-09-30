@@ -55,19 +55,46 @@ ALGORITHMS = {
 }
 
 
-def apply_shift_to_frame(frame: np.ndarray, shift: np.ndarray, mode: str = 'constant', cval: float = 0.0) -> np.ndarray:
+def apply_shift_to_frame(frame: np.ndarray, shift: np.ndarray, mode: str = 'constant', cval: float = 0.0, use_gpu: bool = True) -> np.ndarray:
     """
-    Apply a translational shift to a 2D or 3D frame.
+    Apply a translational shift to a 2D or 3D frame using GPU (CuPy) or CPU (SciPy).
     
     Args:
         frame: Input frame (2D YX or 3D ZYX)
         shift: Shift vector [dy, dx] for 2D or [dz, dy, dx] for 3D
         mode: How to handle out-of-bounds pixels ('constant', 'nearest', 'reflect', 'wrap')
         cval: Constant value to use for out-of-bounds pixels when mode='constant'
+        use_gpu: Whether to attempt GPU acceleration with CuPy (fallback to CPU if failed)
     
     Returns:
         Shifted frame with same shape as input
     """
+    # Try GPU acceleration first if requested
+    if use_gpu:
+        try:
+            import cupy as cp
+            from cupyx.scipy import ndimage as cndi
+            
+            # Convert to CuPy array
+            frame_cp = cp.asarray(frame, dtype=cp.float32)
+            
+            # Apply shift with cubic interpolation for better quality
+            shifted_cp = cndi.shift(frame_cp, shift, mode=mode, cval=cval, order=3, prefilter=True)
+            
+            # Convert back to numpy with original dtype
+            shifted = cp.asnumpy(shifted_cp)
+            
+            # Handle dtype conversion and clipping for integer types
+            if np.issubdtype(frame.dtype, np.integer):
+                info = np.iinfo(frame.dtype)
+                shifted = np.clip(shifted, info.min, info.max)
+            
+            return shifted.astype(frame.dtype)
+            
+        except (ImportError, Exception) as e:
+            logger.debug(f"GPU shift failed, falling back to CPU: {e}")
+    
+    # CPU fallback using SciPy
     try:
         from scipy.ndimage import shift as scipy_shift
         # Apply the detected shift directly (phase correlation returns the correction shift)
@@ -85,7 +112,9 @@ def drift_correct_image_stack(
     upsample_factor: int = 1,
     apply_correction: bool = True,
     shift_mode: str = 'constant',
-    shift_cval: float = 0.0
+    shift_cval: float = 0.0,
+    gaussian_sigma: float = 1.0,
+    use_gpu: bool = True
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Apply drift correction to a TCZYX image stack.
@@ -99,6 +128,8 @@ def drift_correct_image_stack(
         apply_correction: Whether to apply shifts to all channels (if False, only compute shifts)
         shift_mode: How to handle out-of-bounds pixels when applying shifts
         shift_cval: Constant value for out-of-bounds pixels when shift_mode='constant'
+        gaussian_sigma: Gaussian smoothing for preprocessing before drift detection (use -1 to disable, default: 1.0)
+        use_gpu: Whether to use GPU acceleration for shift application (fallback to CPU if failed)
     
     Returns:
         Tuple of (corrected_image, shifts_array, metadata_dict)
@@ -138,6 +169,23 @@ def drift_correct_image_stack(
         reference_image = image_tczyx[reference_timepoint, reference_channel, 0, :, :]  # YX
         shifts = np.zeros((T, 2), dtype=np.float32)  # [dy, dx] for each timepoint
     
+    # Apply Gaussian preprocessing for better drift detection if enabled
+    def _preprocess_image(img: np.ndarray) -> np.ndarray:
+        """Apply Gaussian preprocessing to improve drift detection accuracy."""
+        if gaussian_sigma <= 0:  # Disabled
+            return img.astype(np.float32)
+        try:
+            from scipy.ndimage import gaussian_filter
+            # Apply Gaussian smoothing to reduce noise while preserving structure
+            smoothed = gaussian_filter(img.astype(np.float32), sigma=gaussian_sigma)
+            return smoothed
+        except ImportError:
+            logger.warning("SciPy not available, skipping Gaussian preprocessing")
+            return img.astype(np.float32)
+    
+    # Preprocess reference image
+    reference_image_processed = _preprocess_image(reference_image)
+    
     # Compute shifts for each timepoint
     errors = []
     logger.info(f"Computing shifts using {func_key.upper()} {algorithm}...")
@@ -152,8 +200,11 @@ def drift_correct_image_stack(
         else:
             current_image = image_tczyx[t, reference_channel, 0, :, :]  # YX
         
+        # Preprocess current image
+        current_image_processed = _preprocess_image(current_image)
+        
         try:
-            shift, error, _ = drift_func(reference_image, current_image, upsample_factor=upsample_factor)
+            shift, error, _ = drift_func(reference_image_processed, current_image_processed, upsample_factor=upsample_factor)
             shifts[t] = shift
             errors.append(error)
         except Exception as e:
@@ -176,12 +227,12 @@ def drift_correct_image_stack(
                 if is_3d:
                     # Apply 3D shift to ZYX data
                     corrected_image[t, c, :, :, :] = apply_shift_to_frame(
-                        image_tczyx[t, c, :, :, :], current_shift, mode=shift_mode, cval=shift_cval
+                        image_tczyx[t, c, :, :, :], current_shift, mode=shift_mode, cval=shift_cval, use_gpu=use_gpu
                     )
                 else:
                     # Apply 2D shift to YX data
                     corrected_image[t, c, 0, :, :] = apply_shift_to_frame(
-                        image_tczyx[t, c, 0, :, :], current_shift, mode=shift_mode, cval=shift_cval
+                        image_tczyx[t, c, 0, :, :], current_shift, mode=shift_mode, cval=shift_cval, use_gpu=use_gpu
                     )
     
     # Compile metadata
@@ -191,6 +242,8 @@ def drift_correct_image_stack(
         'reference_channel': reference_channel,
         'reference_timepoint': reference_timepoint,
         'upsample_factor': upsample_factor,
+        'gaussian_sigma': gaussian_sigma,
+        'use_gpu': use_gpu,
         'image_dimensions': {'T': T, 'C': C, 'Z': Z, 'Y': Y, 'X': X},
         'is_3d': is_3d,
         'shifts_applied': apply_correction,
@@ -216,6 +269,8 @@ def process_single_file(
     apply_correction: bool = True,
     shift_mode: str = 'constant',
     shift_cval: float = 0.0,
+    gaussian_sigma: float = 1.0,
+    use_gpu: bool = True,
     save_shifts: bool = True,
     save_metadata: bool = True
 ) -> None:
@@ -281,7 +336,9 @@ def process_single_file(
             upsample_factor=upsample_factor,
             apply_correction=apply_correction,
             shift_mode=shift_mode,
-            shift_cval=shift_cval
+            shift_cval=shift_cval,
+            gaussian_sigma=gaussian_sigma,
+            use_gpu=use_gpu
         )
         
         # Save corrected image
@@ -388,6 +445,10 @@ def main() -> None:
                        help="How to handle out-of-bounds pixels when applying shifts")
     parser.add_argument("--shift-cval", type=float, default=0.0,
                        help="Constant value for out-of-bounds pixels (when shift-mode=constant)")
+    parser.add_argument("--gaussian-sigma", type=float, default=1.0,
+                       help="Gaussian smoothing sigma for preprocessing (use -1 to disable, default: 1.0)")
+    parser.add_argument("--no-gpu", action="store_true",
+                       help="Disable GPU acceleration for shift application")
     
     # Output options
     parser.add_argument("--no-save-shifts", action="store_true",
@@ -513,6 +574,8 @@ def main() -> None:
         apply_correction=not args.no_apply_correction,
         shift_mode=args.shift_mode,
         shift_cval=args.shift_cval,
+        gaussian_sigma=args.gaussian_sigma,
+        use_gpu=not args.no_gpu,
         save_shifts=not args.no_save_shifts,
         save_metadata=not args.no_save_metadata
     )
@@ -557,7 +620,9 @@ def test_drift_correction() -> bool:
             reference_timepoint=0,
             algorithm='phase_correlation',
             upsample_factor=1,
-            apply_correction=True
+            apply_correction=True,
+            gaussian_sigma=1.0,
+            use_gpu=True
         )
         
         print("Test Results:")
