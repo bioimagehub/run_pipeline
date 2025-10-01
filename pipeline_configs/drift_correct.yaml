@@ -3,36 +3,13 @@ run:
   environment: uv:drift_correct
   commands:
   - python: '%REPO%/standard_code/python/drift_correction.py'
-  - --input-search-pattern: '%TEST_FOLDER%/drift/synthetic/input/*.tif'
-  - --output-folder: '%TEST_FOLDER%/drift/synthetic/corrected'
-  - --output-file-name-extension: _corrected
-  - --algorithm: optical_flow
-  last_processed: "2025-09-30"
-  code_version: 0.0.10
-  run_duration: 38.8693443s
-- name: Enable force mode mid-pipeline
-  type: force
-  message: Reprocessing all subsequent steps.
-- name: Drift correction on live_cells data
-  environment: uv:drift_correct
-  commands:
-  - python: '%REPO%/standard_code/python/drift_correction.py'
-  - --input-search-pattern: '%TEST_FOLDER%/drift/live_cells/input/*.nd2'
-  - --output-folder: '%TEST_FOLDER%/drift/live_cells/corrected'
+  - --input-search-pattern: '%TEST_FOLDER%/drift/input/live_cells/*.nd2'
+  - --output-folder: '%TEST_FOLDER%/drift/corrected/phase_correlation'
   - --output-file-name-extension: _corrected
   - --algorithm: phase_correlation
-  last_processed: "2025-09-30"
+  last_processed: "2025-10-01"
   code_version: 0.0.10
-  run_duration: 27.8221304s
-- name: Drift correction on live_cells data with upsampling
-  environment: uv:drift_correct
-  commands:
-  - python: '%REPO%/standard_code/python/drift_correction.py'
-  - --input-search-pattern: '%TEST_FOLDER%/drift/live_cells/input/*.nd2'
-  - --output-folder: '%TEST_FOLDER%/drift/live_cells/corrected'
-  - --output-file-name-extension: _corrected_upsampled
-  - --upsample-factor: 5
-  - --algorithm: phase_correlation
-  last_processed: "2025-09-30"
-  code_version: 0.0.10
-  run_duration: 37.0764005s
+  run_duration: 4m1.2825073s
+- name: stop_pipeline
+  type: stop
+  message: stopping

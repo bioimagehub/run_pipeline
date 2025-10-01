@@ -124,7 +124,6 @@ def process_file(
     reference_frame: str = 'first',
     algorithm: str = 'phase_correlation',
     upsample_factor: int = 1,
-    apply_correction: bool = True,
     shift_mode: str = 'constant',
     gaussian_sigma: float = 0.0,
     use_gpu: bool = True
@@ -134,18 +133,17 @@ def process_file(
     
     Args:
         image_path: path to image file (will be loaded internally)
+        output_path: path to save corrected image (if None, only shifts are computed and returned, correction is not applied)
         reference_channel: Channel index to use for drift detection (0-based)
         reference_frame: Frame to use as reference ('first', 'previous', 'mean', 'mean10')
         algorithm: Drift correction algorithm ('phase_correlation')
         upsample_factor: Subpixel precision factor for phase correlation
-        apply_correction: Whether to apply shifts to all channels (if False, only compute shifts)
         shift_mode: How to handle out-of-bounds pixels when applying shifts (default: 'constant')
         gaussian_sigma: Gaussian smoothing for preprocessing before drift detection (use -1 to disable, default: -1)
-        no_gpu: Do not use GPU acceleration (default: False)
+        use_gpu: Use GPU acceleration (default: True)
     
     Returns:
-        Tuple of (corrected_image, shifts_array, metadata_dict)
-        - corrected_image: Drift-corrected image stack (TCZYX)
+        Tuple of (shifts_array, metadata_dict)
         - shifts_array: Detected shifts for each timepoint
         - metadata_dict: Processing metadata and statistics
     """
@@ -267,21 +265,36 @@ def process_file(
             errors.append(error)
         else:
             raise ValueError(f"Invalid function key: {func_key}")
-    # Apply shifts if requested
-    
+    # Apply shifts and save if output_path is provided
     corrected_image = None
+    apply_correction = output_path is not None
     
     if apply_correction:
         # Convert the original image data to dask array for correction
         corrected_image = da.from_array(img.data)
 
         logger.info("Applying drift correction to all channels...")
+        logger.info(f"Shifts summary - Shape: {shifts.shape}, Max: {np.max(np.abs(shifts)):.3f}, Mean: {np.mean(np.abs(shifts)):.3f}")
+        logger.info(f"Non-zero shifts: {np.count_nonzero(shifts)} / {shifts.size} elements")
+        
+        # Debug: Check if image actually changes
+        original_mean = np.mean(img.data.astype(np.float64))
+        logger.info(f"Original image mean: {original_mean:.6f}")
+        
         # use shifts and apply_shifts_to_tczyx_stack function
         corrected_image = apply_shifts_to_tczyx_stack(
             corrected_image,
             shifts,
             mode=shift_mode,
             order=3)
+            
+        # Debug: Check if corrected image is different
+        if hasattr(corrected_image, 'compute'):
+            corrected_mean = np.mean(corrected_image.compute().astype(np.float64))
+        else:
+            corrected_mean = np.mean(corrected_image.astype(np.float64))
+        logger.info(f"Corrected image mean: {corrected_mean:.6f}")
+        logger.info(f"Image changed: {abs(corrected_mean - original_mean) > 1e-10}")
 
     # Compile metadata
     # TODO: Ensure that this is still valid after update
@@ -305,15 +318,11 @@ def process_file(
     
     logger.info(f"Drift correction completed. Mean error: {metadata['mean_error']:.4f}, Max shift: {metadata['max_shift']:.2f} pixels")
     
-    if corrected_image: # 
-        # Save corrected image if requested
-        if output_path:
-            pps = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
-
-            rp.save_tczyx_image(corrected_image, output_path, physical_pixel_sizes=pps)
-            logger.info(f"Saved corrected image to: {output_path}")
-        else:
-            logger.warning("Output path not provided, corrected image not saved.")
+    if corrected_image is not None and output_path is not None:
+        # Save corrected image
+        pps = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
+        rp.save_tczyx_image(corrected_image, output_path, physical_pixel_sizes=pps)
+        logger.info(f"Saved corrected image to: {output_path}")
 
     return shifts, metadata
 
@@ -346,7 +355,7 @@ def process_folder(
         output_path = os.path.join(output_dir, output_filename)
         
         # Process the file
-        return process_single_file(input_path, output_path, **kwargs)
+        process_file(input_path, output_path, **kwargs)
     
     # Process files in parallel
     if n_jobs == 1:
@@ -488,9 +497,28 @@ def try_all_algorithms(test_image_path: str = "E:/Oyvind/BIP-hub-test-data/drift
             score = None
             if ground_truth is not None:
                 try:
-                    # Use the image path for drift_correction_score (it may load the file internally)
-                    score = drift_correction_score(detected_shifts, test_image_path, ground_truth)
-                    logger.info(f"Score vs ground truth: {score:.4f}")
+                    # Calculate accuracy score by comparing detected shifts to ground truth
+                    # Convert shifts to same format for comparison
+                    if detected_shifts.ndim == 2 and detected_shifts.shape[1] == 3:
+                        # Extract Y,X shifts from detected [dz, dy, dx] format
+                        detected_yx = detected_shifts[:, 1:3]  # Take dy, dx columns
+                    elif detected_shifts.ndim == 2 and detected_shifts.shape[1] == 2:
+                        # Already in Y,X format
+                        detected_yx = detected_shifts
+                    else:
+                        detected_yx = detected_shifts.reshape(-1, 2)
+                    
+                    # Ground truth should be in (dx, dy) format, convert to (dy, dx) for comparison
+                    if ground_truth.shape[1] == 2:
+                        gt_yx = ground_truth[:, [1, 0]]  # Swap from (dx, dy) to (dy, dx)
+                    else:
+                        gt_yx = ground_truth[:, 1:3]  # Take dy, dx if 3D format
+                    
+                    # Calculate mean absolute error as accuracy metric (lower is better)
+                    mae = np.mean(np.abs(detected_yx - gt_yx))
+                    # Convert to score where 1.0 is perfect (0 error) and score decreases with error
+                    score = 1.0 / (1.0 + mae)  # Score in (0, 1] where 1 is perfect
+                    logger.info(f"Score vs ground truth: {score:.4f} (MAE: {mae:.2f} pixels)")
                 except Exception as e:
                     logger.warning(f"Failed to calculate score: {e}")
                     score = None
@@ -534,7 +562,8 @@ def try_all_algorithms(test_image_path: str = "E:/Oyvind/BIP-hub-test-data/drift
     
     return results
 
-def test_drift_correction() -> None:
+def test_1_synthetic() -> None:
+
     """
     Test function to verify drift correction implementation.
     """
@@ -559,7 +588,6 @@ def test_drift_correction() -> None:
                                            reference_frame='first',
                                            algorithm='phase_correlation',
                                            upsample_factor=1,
-                                           apply_correction=False,  # Only compute shifts
                                            gaussian_sigma=-1.0)  # No smoothing
 
     # Validate detected shifts against ground truth
@@ -577,19 +605,15 @@ def test_drift_correction() -> None:
         print(f"Detected: {shifts.tolist()}")
         print(f"Expected: {gt_correction_3d.tolist()}")
     
-    
+def test_2_frameroll(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_timecrop.tif") -> None:
     # Test 2: make a np.roll test from first frame of known image
-    
+    tmpdir = os.path.join(os.path.dirname(__file__), "temp_test_data")
+
     from drift_correction.synthetic_data_generators import create_drift_image_from_template
     import json
-    template_path ="E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif"
-    test2_image_path = os.path.join(tmpdir, "rolled_test_stack.tif")
-    test2_image_path_shifts = os.path.join(tmpdir, "rolled_test_stack_known_shifts.json")
-
-    
-    
-
-
+    test2_image_path = os.path.join(tmpdir, os.path.splitext(os.path.basename(template_path))[0] + "_rolled_test_stack.tif")
+    test2_image_path_shifts = os.path.splitext(test2_image_path)[0] + "_known_shifts.json"
+    test2_corrected_path = os.path.splitext(test2_image_path)[0] + "_corrected.tif"
     # Create a rolled image stack for testing
     _ = create_drift_image_from_template(input_file=template_path, 
                                                     output_file=test2_image_path)
@@ -600,16 +624,16 @@ def test_drift_correction() -> None:
 
     print(f"Applied shifts for rolled test stack: {applied_shifts}")
     shifts, metadata = process_file(test2_image_path,     
-                                       output_path=None,  # No need to save output
+                                       output_path=test2_corrected_path,  # Save corrected output
                                        reference_channel=0,
-                                           reference_frame='first',
-                                           algorithm='phase_correlation',
-                                           upsample_factor=1,
-                                           apply_correction=False,  # Only compute shifts
-                                           gaussian_sigma=-1.0)  # No smoothing
+                                       reference_frame='first',
+                                       algorithm='phase_correlation',
+                                       upsample_factor=1,
+                                       gaussian_sigma=-1.0)  # No smoothing
 
-    
-    
+    from drift_correction.drift_correct_utils import apply_shifts_to_tczyx_stack
+    # Apply detected shifts to the test image and save corrected version for visual inspection
+        
     # Validate detected shifts against ground truth
     # Convert applied shifts to expected correction shifts format [dz, dy, dx]
     # Correction shifts are the negative of applied shifts
@@ -625,16 +649,54 @@ def test_drift_correction() -> None:
         print(f"Detected: {shifts.tolist()}")
         print(f"Expected: {gt_correction_3d.tolist()}")
     
+    from drift_correction.drift_correct_utils import drift_correction_score
+    score_input = drift_correction_score(image_path=test2_image_path)
+    print(f"Drift correction score before correction is : {score_input:.4f} (higher is better, 1 is perfect)")
 
-    # Delete temporary test data
-    try:
-        os.remove(test1_image_path)
-        os.remove(test2_image_path)
-        os.remove(test2_image_path_shifts)
+    score_corrected = drift_correction_score(image_path=test2_corrected_path)
+    print(f"Drift correction score after correction is : {score_corrected:.4f} (higher is better, 1 is perfect)")
 
-        os.rmdir(tmpdir)
-    except Exception as e:
-        print(f"Warning: Failed to clean up temporary files: {e}")  
+def test_3_real_data(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_timecrop.tif") -> None:
+    from drift_correction.drift_correct_utils import drift_correction_score
+
+    # test 3: test with real data
+    # template_path
+    output_path = "E:/Oyvind/BIP-hub-test-data/drift/corrected/phase_correlation/1_Meng_timecrop.tif"
+    shifts, metadata = process_file(template_path,     
+                                    output_path=output_path,  # Save corrected output
+                                    reference_channel=0,
+
+                                    reference_frame='previous',
+                                    algorithm='phase_correlation',  
+                                    upsample_factor=1,
+                                    gaussian_sigma=0.0
+                                    )  # Some smoothing
+    print(f"Saved real data corrected output to: {output_path}")
+    
+    # Debug: Print detected shifts for real data
+    print(f"Detected shifts for real data:")
+    print(f"Shape: {shifts.shape}")
+    print(f"Max absolute shift: {np.max(np.abs(shifts)):.3f} pixels")
+    print(f"Mean absolute shift: {np.mean(np.abs(shifts)):.3f} pixels")
+    print(f"First few shifts: {shifts[:5].tolist()}")
+    print(f"Metadata max_shift: {metadata.get('max_shift', 'N/A')}")
+
+    score_input = drift_correction_score(image_path=template_path)
+    print(f"Drift correction score for real data before correction is : {score_input:.4f} (higher is better, 1 is perfect)")
+
+    score_real = drift_correction_score(image_path=output_path)
+    print(f"Drift correction score for real data after correction is : {score_real:.4f} (higher is better, 1 is perfect)")
+
+
+
+
+    # pause before deleting files
+    # input("Press Enter to continue cleanup of tmp data...") 
+
+
+
+    
+
 
     
 
@@ -659,12 +721,12 @@ def main() -> None:
                        help="Drift correction algorithm to use")
 
     parser.add_argument("--reference-channel", type=int, default=0,help="Channel index to use for drift detection (0-based)")
-    parser.add_argument("--reference-timepoint", type=int, default=0,help="Timepoint to use as reference (0-based)")
+    parser.add_argument("--reference-frame", type=str, default="first", 
+                       choices=["first", "previous", "mean", "mean10"],
+                       help="Frame to use as reference ('first', 'previous', 'mean', 'mean10')")
 
     parser.add_argument("--upsample-factor", type=int, default=1,
                        help="Subpixel precision factor (1=pixel, higher=subpixel)")
-    parser.add_argument("--no-apply-correction", action="store_true",
-                       help="Only compute shifts, don't apply correction")
     parser.add_argument("--shift-mode", type=str, default="constant",
                        choices=["constant", "nearest", "reflect", "wrap"],
                        help="How to handle out-of-bounds pixels when applying shifts")
@@ -828,7 +890,7 @@ def main() -> None:
     # Process files
     n_jobs = 1 if args.no_parallel else args.n_jobs
     
-    process_files_parallel(
+    process_folder(
         input_files=input_files,
         output_dir=output_dir,
         base_folder=base_folder,
@@ -836,19 +898,21 @@ def main() -> None:
         output_extension=args.output_file_name_extension,
         n_jobs=n_jobs,
         reference_channel=args.reference_channel,
-        reference_timepoint=args.reference_timepoint,
+        reference_frame=args.reference_frame,
         algorithm=args.algorithm,
         upsample_factor=args.upsample_factor,
-        apply_correction=not args.no_apply_correction,
         shift_mode=args.shift_mode,
         gaussian_sigma=args.gaussian_sigma,
-        use_gpu=not args.no_gpu,
-        save_shifts=not args.no_save_shifts,
-        save_metadata=not args.no_save_metadata
+        use_gpu=not args.no_gpu
     )
     
     logger.info(f"Drift correction pipeline completed. Processed {len(input_files)} files.")
 
 if __name__ == "__main__":
-    main()  # Run as script with argument parsing
+    #main()  # Run main function with argument parsing disabled duriing debugging
+    #test_1_synthetic()  # Perfect accuracy
+    #test_2_frameroll()  # Perfect accuracy
+    test_3_real_data()  # Not working
+
+    
 
