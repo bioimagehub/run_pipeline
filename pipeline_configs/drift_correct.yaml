@@ -6,10 +6,10 @@ run:
   - --input-search-pattern: '%TEST_FOLDER%/drift/synthetic/input/*.tif'
   - --output-folder: '%TEST_FOLDER%/drift/synthetic/corrected'
   - --output-file-name-extension: _corrected
-  - --algorithm: phase_correlation
-  last_processed: "2025-09-26"
+  - --algorithm: optical_flow
+  last_processed: "2025-09-30"
   code_version: 0.0.10
-  run_duration: 30.3701519s
+  run_duration: 38.8693443s
 - name: Enable force mode mid-pipeline
   type: force
   message: Reprocessing all subsequent steps.
@@ -21,9 +21,9 @@ run:
   - --output-folder: '%TEST_FOLDER%/drift/live_cells/corrected'
   - --output-file-name-extension: _corrected
   - --algorithm: phase_correlation
-  last_processed: "2025-09-27"
+  last_processed: "2025-09-30"
   code_version: 0.0.10
-  run_duration: 2m24.1010324s
+  run_duration: 27.8221304s
 - name: Drift correction on live_cells data with upsampling
   environment: uv:drift_correct
   commands:
@@ -33,6 +33,6 @@ run:
   - --output-file-name-extension: _corrected_upsampled
   - --upsample-factor: 5
   - --algorithm: phase_correlation
-  last_processed: "2025-09-27"
+  last_processed: "2025-09-30"
   code_version: 0.0.10
-  run_duration: 1m48.795519s
+  run_duration: 37.0764005s
