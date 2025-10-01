@@ -202,7 +202,6 @@ def phase_cross_correlation(reference: np.ndarray,
     # Validate input
     if reference.ndim != image.ndim:
         raise ValueError("Reference and image must have the same number of dimensions")
-    print(reference.ndim)
     # Handle both 2D and 3D cases
     if reference.ndim == 2:
         # Handle 2D case by adding singleton Z dimension
