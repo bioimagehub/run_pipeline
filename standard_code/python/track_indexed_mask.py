@@ -57,7 +57,7 @@ def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_pa
         new_indexed_masks[t, channel_zero_base, z][slice_mask == original_label] = row.particle + 1
 
     if output_mask_path:
-    rp.save_tczyx_image(new_indexed_masks, output_mask_path, dim_order="TCZYX")
+        rp.save_tczyx_image(new_indexed_masks, output_mask_path, dim_order="TCZYX")
 
     return df_tracked, new_indexed_masks
 
