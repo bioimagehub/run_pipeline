@@ -488,7 +488,7 @@ def apply_shifts_to_tczyx_stack(
 #
 
 def test_synthetic_2d():
-    from synthetic_data_generators import create_simple_squares
+    from standard_code.python.drift_correction.synthetic_data_generators import create_simple_squares
     import numpy as np
 
     # load test folder fom .env file

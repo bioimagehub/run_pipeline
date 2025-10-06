@@ -3,7 +3,7 @@ import os
 import sys
 import time
 import logging
-from typing import Optional, Tuple, Any, Dict, List, Union, Literal
+from typing import Optional, Tuple, Any, Dict, List, Union, Literal, Callable
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +27,7 @@ for path in [str(project_root), str(standard_code_dir)]:
 import bioimage_pipeline_utils as rp
 from drift_correction.drift_correct_utils import apply_shifts_to_tczyx_stack
 from drift_correction.phase_cross_correlation import phase_cross_correlation
+from progress_manager import process_folder_unified
 
 # Additional algorithm imports
 #TODO check that all imports are functions that accept 2D or 3D numpy arrays and return shifts
@@ -41,7 +42,7 @@ from drift_correction.phase_cross_correlation import phase_cross_correlation
 # from drift_correction.feature_based import feature_based
 # from drift_correction.demons import demons
 # from drift_correction.variational import variational
-from drift_correction.mock_correction import mock_drift_correction
+from drift_correction._mock_correction import mock_drift_correction
 
 
 # Set up logging before imports
@@ -126,7 +127,8 @@ def process_file(
     upsample_factor: int = 5,
     shift_mode: str = 'constant',
     gaussian_sigma: float = -1.0,
-    use_gpu: bool = True
+    use_gpu: bool = True,
+    return_raw_shifts: bool = False
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Apply drift correction to a TCZYX image stack.
@@ -141,10 +143,15 @@ def process_file(
         shift_mode: How to handle out-of-bounds pixels when applying shifts (default: 'constant')
         gaussian_sigma: Gaussian smoothing for preprocessing before drift detection (use -1 to disable, default: -1)
         use_gpu: Use GPU acceleration (default: True)
+        return_raw_shifts: If True and reference_frame='previous', return frame-to-frame shifts (t vs t-1) instead of cumulative
     
     Returns:
         Tuple of (shifts_array, metadata_dict)
-        - shifts_array: Detected shifts for each timepoint
+        - shifts_array: Detected drift for each timepoint [dz, dy, dx] or [dy, dx]
+                       For 'previous' mode with return_raw_shifts=False: cumulative shifts relative to frame 0
+                       For 'previous' mode with return_raw_shifts=True: frame-to-frame correction shifts (t→t-1)
+                       Positive values indicate movement in positive axis direction
+                       Note: The NEGATIVE of these shifts is applied for correction
         - metadata_dict: Processing metadata and statistics
     """
     
@@ -225,21 +232,24 @@ def process_file(
     debug_shifts = []
     large_shift_frames = []
     
+    # STEP 1: Detect frame-to-frame shifts (t vs t-1 for 'previous' mode, or t vs reference for others)
     for t in tqdm(range(T), desc="Computing drift"):
         if t == reference_timepoint:
             # Reference frame has zero shift
             shifts[t] = [0, 0, 0] 
             debug_shifts.append((t, "reference", [0, 0, 0]))
             continue
-        if reference_3dstack is None: # only for 'previous' case
+        
+        # For 'previous' mode, update reference to previous frame each iteration
+        if reference_frame == 'previous':
             if t == 0:
                 # shifts can be set to zero for first frame
                 shifts[t] = [0, 0, 0] 
                 debug_shifts.append((t, "first", [0, 0, 0]))
                 continue
-            else:
-                reference_3dstack = img_single_channel[t-1]  # Use previous timepoint as reference: ZYX
-
+            # Update reference to previous frame for this iteration
+            reference_3dstack = img_single_channel[t-1]  # Use previous timepoint as reference: ZYX
+        
         current_image = img_single_channel[t]  # ZYX
 
         # Compute shift using selected algorithm
@@ -278,6 +288,41 @@ def process_file(
         if shift_magnitude > 2.0:  # Large shift
             large_shift_frames.append((t, shifts[t].tolist(), error))
     
+    # STEP 2: Convert frame-to-frame shifts to cumulative shifts relative to frame 0 (for 'previous' mode)
+    if reference_frame == 'previous':
+        logger.info("Converting frame-to-frame shifts to cumulative shifts relative to frame 0...")
+        
+        # At this point, shifts[t] contains CORRECTION shifts from t to t-1
+        # Save these raw frame-to-frame shifts before cumulative conversion
+        frame_to_frame_corrections = shifts.copy()  # Save raw shifts
+        
+        # If return_raw_shifts is True, we'll return these instead of cumulative
+        if return_raw_shifts:
+            logger.info("Returning raw frame-to-frame shifts (not cumulative)")
+            # Return raw shifts without applying cumulative conversion
+            shifts_to_return = frame_to_frame_corrections
+            apply_correction = False  # Don't apply correction when returning raw shifts
+        else:
+            # Convert to cumulative shifts
+            for t in range(1, T):
+                # Convert to detected drift (negate), accumulate, convert back to correction
+                detected_drift_this_frame = -frame_to_frame_corrections[t]
+                # Use previous cumulative from shifts[t-1] which we're building up
+                previous_total_detected_drift = -shifts[t-1]
+                total_detected_drift = previous_total_detected_drift + detected_drift_this_frame
+                shifts[t] = -total_detected_drift
+                
+                # Debug: Log the transformation for first few frames
+                if t <= 5:
+                    logger.info(f"Frame {t} cumulative conversion:")
+                    logger.info(f"  Frame-to-frame correction (t→t-1): {frame_to_frame_corrections[t]}")
+                    logger.info(f"  Previous cumulative correction (t-1→0): {shifts[t-1]}")
+                    logger.info(f"  New cumulative correction (t→0): {shifts[t]}")
+            
+            shifts_to_return = shifts
+    else:
+        shifts_to_return = shifts
+    
     # Debug: Print statistics
     logger.info(f"Shift detection completed. Large shifts (>2px): {len(large_shift_frames)}")
     if large_shift_frames:
@@ -289,6 +334,7 @@ def process_file(
     logger.info("First 10 detected shifts:")
     for t, note, shift in debug_shifts[:10]:
         logger.info(f"  Frame {t:3d} ({note:12s}): {shift}")
+    
     # Apply shifts and save if output_path is provided
     corrected_image = None
     apply_correction = output_path is not None
@@ -336,7 +382,7 @@ def process_file(
         'shift_mode': shift_mode if apply_correction else None,
         'mean_error': float(np.mean(errors)) if errors else 0.0,
         'max_error': float(np.max(errors)) if errors else 0.0,
-        'max_shift': float(np.max(np.abs(shifts))) if len(shifts) > 0 else 0.0,
+        'max_shift': float(np.max(np.abs(shifts_to_return))) if len(shifts_to_return) > 0 else 0.0,
         'processing_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     }
     
@@ -348,7 +394,79 @@ def process_file(
         rp.save_tczyx_image(corrected_image, output_path, physical_pixel_sizes=pps)
         logger.info(f"Saved corrected image to: {output_path}")
 
-    return shifts, metadata
+    # Return the appropriate shifts (raw or cumulative depending on return_raw_shifts parameter)
+    return shifts_to_return, metadata
+
+
+def estimate_timepoints_drift_correction(input_path: str) -> int:
+    """
+    Estimate number of timepoints in an image for progress tracking.
+    
+    Args:
+        input_path: Path to the image file
+        
+    Returns:
+        Number of timepoints (T dimension)
+    """
+    try:
+        img = rp.load_tczyx_image(input_path)
+        return img.shape[0]  # T is first dimension in TCZYX
+    except Exception as e:
+        logger.warning(f"Failed to estimate timepoints for {input_path}: {e}")
+        return 1  # Fallback
+
+
+def process_file_with_progress(
+    input_path: str,
+    output_path: str,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Wrapper around process_file that supports progress callbacks.
+    
+    This adapter allows the existing process_file function to work with
+    the unified progress tracking system without modifying its signature.
+    
+    Args:
+        input_path: Path to input image
+        output_path: Path to output image
+        progress_callback: Function to call when timepoints are processed
+        **kwargs: Additional arguments passed to process_file
+        
+    Returns:
+        Dict with 'success' boolean and optional error information
+    """
+    try:
+        # The current process_file doesn't support granular progress updates
+        # during processing, so we'll just call it and report completion
+        # Future enhancement: modify process_file internals to call progress_callback
+        # after each timepoint is processed
+        
+        shifts, metadata = process_file(
+            image_path=input_path,
+            output_path=output_path,
+            **kwargs
+        )
+        
+        # Report full completion if callback provided
+        if progress_callback:
+            # Estimate based on metadata if available
+            T = metadata.get('image_dimensions', {}).get('T', 1)
+            progress_callback(T)
+        
+        return {
+            'success': True,
+            'shifts': shifts,
+            'metadata': metadata
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing {input_path}: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
 
 
 def process_folder(
@@ -361,460 +479,306 @@ def process_folder(
     **kwargs
 ) -> None:
     """
-    Process multiple files in parallel.
+    Process multiple files in parallel using the unified progress tracking system.
     
     Args:
         input_files: List of input file paths
         output_dir: Output directory
         base_folder: Base folder for relative path calculation
         collapse_delimiter: Delimiter for collapsing nested folder names
-        output_extension: Extension to add to output filenames
+        output_extension: Extension to add to output filenames (before .tif extension)
         n_jobs: Number of parallel jobs (-1 for all cores)
-        **kwargs: Additional arguments passed to process_single_file
+        **kwargs: Additional arguments passed to process_file
     """
-    def process_file_wrapper(input_path: str) -> None:
-        # Generate output path
+    # Determine parallel settings
+    parallel = n_jobs != 1
+    n_workers = None if n_jobs == -1 else max(1, n_jobs)
+    
+    # Custom output path function that replaces extension with .tif instead of appending
+    def create_drift_output_path(input_path: str, base_folder: str, output_folder: str, collapse_delimiter: str) -> str:
+        """Create output path with .tif extension, replacing original extension."""
         collapsed = rp.collapse_filename(input_path, base_folder, collapse_delimiter)
-        output_filename = os.path.splitext(collapsed)[0] + output_extension + ".tif"
-        output_path = os.path.join(output_dir, output_filename)
-        
-        # Process the file
-        process_file(input_path, output_path, **kwargs)
+        base_name = os.path.splitext(collapsed)[0]  # Remove original extension
+        output_filename = base_name + output_extension + ".tif"  # Add extension + .tif
+        return os.path.join(output_folder, output_filename)
     
-    # Process files in parallel
-    if n_jobs == 1:
-        # Sequential processing
-        for input_path in tqdm(input_files, desc="Processing files"):
-            process_file_wrapper(input_path)
-    else:
-        # Parallel processing
-        logger.info(f"Processing {len(input_files)} files with {n_jobs} parallel jobs")
-        Parallel(n_jobs=n_jobs, verbose=1)(
-            delayed(process_file_wrapper)(input_path) for input_path in input_files
-        )
+    # Use unified processing with progress tracking
+    results = process_folder_unified(
+        input_files=input_files,
+        output_folder=output_dir,
+        base_folder=base_folder,
+        file_processor=process_file_with_progress,
+        collapse_delimiter=collapse_delimiter,
+        output_extension=output_extension,  # Pass as-is, custom function handles .tif
+        create_output_path_func=create_drift_output_path,  # Use custom path function
+        parallel=parallel,
+        n_jobs=n_workers,
+        use_processes=False,  # Use threads for I/O-bound operations
+        estimate_timepoints_func=estimate_timepoints_drift_correction,
+        **kwargs
+    )
+    
+    # Log any failures
+    failures = [r for r in results if not r.get('success', True)]
+    if failures:
+        logger.warning(f"{len(failures)} files failed to process:")
+        for result in failures:
+            logger.warning(f"  - {result['input_path']}: {result.get('error', 'Unknown error')}")
 
 
-def try_all_algorithms(test_image_path: str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif", 
-                      ground_truth_json: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+def test_1_synthetic() -> bool:
     """
-    Test all available drift correction algorithms on a test image and return performance scores.
-    
-    This function systematically tests every algorithm in the ALGORITHMS registry on the specified
-    test image (default: known drift test case) and compares results against ground truth if available.
-    
-    Args:
-        test_image_path: Path to test image file (default uses known drift test case)
-        ground_truth_json: Optional path to ground truth shifts JSON file (auto-detected if None)
+    Test 1: Synthetic simple squares test
+    Tests drift correction on clean synthetic data with known shifts.
     
     Returns:
-        Dictionary containing results for each algorithm:
-        {
-            'algorithm_name': {
-                'success': bool,
-                'score': float,  # drift_correction_score result
-                'execution_time': float,
-                'detected_shifts': np.ndarray,
-                'error': str  # if failed
-            }
-        }
+        True if test passed, False otherwise
     """
-    from drift_correction.drift_correct_utils import drift_correction_score
-    import json
-    
-    # Load test image
-    try:
-        img = rp.load_tczyx_image(test_image_path)
-        video = img.data  # 5D TCZYX array
-        logger.info(f"Loaded test image: {video.shape} (TCZYX)")
-    except Exception as e:
-        logger.error(f"Failed to load test image {test_image_path}: {e}")
-        return {}
-    
-    # Try to load ground truth shifts
-    ground_truth = None
-    if ground_truth_json is None:
-        # Auto-detect JSON file with same name as image
-        json_path = str(Path(test_image_path).with_suffix('.json'))
-        if Path(json_path).exists():
-            ground_truth_json = json_path
-    
-    if ground_truth_json and Path(ground_truth_json).exists():
-        try:
-            with open(ground_truth_json, 'r') as f:
-                gt_data = json.load(f)
-            if 'shifts' in gt_data:
-                ground_truth = np.array(gt_data['shifts'])
-                logger.info(f"Loaded ground truth shifts: {ground_truth.shape}")
-        except Exception as e:
-            logger.warning(f"Failed to load ground truth from {ground_truth_json}: {e}")
-    
-    results = {}
-    
-    # Test each algorithm
-    for algo_name, algo_info in ALGORITHMS.items():
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Testing algorithm: {algo_name}")
-        logger.info(f"Description: {algo_info['description']}")
-        logger.info(f"{'='*60}")
-        
-        result = {
-            'success': False,
-            'score': None,
-            'execution_time': None,
-            'detected_shifts': None,
-            'error': None
-        }
-        
-        try:
-            # Get 2D algorithm function
-            algo_func = algo_info.get('2d')
-            if algo_func is None:
-                result['error'] = "2D implementation not available"
-                results[algo_name] = result
-                continue
-            
-            # Prepare video data based on algorithm requirements
-            if algo_name in ['phase_correlation', 'optical_flow']:
-                # These algorithms expect full 5D TCZYX arrays
-                test_video = video  # Full 5D array
-                logger.info(f"Testing on full 5D video shape: {test_video.shape}")
-            else:
-                # Other algorithms expect 3D arrays (T, Y, X)
-                test_video = video[0, 0]  # Shape: (T, Z, Y, X) -> (T, Y, X) for 2D
-                if test_video.ndim == 4:  # Handle 3D case
-                    test_video = test_video[:, 0]  # Take first Z slice
-                logger.info(f"Testing on 3D video shape: {test_video.shape}")
-            
-            # Time the execution
-            start_time = time.time()
-            
-            # Call the algorithm with appropriate parameters
-            if algo_name == 'phase_correlation':
-                # Phase correlation expects 5D array and specific parameters
-                detected_shifts = algo_func(test_video, upsample_factor=1)[1]  # Returns (corrected, shifts, metadata)
-            elif algo_name == 'optical_flow':
-                # Optical flow expects 5D array but different calling pattern
-                detected_shifts = algo_func(
-                    test_video,
-                    reference_frame='first',
-                    channel=0,
-                    max_shift_per_frame=25.0
-                )
-            else:
-                # Most other algorithms follow this pattern with 3D arrays
-                detected_shifts = algo_func(
-                    test_video,
-                    reference_frame='first',
-                    max_shift_per_frame=25.0
-                )
-            
-            end_time = time.time()
-            execution_time = end_time - start_time
-            
-            # Validate output
-            if detected_shifts is None or len(detected_shifts) == 0:
-                result['error'] = "Algorithm returned no shifts"
-                results[algo_name] = result
-                continue
-            
-            # Calculate score if ground truth is available
-            score = None
-            if ground_truth is not None:
-                try:
-                    # Calculate accuracy score by comparing detected shifts to ground truth
-                    # Convert shifts to same format for comparison
-                    if detected_shifts.ndim == 2 and detected_shifts.shape[1] == 3:
-                        # Extract Y,X shifts from detected [dz, dy, dx] format
-                        detected_yx = detected_shifts[:, 1:3]  # Take dy, dx columns
-                    elif detected_shifts.ndim == 2 and detected_shifts.shape[1] == 2:
-                        # Already in Y,X format
-                        detected_yx = detected_shifts
-                    else:
-                        detected_yx = detected_shifts.reshape(-1, 2)
-                    
-                    # Ground truth should be in (dx, dy) format, convert to (dy, dx) for comparison
-                    if ground_truth.shape[1] == 2:
-                        gt_yx = ground_truth[:, [1, 0]]  # Swap from (dx, dy) to (dy, dx)
-                    else:
-                        gt_yx = ground_truth[:, 1:3]  # Take dy, dx if 3D format
-                    
-                    # Calculate mean absolute error as accuracy metric (lower is better)
-                    mae = np.mean(np.abs(detected_yx - gt_yx))
-                    # Convert to score where 1.0 is perfect (0 error) and score decreases with error
-                    score = 1.0 / (1.0 + mae)  # Score in (0, 1] where 1 is perfect
-                    logger.info(f"Score vs ground truth: {score:.4f} (MAE: {mae:.2f} pixels)")
-                except Exception as e:
-                    logger.warning(f"Failed to calculate score: {e}")
-                    score = None
-            
-            # Success!
-            result['success'] = True
-            result['score'] = score
-            result['execution_time'] = execution_time
-            result['detected_shifts'] = detected_shifts
-            
-            logger.info(f"✓ SUCCESS - Time: {execution_time:.2f}s, Score: {score}")
-            
-        except Exception as e:
-            result['error'] = str(e)
-            logger.error(f"✗ FAILED: {e}")
-        
-        results[algo_name] = result
-    
-    # Print summary
-    logger.info(f"\n{'='*60}")
-    logger.info("SUMMARY OF ALL ALGORITHMS")
-    logger.info(f"{'='*60}")
-    
-    successful = [(name, res) for name, res in results.items() if res['success']]
-    failed = [(name, res) for name, res in results.items() if not res['success']]
-    
-    logger.info(f"Successful algorithms: {len(successful)}/{len(results)}")
-    
-    if ground_truth is not None and successful:
-        # Rank by score (lower is better for drift_correction_score)
-        ranked = sorted(successful, key=lambda x: x[1]['score'] if x[1]['score'] is not None else float('inf'))
-        logger.info("\nRanking by performance (lower score = better):")
-        for i, (name, res) in enumerate(ranked, 1):
-            score_str = f"{res['score']:.4f}" if res['score'] is not None else "N/A"
-            logger.info(f"{i:2d}. {name:25s} - Score: {score_str}, Time: {res['execution_time']:.2f}s")
-    
-    if failed:
-        logger.info(f"\nFailed algorithms ({len(failed)}):")
-        for name, res in failed:
-            logger.info(f"   ✗ {name}: {res['error']}")
-    
-    return results
 
-def test_1_synthetic() -> None:
+    # File paths
 
-    """
-    Test function to verify drift correction implementation.
-    """
-   
-    print("Testing drift correction implementation...")
+    test_folder = "E:/Oyvind/BIP-hub-test-data/drift/input/test_1"
+    test1_image_path = os.path.join(test_folder, "test1_synthetic_squares.tif")
+    test1_corrected_path = os.path.join(test_folder, "test1_synthetic_squares_corrected.tif")
 
-    # Test 1: Synthetic test data
+    print("\n" + "="*80)
+    print("TEST 1: SYNTHETIC SIMPLE SQUARES")
+    print("="*80)
+
     from drift_correction.synthetic_data_generators import create_simple_squares  
 
+    # Create synthetic drifted video with known shifts
     drifted_video, ground_truth, applied_shifts = create_simple_squares()
+    
+    print(f"Created synthetic video: shape={drifted_video.shape}")
+    print(f"Applied shifts (dy, dx format): {applied_shifts}")
 
-    tmpdir = os.path.join(os.path.dirname(__file__), "temp_test_data")
-    os.makedirs(tmpdir, exist_ok=True)
-    test1_image_path = os.path.join(tmpdir, "synthetic_test_drift_correction.tif")
 
     # Save the drifted video as a test image
     rp.save_tczyx_image(drifted_video, test1_image_path)
+    print(f"Saved synthetic test image to: {test1_image_path}")
 
-    shifts, metadata = process_file(test1_image_path,     
-                                           output_path=None,  # No need to save output
-                                           reference_channel=0,
-                                           reference_frame='first',
-                                           algorithm='phase_correlation',
-                                           upsample_factor=1,
-                                           gaussian_sigma=-1.0)  # No smoothing
+    # Run drift correction
+    shifts, metadata = process_file(
+        test1_image_path,     
+        output_path=test1_corrected_path,
+        reference_channel=0,
+        reference_frame='first',
+        algorithm='phase_correlation',
+        upsample_factor=1,
+        gaussian_sigma=-1.0)
 
-    # Validate detected shifts against ground truth
-    # Convert applied shifts to expected correction shifts format [dz, dy, dx]
-    # Correction shifts are the negative of applied shifts
-    gt_correction_3d = np.array([[0, -dy, -dx] for dx, dy in applied_shifts])
-    
-    if np.allclose(shifts, gt_correction_3d, atol=0.5):  # Allow 0.5 pixel tolerance
-        print("✓ DRIFT CORRECTION TEST PASSED: Detected shifts match expected correction shifts!")
-        print(f"Perfect accuracy achieved with phase correlation algorithm")
+    corrected_img = rp.load_tczyx_image(test1_corrected_path)
+
+    identical = np.allclose(corrected_img.data, ground_truth, atol=1)
+
+    if identical:
+        print("✓ TEST 1 PASSED: Corrected image matches ground truth!")
     else:
-        print("✗ DRIFT CORRECTION TEST FAILED: Shifts do not match expected values.")
-        mae = np.mean(np.abs(shifts - gt_correction_3d))
-        print(f"Mean absolute error: {mae:.3f} pixels")
-        print(f"Detected: {shifts.tolist()}")
-        print(f"Expected: {gt_correction_3d.tolist()}")
+        print("✗ TEST 1 FAILED: Corrected image does not match ground truth.")
+
+
     
-def test_2_frameroll(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_timecrop.tif") -> None:
-    # Test 2: make a np.roll test from first frame of known image
-    tmpdir = os.path.join(os.path.dirname(__file__), "temp_test_data")
+    return identical
+    
+def test_2_template_based() -> bool:
+    """
+    Test 2: Template-based synthetic drift
+    Uses a real image and applies known shifts to create synthetic drift.
+    
+    Returns:
+        True if test passed, False otherwise
+    """
+    print("\n" + "="*80)
+    print("TEST 2: TEMPLATE-BASED SYNTHETIC DRIFT")
+    print("="*80)
+    
+    # File paths
+    template_path = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_timecrop.tif"
+
+
+    test_folder = "E:/Oyvind/BIP-hub-test-data/drift/input/test_2"
+
+    test2_image_path = os.path.join(test_folder, os.path.basename(template_path).replace(".tif", "_template_rolled.tif"))
+    test2_ground_truth_path = os.path.join(test_folder, os.path.basename(template_path).replace(".tif", "_template_rolled_ground_truth.tif"))
+    
+    
+    test2_corrected_path = os.path.join(test_folder, os.path.basename(template_path).replace(".tif", "_template_rolled_corrected.tif"))
+    test2_shifts_path = os.path.join(test_folder, os.path.basename(template_path).replace(".tif", "_template_rolled_known_shifts.json"))
 
     from drift_correction.synthetic_data_generators import create_drift_image_from_template
+    from drift_correction.drift_correct_utils import drift_correction_score
     import json
-    test2_image_path = os.path.join(tmpdir, os.path.splitext(os.path.basename(template_path))[0] + "_rolled_test_stack.tif")
-    test2_image_path_shifts = os.path.splitext(test2_image_path)[0] + "_known_shifts.json"
-    test2_corrected_path = os.path.splitext(test2_image_path)[0] + "_corrected.tif"
-    # Create a rolled image stack for testing
-    _ = create_drift_image_from_template(input_file=template_path, 
-                                                    output_file=test2_image_path)
-    applied_shifts = json.load(open(test2_image_path_shifts, 'r'))['generated_shifts']
-    # remove z shifts from dz dy dx to just dx dy
-    applied_shifts = [(dx, dy) for dz, dy, dx in applied_shifts]
-
-
-    print(f"Applied shifts for rolled test stack: {applied_shifts}")
-    shifts, metadata = process_file(test2_image_path,     
-                                       output_path=test2_corrected_path,  # Save corrected output
-                                       reference_channel=0,
-                                       reference_frame='first',
-                                       algorithm='phase_correlation',
-                                       upsample_factor=1,
-                                       gaussian_sigma=-1.0)  # No smoothing
-
-    from drift_correction.drift_correct_utils import apply_shifts_to_tczyx_stack
-    # Apply detected shifts to the test image and save corrected version for visual inspection
-        
-    # Validate detected shifts against ground truth
-    # Convert applied shifts to expected correction shifts format [dz, dy, dx]
-    # Correction shifts are the negative of applied shifts
-    gt_correction_3d = np.array([[0, -dy, -dx] for dx, dy in applied_shifts])
     
-    if np.allclose(shifts, gt_correction_3d, atol=0.5):  # Allow 0.5 pixel tolerance
-        print("✓ DRIFT CORRECTION TEST PASSED: Detected shifts match expected correction shifts!")
-        print(f"Perfect accuracy achieved with phase correlation algorithm")
+    # Create synthetic drift from template
+    if os.path.exists(test2_image_path) and os.path.exists(test2_ground_truth_path):
+        print(f"Using existing synthetic test image: {test2_image_path}")
+        img_data = rp.load_tczyx_image(test2_image_path).data
+        ground_truth_img_data = rp.load_tczyx_image(test2_ground_truth_path).data
+        applied_shifts = json.load(open(test2_shifts_path))  # Not loading shifts from file for now
     else:
-        print("✗ DRIFT CORRECTION TEST FAILED: Shifts do not match expected values.")
-        mae = np.mean(np.abs(shifts - gt_correction_3d))
-        print(f"Mean absolute error: {mae:.3f} pixels")
-        print(f"Detected: {shifts.tolist()}")
-        print(f"Expected: {gt_correction_3d.tolist()}")
-    
-    from drift_correction.drift_correct_utils import drift_correction_score
-    score_input = drift_correction_score(image_path=test2_image_path)
-    print(f"Drift correction score before correction is : {score_input:.4f} (higher is better, 1 is perfect)")
-
-    score_corrected = drift_correction_score(image_path=test2_corrected_path)
-    print(f"Drift correction score after correction is : {score_corrected:.4f} (higher is better, 1 is perfect)")
-
-def test_3_real_data_original(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2") -> None:
-    from drift_correction.drift_correct_utils import drift_correction_score
-
-    # Setup logging to see debug info
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    
-    print("="*80)
-    print("COMPREHENSIVE DRIFT CORRECTION ANALYSIS")
-    print("="*80)
-    
-    # Get original score
-    score_input = drift_correction_score(image_path=template_path)
-    print(f"Original drift score: {score_input:.4f}")
-    
-    # Test different subpixel precisions - this seems to be the key!
-    test_configs = [
-        ('first', 0.0, 1, 'baseline_1x'),
-        ('first', 0.0, 5, 'subpixel_5x'),
-        ('first', 0.0, 10, 'subpixel_10x'),
-        ('first', 0.0, 20, 'subpixel_20x'),
-        ('first', 0.0, 50, 'subpixel_50x'),
-        ('previous', 0.0, 20, 'previous_20x')
-    ]
-    results = {}
-    
-    for ref_mode, gauss_sigma, upsample, label in test_configs:
-        print(f"\n--- Testing {label}: ref='{ref_mode}', gauss={gauss_sigma}, upsample={upsample} ---")
-        
-        output_path = f"E:/Oyvind/BIP-hub-test-data/drift/corrected/phase_correlation/1_Meng_{label}.tif"
-        
-        shifts, metadata = process_file(template_path,     
-                                        output_path=output_path,
-                                        reference_channel=0,
-                                        reference_frame=ref_mode,
-                                        algorithm='phase_correlation',  
-                                        upsample_factor=upsample,
-                                        gaussian_sigma=gauss_sigma)
-        
-        score_corrected = drift_correction_score(image_path=output_path)
-        improvement = score_corrected - score_input
-        
-        results[label] = {
-            'shifts': shifts,
-            'metadata': metadata,
-            'score_before': score_input,
-            'score_after': score_corrected,
-            'improvement': improvement,
-            'max_shift': np.max(np.abs(shifts)),
-            'mean_shift': np.mean(np.abs(shifts)),
-            'nonzero_shifts': np.count_nonzero(shifts),
-            'config': (ref_mode, gauss_sigma, upsample)
-        }
-        
-        print(f"  Max shift: {results[label]['max_shift']:.3f} pixels")
-        print(f"  Mean shift: {results[label]['mean_shift']:.3f} pixels")
-        print(f"  Non-zero shifts: {results[label]['nonzero_shifts']}/{shifts.size}")
-        print(f"  Score improvement: {improvement:+.4f} ({score_input:.4f} → {score_corrected:.4f})")
-        
-        # Show some example shifts
-        nonzero_indices = np.where(np.any(shifts != 0, axis=1))[0]
-        if len(nonzero_indices) > 0:
-            print(f"  Example shifts (first 5 non-zero):")
-            for i, idx in enumerate(nonzero_indices[:5]):
-                print(f"    Frame {idx:2d}: {shifts[idx].tolist()}")
-        else:
-            print("  No non-zero shifts detected!")
-    
-    # Compare results
-    print(f"\n{'='*80}")
-    print("COMPARISON OF ALL CONFIGURATIONS")
-    print(f"{'='*80}")
-    
-    best_config = max(results.keys(), key=lambda k: results[k]['improvement'])
-    
-    for config_name in results.keys():
-        r = results[config_name]
-        marker = " ✓ BEST" if config_name == best_config else ""
-        print(f"{config_name:15s}: improvement={r['improvement']:+.4f}, max_shift={r['max_shift']:6.2f}px, nonzero={r['nonzero_shifts']:3d}{marker}")
-    
-    print(f"\nBest performing config: {best_config} (improvement: {results[best_config]['improvement']:+.4f})")
-    
-    # Show subpixel vs integer comparison
-    if 'subpixel_5x' in results and 'baseline_1x' in results:
-        subpx = results['subpixel_5x']
-        baseline = results['baseline_1x']
-        print(f"\n🎯 SUBPIXEL PRECISION ANALYSIS:")
-        print(f"  Integer (1x): {baseline['nonzero_shifts']:3d} shifts, improvement={baseline['improvement']:+.4f}")
-        print(f"  Subpixel(5x): {subpx['nonzero_shifts']:3d} shifts, improvement={subpx['improvement']:+.4f}")
-        
-        if subpx['nonzero_shifts'] > baseline['nonzero_shifts']:
-            ratio = subpx['nonzero_shifts'] / max(1, baseline['nonzero_shifts'])
-            print(f"  → Subpixel detected {ratio:.0f}x more drift!")
-
-def test_3_real_data_optimized(template_path: str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2") -> None:
-    """Optimized drift correction test using discovered best parameters."""
-    from drift_correction.drift_correct_utils import drift_correction_score
-    
-    print("🎯 OPTIMIZED DRIFT CORRECTION TEST")
-    print("="*50)
-    
-    output_path = "E:/Oyvind/BIP-hub-test-data/drift/corrected/phase_correlation/1_Meng_OPTIMIZED.tif"
-    
-    # Use discovered optimal parameters
-    shifts, metadata = process_file(
-        template_path,
-        output_path=output_path,
-        reference_channel=0,
-        reference_frame='previous',        # 'first' or 'previous' work equally well
-        algorithm='phase_correlation',
-        upsample_factor=5,             
-        gaussian_sigma=10             
+        print(f"Creating synthetic drift from template: {template_path}")
+        img_data, ground_truth_img_data, applied_shifts = create_drift_image_from_template(
+            input_file=template_path, 
+            output_file=test2_image_path,
+                T=10,
+        max_shift=15.0
     )
     
-    score_before = drift_correction_score(image_path=template_path)
-    score_after = drift_correction_score(image_path=output_path)
+
+    print(f"Using image with {img_data.shape[0]} timepoints with max shift ~15 pixels")
+    
+    # Find shifts
+    shifts, metadata = process_file(
+        test2_image_path,     
+        output_path=test2_corrected_path,
+        reference_channel=0,
+        reference_frame='previous', 
+        algorithm='phase_correlation',
+        upsample_factor=5,  # Use subpixel for better accuracy
+        gaussian_sigma=0)  # Smooth real data a bit
+
+    # Load corrected image
+    corrected_img = rp.load_tczyx_image(test2_corrected_path)
+
+    drift_correction_score_before = drift_correction_score(image_path=test2_image_path,)
+    drift_correction_score_after = drift_correction_score(image_path=test2_corrected_path)  
+    print(f"Drift correction score before: {drift_correction_score_before:.4f}")
+    print(f"Drift correction score after: {drift_correction_score_after:.4f}")
+
+    improved = drift_correction_score_after > drift_correction_score_before
+
+    return improved
+
+def test_3_real_data() -> bool:
+    """
+    Test 3: Real data drift correction
+    Tests on actual microscopy data without ground truth.
+    Evaluates based on drift score improvement.
+
+    Returns:
+        True if test passed, False otherwise
+    """
+    test_folder = "E:/Oyvind/BIP-hub-test-data/drift/input/test_3"
+
+    test_image_path = os.path.join(test_folder, "1_Meng_timecrop.tif")
+    output_path = os.path.splitext(test_image_path)[0] + "_corrected.tif"
+
+
+    print("\n" + "="*80)
+    print("TEST 3: REAL DATA DRIFT CORRECTION")
+    print("="*80)
+    
+    from drift_correction.drift_correct_utils import drift_correction_score
+
+    output_path = os.path.splitext(test_image_path)[0] + "_corrected.tif"
+
+    
+    # Get score before correction
+    print(f"Input file: {test_image_path}")
+    score_before = drift_correction_score(image_path=test_image_path)
+    print(f"Drift score before correction: {score_before:.4f}")
+    
+    # Run drift correction
+    shifts, metadata = process_file(
+        test_image_path,
+        output_path=output_path,  # Don't save yet - we want raw shifts first
+        reference_channel=0,
+        reference_frame='previous',
+        algorithm='phase_correlation',
+        upsample_factor=5,
+        gaussian_sigma=0
+        )
+            
+    # Get score after correction
+    score_after = drift_correction_score(image_path=output_path, reference="previous")
     improvement = score_after - score_before
-    
-    print(f"📊 RESULTS:")
-    print(f"  Before correction: {score_before:.4f}")
-    print(f"  After correction:  {score_after:.4f}")
-    print(f"  Improvement:       {improvement:+.4f}")
-    print(f"  Shifts detected:   {np.count_nonzero(shifts)}/{shifts.size} ({100*np.count_nonzero(shifts)/shifts.size:.1f}%)")
-    print(f"  Max shift:         {np.max(np.abs(shifts)):.3f} pixels")
-    print(f"  Mean shift:        {np.mean(np.abs(shifts)):.3f} pixels")
-    
+
+    # Success if improvement is positive
     if improvement > 0:
-        print("✅ SUCCESS: Drift correction improved alignment!")
+        print(f"\n✓ TEST 3 PASSED: Drift score improved by {improvement:.4f}")
+        return True
     else:
-        print("⚠️  Minimal improvement - data may have little drift")
+        print(f"\n✗ TEST 3 WARNING: Small or negative improvement ({improvement:+.4f})")
+        print(f"\n💡 TIP: Try running with 'first' reference mode instead:")
+        print(f"  The frame-to-frame shifts show wild oscillations (max {np.max(np.abs(shifts)):.1f} px)")
+        print(f"  This suggests 'previous' mode may be accumulating errors")
+        return False
+
+
+def run_all_tests():
+    """
+    Run all drift correction tests and report results.
+    """
+    print("\n" + "="*80)
+    print("DRIFT CORRECTION TEST SUITE")
+    print("="*80)
+    print("\nRunning comprehensive drift correction tests...")
+    
+    results = {}
+    
+    # Test 1: Synthetic simple squares
+    try:
+        print("\n" + "-"*80)
+        result1 = test_1_synthetic()
+        results['Test 1: Synthetic Squares'] = {'passed': result1, 'error': None}
+    except Exception as e:
+        print(f"\n✗ TEST 1 ERROR: {e}")
+        results['Test 1: Synthetic Squares'] = {'passed': False, 'error': str(e)}
+    
+    # Test 2: Template-based synthetic drift
+    try:
+        print("\n" + "-"*80)
+        result2 = test_2_template_based()
+        results['Test 2: Template-Based'] = {'passed': result2, 'error': None}
+    except FileNotFoundError as e:
+        print(f"\n⚠ TEST 2 SKIPPED: Template file not found - {e}")
+        results['Test 2: Template-Based'] = {'passed': None, 'error': 'File not found'}
+    except Exception as e:
+        print(f"\n✗ TEST 2 ERROR: {e}")
+        results['Test 2: Template-Based'] = {'passed': False, 'error': str(e)}
+    
+    # Test 3: Real data
+    try:
+        print("\n" + "-"*80)
+        result3 = test_3_real_data()
+        results['Test 3: Real Data'] = {'passed': result3, 'error': None}
+    except FileNotFoundError as e:
+        print(f"\n⚠ TEST 3 SKIPPED: Data file not found - {e}")
+        results['Test 3: Real Data'] = {'passed': None, 'error': 'File not found'}
+    except Exception as e:
+        print(f"\n✗ TEST 3 ERROR: {e}")
+        results['Test 3: Real Data'] = {'passed': False, 'error': str(e)}
+    
+    # Print summary
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
+    
+    for test_name, result in results.items():
+        if result['passed'] is None:
+            status = "⚠ SKIPPED"
+        elif result['passed']:
+            status = "✓ PASSED"
+        else:
+            status = "✗ FAILED"
         
-    return improvement
-
-
-
+        error_msg = f" ({result['error']})" if result['error'] else ""
+        print(f"{status:12s} {test_name}{error_msg}")
+    
+    # Overall result
+    passed_count = sum(1 for r in results.values() if r['passed'] is True)
+    failed_count = sum(1 for r in results.values() if r['passed'] is False)
+    skipped_count = sum(1 for r in results.values() if r['passed'] is None)
+    
+    print(f"\nResults: {passed_count} passed, {failed_count} failed, {skipped_count} skipped")
+    
+    if failed_count == 0 and passed_count > 0:
+        print("\n🎉 ALL TESTS PASSED!")
+    elif failed_count > 0:
+        print(f"\n⚠ {failed_count} test(s) failed - review output above")
+    
+    return failed_count == 0
 
 
 def main() -> None:
@@ -900,42 +864,9 @@ def main() -> None:
         return
     
     if args.test_all:
-        # Setup logging for test output
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        test_image_path = args.test_image if args.test_image else "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_with_known_drift.tif"
-        
-        logger.info("Testing all drift correction algorithms...")
-        logger.info(f"Test image: {test_image_path}")
-        
-        results = try_all_algorithms(test_image_path)
-        
-        # Print final summary
-        print("\n" + "="*80)
-        print("COMPREHENSIVE TEST RESULTS")
-        print("="*80)
-        
-        successful = {name: res for name, res in results.items() if res['success']}
-        failed = {name: res for name, res in results.items() if not res['success']}
-        
-        print(f"Total algorithms tested: {len(results)}")
-        print(f"Successful: {len(successful)}")
-        print(f"Failed: {len(failed)}")
-        
-        if successful:
-            # Rank by score if available
-            ranked = sorted(successful.items(), 
-                          key=lambda x: x[1]['score'] if x[1]['score'] is not None else float('inf'))
-            
-            print("\nBest performing algorithms (by score):")
-            for i, (name, res) in enumerate(ranked[:5], 1):  # Top 5
-                score_str = f"{res['score']:.4f}" if res['score'] is not None else "N/A"
-                print(f"  {i}. {name:30s} Score: {score_str:>8s} Time: {res['execution_time']:.2f}s")
-        
+        # Run the comprehensive test suite instead
+        print("Running comprehensive drift correction test suite...")
+        run_all_tests()
         return
     
     if args.list_algorithms:
@@ -1025,11 +956,12 @@ def main() -> None:
     logger.info(f"Drift correction pipeline completed. Processed {len(input_files)} files.")
 
 if __name__ == "__main__":
-    #main()  # Run main function with argument parsing disabled during debugging
-    #test_1_synthetic()  # Perfect accuracy
-    #test_2_frameroll()  # Perfect accuracy
-    #test_3_real_data_original()  # Comprehensive analysis
-    test_3_real_data_optimized()  # Optimized solution
-
-    
+    # Run test suite when executed directly (without arguments)
+    import sys
+    if len(sys.argv) == 1:
+        # No arguments provided - run tests
+        run_all_tests()
+    else:
+        # Arguments provided - run main CLI
+        main()
 

@@ -1,0 +1,6 @@
+segments:
+- name: Drift correction on synthetic data
+  last_processed: "2025-10-06"
+  code_version: 0.0.10
+  run_duration: 1m19.0821206s
+- name: stop_pipeline

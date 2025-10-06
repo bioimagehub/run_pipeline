@@ -3,13 +3,43 @@ run:
   environment: uv:drift_correct
   commands:
   - python: '%REPO%/standard_code/python/drift_correction.py'
-  - --input-search-pattern: '%TEST_FOLDER%/drift/input/live_cells/*.nd2'
+  
+  # ========== Input/Output Arguments ==========
+  - --input-search-pattern: '%TEST_FOLDER%/drift/input/live_cells/*timecrop.tif'
   - --output-folder: '%TEST_FOLDER%/drift/corrected/phase_correlation'
-  - --output-file-name-extension: _corrected
-  - --algorithm: phase_correlation
-  last_processed: "2025-10-01"
-  code_version: 0.0.10
-  run_duration: 4m1.2825073s
+  # - --search-subfolders  # Uncomment to search subfolders recursively
+  # - --collapse-delimiter: '__'  # Delimiter for collapsing nested folder names (default: __)
+  - --output-file-name-extension: _corrected  # Extension to add to output filenames (default: _drift_corrected)
+  
+  # ========== Drift Correction Parameters ==========
+  - --algorithm: phase_correlation  # Algorithm to use: phase_correlation, mock (default: phase_correlation)
+  - --reference-channel: 0  # Channel index for drift detection, 0-based (default: 0)
+  - --reference-frame: previous  # Reference frame: first, previous, mean, mean10 (default: first)
+  - --upsample-factor: 5  # Subpixel precision: 1=pixel, 5=recommended, higher=more precise (default: 5)
+
+  # ========== Shift Application Parameters ==========
+  # - --shift-mode: constant  # Out-of-bounds handling: constant, nearest, reflect, wrap (default: constant)
+  # - --shift-cval: 0.0  # Constant value for out-of-bounds pixels when shift-mode=constant (default: 0.0)
+  
+  # ========== Preprocessing Parameters ==========
+  - --gaussian-sigma: 5  # Gaussian smoothing sigma for preprocessing, -1 to disable (default: -1.0)
+  
+  # ========== Output Options ==========
+  # - --no-save-shifts  # Uncomment to skip saving shift arrays as .npy files
+  # - --no-save-metadata  # Uncomment to skip saving processing metadata as .yaml files
+  
+  # ========== Processing Options ==========
+  # - --no-gpu  # Uncomment to disable GPU acceleration for shift application
+  # - --no-parallel  # Uncomment to disable parallel processing
+  # - --n-jobs: -1  # Number of parallel jobs, -1 for all cores (default: -1)
+  
+  # ========== Utility Options ==========
+  # - --list-algorithms  # List available algorithms and exit (for testing)
+  # - --test-all  # Test all algorithms on test data and exit (for development)
+  # - --test-image: /path/to/test.tif  # Custom test image path for --test-all
+  # - --dry-run  # Print planned actions but don't process files (for debugging)
+  # - --version  # Print version and exit
+
 - name: stop_pipeline
   type: stop
   message: stopping

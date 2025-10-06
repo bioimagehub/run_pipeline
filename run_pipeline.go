@@ -20,19 +20,29 @@ import (
 
 // Segment struct defines each segment of the pipeline with relevant attributes
 type Segment struct {
-	Name          string        `yaml:"name"`                     // The name of the segment
-	Type          string        `yaml:"type,omitempty"`           // Optional: type of step (pause, stop, or normal)
-	Message       string        `yaml:"message,omitempty"`        // Optional: message for pause/stop
-	Environment   string        `yaml:"environment,omitempty"`    // The Python environment to use
-	Commands      []interface{} `yaml:"commands,omitempty"`       // Commands to execute (can be strings or maps)
-	LastProcessed string        `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
-	CodeVersion   string        `yaml:"code_version,omitempty"`   // Git version/tag/commit hash used when this segment was processed
-	RunDuration   string        `yaml:"run_duration,omitempty"`   // Wall-clock duration of this segment (e.g., "1m23.456s")
+	Name        string        `yaml:"name"`                  // The name of the segment
+	Type        string        `yaml:"type,omitempty"`        // Optional: type of step (pause, stop, or normal)
+	Message     string        `yaml:"message,omitempty"`     // Optional: message for pause/stop
+	Environment string        `yaml:"environment,omitempty"` // The Python environment to use
+	Commands    []interface{} `yaml:"commands,omitempty"`    // Commands to execute (can be strings or maps)
 }
 
 // Config struct to hold the overall configuration structure
 type Config struct {
 	Run []Segment `yaml:"run"` // Slice of segments representing the commands to be processed
+}
+
+// SegmentStatus holds execution status for a single segment
+type SegmentStatus struct {
+	Name          string `yaml:"name"`                     // The name of the segment
+	LastProcessed string `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
+	CodeVersion   string `yaml:"code_version,omitempty"`   // Git version/tag/commit hash used when this segment was processed
+	RunDuration   string `yaml:"run_duration,omitempty"`   // Wall-clock duration of this segment (e.g., "1m23.456s")
+}
+
+// Status struct to hold execution status for all segments
+type Status struct {
+	Segments []SegmentStatus `yaml:"segments"` // Status for each segment
 }
 
 // Versioning: overridden via -ldflags, with embedded fallback and git as last resort
@@ -328,6 +338,62 @@ func getVersion() string {
 		}
 	}
 	return getGitVersion()
+}
+
+// loadOrCreateStatus loads existing status file or creates a new one
+func loadOrCreateStatus(statusPath string, segmentNames []string) Status {
+	var status Status
+
+	// Try to load existing status file
+	if data, err := os.ReadFile(statusPath); err == nil {
+		if err := yaml.Unmarshal(data, &status); err == nil {
+			// Status file loaded successfully
+			// Ensure all segments from config are present in status
+			statusMap := make(map[string]*SegmentStatus)
+			for i := range status.Segments {
+				statusMap[status.Segments[i].Name] = &status.Segments[i]
+			}
+
+			// Add missing segments
+			for _, name := range segmentNames {
+				if _, exists := statusMap[name]; !exists {
+					status.Segments = append(status.Segments, SegmentStatus{Name: name})
+				}
+			}
+			return status
+		}
+	}
+
+	// Create new status with all segment names
+	status.Segments = make([]SegmentStatus, len(segmentNames))
+	for i, name := range segmentNames {
+		status.Segments[i] = SegmentStatus{Name: name}
+	}
+	return status
+}
+
+// saveStatus writes the status to the status YAML file
+func saveStatus(statusPath string, status Status) error {
+	data, err := yaml.Marshal(&status)
+	if err != nil {
+		return fmt.Errorf("error marshalling status YAML: %v", err)
+	}
+
+	err = os.WriteFile(statusPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing status YAML file: %v", err)
+	}
+	return nil
+}
+
+// getSegmentStatus finds the status entry for a given segment name
+func getSegmentStatus(status *Status, segmentName string) *SegmentStatus {
+	for i := range status.Segments {
+		if status.Segments[i].Name == segmentName {
+			return &status.Segments[i]
+		}
+	}
+	return nil
 }
 
 // Function to prepare command arguments for Python execution
@@ -639,8 +705,23 @@ func main() {
 	// Get the directory of the YAML file for resolving data paths
 	yamlDir := filepath.Dir(yamlPath)
 
-	// Iterate over each segment defined in the configuration
+	// Create status file path: inputname_status.yaml
+	yamlBaseName := filepath.Base(yamlPath)
+	yamlNameWithoutExt := strings.TrimSuffix(yamlBaseName, filepath.Ext(yamlBaseName))
+	statusPath := filepath.Join(yamlDir, yamlNameWithoutExt+"_status.yaml")
+
+	// Extract segment names for status initialization
+	segmentNames := make([]string, len(config.Run))
 	for i, segment := range config.Run {
+		segmentNames[i] = segment.Name
+	}
+
+	// Load or create status file
+	status := loadOrCreateStatus(statusPath, segmentNames)
+	fmt.Printf("Using status file: %v\n", statusPath)
+
+	// Iterate over each segment defined in the configuration
+	for _, segment := range config.Run {
 		// Handle pause and stop types
 		stepType := strings.ToLower(segment.Type)
 		switch stepType {
@@ -670,15 +751,23 @@ func main() {
 			continue
 		}
 
+		// Get status for this segment
+		segmentStatus := getSegmentStatus(&status, segment.Name)
+		if segmentStatus == nil {
+			// Segment not in status, add it
+			status.Segments = append(status.Segments, SegmentStatus{Name: segment.Name})
+			segmentStatus = &status.Segments[len(status.Segments)-1]
+		}
+
 		// If not in forceReprocessing mode, but we hit a segment that is not processed, activate forceReprocessing for all subsequent segments
-		if !forceReprocessing && segment.LastProcessed == "" {
+		if !forceReprocessing && segmentStatus.LastProcessed == "" {
 			fmt.Printf("Segment %s has not been processed. \n---Activating force reprocessing for all subsequent segments.---\n\n", segment.Name)
 			forceReprocessing = true
 		}
 
 		// Check if this segment has already been processed
-		if !forceReprocessing && segment.LastProcessed != "" {
-			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segment.LastProcessed)
+		if !forceReprocessing && segmentStatus.LastProcessed != "" {
+			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segmentStatus.LastProcessed)
 			fmt.Println()
 			continue // Skip to the next segment if already processed and not forcing reprocessing
 		}
@@ -720,16 +809,12 @@ func main() {
 				fmt.Printf("Error executing command: %v\n", err)
 				log.Fatalf("Error")
 			}
-			config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
-			config.Run[i].CodeVersion = getVersion()
-			config.Run[i].RunDuration = time.Since(startTime).String()
-			data, err = yaml.Marshal(&config)
-			if err != nil {
-				log.Fatalf("error marshalling updated YAML: %v", err)
-			}
-			err = os.WriteFile(yamlPath, data, 0644)
-			if err != nil {
-				log.Fatalf("error writing YAML file: %v", err)
+			// Update status in status file
+			segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
+			segmentStatus.CodeVersion = getVersion()
+			segmentStatus.RunDuration = time.Since(startTime).String()
+			if err := saveStatus(statusPath, status); err != nil {
+				log.Fatalf("%v", err)
 			}
 			fmt.Println("")
 			fmt.Println("")
@@ -761,22 +846,12 @@ func main() {
 			log.Fatalf("Error") // Log fatal error on execution failure
 		}
 
-		// Update last_processed with the current date if the command was successful
-		config.Run[i].LastProcessed = time.Now().Format("2006-01-02")
-		// Record the code/version used for this successful run
-		config.Run[i].CodeVersion = getVersion()
-		// Record wall-clock run duration
-		config.Run[i].RunDuration = time.Since(startTime).String()
-
-		// Write the updated configuration back to the YAML file
-		data, err = yaml.Marshal(&config) // Marshal the updated config struct
-		if err != nil {
-			log.Fatalf("error marshalling updated YAML: %v", err)
-		}
-
-		err = os.WriteFile(yamlPath, data, 0644) // Write it to the YAML path
-		if err != nil {
-			log.Fatalf("error writing YAML file: %v", err)
+		// Update status in status file
+		segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
+		segmentStatus.CodeVersion = getVersion()
+		segmentStatus.RunDuration = time.Since(startTime).String()
+		if err := saveStatus(statusPath, status); err != nil {
+			log.Fatalf("%v", err)
 		}
 		fmt.Println("") // Add some space between the segment prints
 		fmt.Println("") // Add some space between the segment prints
