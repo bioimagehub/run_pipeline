@@ -38,7 +38,7 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
                 yaml.dump(metadata, f)
         
         # Load image and metadata
-    img = rp.load_tczyx_image(input_file_path)
+        img = rp.load_tczyx_image(input_file_path)
         physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
 
         img_np = img.data  # TCZYX

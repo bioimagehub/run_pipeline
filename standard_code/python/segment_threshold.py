@@ -175,7 +175,7 @@ def save_intermediate(mask: Optional[np.ndarray] = None, labelinfo=None, rois=No
     if not isinstance(path, str):
         return
     if mask is not None:
-    rp.save_tczyx_image(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
+        rp.save_tczyx_image(mask, path + ".tif", dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes) 
     if labelinfo is not None:
         LabelInfo.save(labelinfo, path + "_labelinfo.yaml")
     if rois is not None:
@@ -915,7 +915,7 @@ def process_file(
     # 1. Load image
     # -------------------------------------------------------------------------
     try:
-    img = rp.load_tczyx_image(str(input_path_p))  # External lib
+        img = rp.load_tczyx_image(str(input_path_p))  # External lib
     except Exception as e:
         return _safe_return("Error loading image", e, current_results)
 
@@ -940,7 +940,7 @@ def process_file(
         tif = path_base.with_suffix(".tif")
         if not tif.exists():
             return None, None
-    mask_local = rp.load_tczyx_image(str(tif)).data  # Load mask
+        mask_local = rp.load_tczyx_image(str(tif)).data  # Load mask
         li_path = tif.with_name(f"{path_base.name}_labelinfo.yaml")
         li_local = LabelInfo.load(str(li_path)) if li_path.exists() else None  # Load label info
         return mask_local, li_local

@@ -7,6 +7,7 @@ import numpy as np
 
 # Module-level logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 from bioio.writers import OmeTiffWriter  # type: ignore
 from bioio import BioImage

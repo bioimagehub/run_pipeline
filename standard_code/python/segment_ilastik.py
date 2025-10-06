@@ -54,7 +54,7 @@ def _save_empty_output(args, input_file: str, output_tif_file_path: str) -> None
 
     # Save empty image
     try:
-    rp.save_tczyx_image(empty, output_tif_file_path, dim_order="TCZYX")
+        rp.save_tczyx_image(empty, output_tif_file_path, dim_order="TCZYX")
     except Exception as e:
         logging.error(f"Failed to save empty output for {input_file}: {e}")
         return
@@ -174,10 +174,13 @@ def process_file(args, input_file):
     else:
         unique_values = nonzero_values
 
+    
     # return if no unique values found
     if len(unique_values) == 0:
-        print(f"No unique values found in {input_file}.")
-    rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
+        logging.warning(f"No unique values found in {input_file}.")
+        #rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
+        _save_empty_output(args, input_file, output_tif_file_path)  # Save metadata for empty output
+
         return
 
     # make a dataset like data_tczyx byt with the len(unique_values) channels
@@ -216,7 +219,9 @@ def process_file(args, input_file):
         print(unique_npixels)
 
         print(f"No labels left after min-max filtering in {input_file}.")
-    rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
+        # rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
+        _save_empty_output(args, input_file, output_tif_file_path)  # Save metadata for empty output
+
         return
     
     label_info_list = label_info_list_new
@@ -257,7 +262,9 @@ def process_file(args, input_file):
 
     # return if no labels left after edge removal
     if not label_info_list:
-        print(f"No labels left after edge removal in {input_file}. Skipping tracking.")
+        print(f"No labels left after edge removal in {input_file}.")
+        _save_empty_output(args, input_file, output_tif_file_path)  # Save metadata for empty output
+        return
     else:
         try:
             _, output_data = track_labels_with_trackpy(output_data)
