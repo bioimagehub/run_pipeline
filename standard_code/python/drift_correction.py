@@ -127,8 +127,7 @@ def process_file(
     upsample_factor: int = 5,
     shift_mode: str = 'constant',
     gaussian_sigma: float = -1.0,
-    use_gpu: bool = True,
-    return_raw_shifts: bool = False
+    use_gpu: bool = True
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Apply drift correction to a TCZYX image stack.
@@ -143,17 +142,19 @@ def process_file(
         shift_mode: How to handle out-of-bounds pixels when applying shifts (default: 'constant')
         gaussian_sigma: Gaussian smoothing for preprocessing before drift detection (use -1 to disable, default: -1)
         use_gpu: Use GPU acceleration (default: True)
-        return_raw_shifts: If True and reference_frame='previous', return frame-to-frame shifts (t vs t-1) instead of cumulative
     
     Returns:
         Tuple of (shifts_array, metadata_dict)
         - shifts_array: Detected drift for each timepoint [dz, dy, dx] or [dy, dx]
-                       For 'previous' mode with return_raw_shifts=False: cumulative shifts relative to frame 0
-                       For 'previous' mode with return_raw_shifts=True: frame-to-frame correction shifts (t→t-1)
+                       For 'previous' mode: cumulative shifts relative to frame 0
+                       For other modes: shifts relative to the reference frame
                        Positive values indicate movement in positive axis direction
                        Note: The NEGATIVE of these shifts is applied for correction
         - metadata_dict: Processing metadata and statistics
     """
+    
+    # Hardcoded internal parameter (not exposed to users)
+    return_raw_shifts = False  # Always return cumulative shifts for 'previous' mode
     
     # Validate inputs
     if reference_frame not in ['first', 'previous', 'mean', 'mean10']:
@@ -296,30 +297,23 @@ def process_file(
         # Save these raw frame-to-frame shifts before cumulative conversion
         frame_to_frame_corrections = shifts.copy()  # Save raw shifts
         
-        # If return_raw_shifts is True, we'll return these instead of cumulative
-        if return_raw_shifts:
-            logger.info("Returning raw frame-to-frame shifts (not cumulative)")
-            # Return raw shifts without applying cumulative conversion
-            shifts_to_return = frame_to_frame_corrections
-            apply_correction = False  # Don't apply correction when returning raw shifts
-        else:
-            # Convert to cumulative shifts
-            for t in range(1, T):
-                # Convert to detected drift (negate), accumulate, convert back to correction
-                detected_drift_this_frame = -frame_to_frame_corrections[t]
-                # Use previous cumulative from shifts[t-1] which we're building up
-                previous_total_detected_drift = -shifts[t-1]
-                total_detected_drift = previous_total_detected_drift + detected_drift_this_frame
-                shifts[t] = -total_detected_drift
-                
-                # Debug: Log the transformation for first few frames
-                if t <= 5:
-                    logger.info(f"Frame {t} cumulative conversion:")
-                    logger.info(f"  Frame-to-frame correction (t→t-1): {frame_to_frame_corrections[t]}")
-                    logger.info(f"  Previous cumulative correction (t-1→0): {shifts[t-1]}")
-                    logger.info(f"  New cumulative correction (t→0): {shifts[t]}")
+        # Convert to cumulative shifts
+        for t in range(1, T):
+            # Convert to detected drift (negate), accumulate, convert back to correction
+            detected_drift_this_frame = -frame_to_frame_corrections[t]
+            # Use previous cumulative from shifts[t-1] which we're building up
+            previous_total_detected_drift = -shifts[t-1]
+            total_detected_drift = previous_total_detected_drift + detected_drift_this_frame
+            shifts[t] = -total_detected_drift
             
-            shifts_to_return = shifts
+            # Debug: Log the transformation for first few frames
+            if t <= 5:
+                logger.info(f"Frame {t} cumulative conversion:")
+                logger.info(f"  Frame-to-frame correction (t→t-1): {frame_to_frame_corrections[t]}")
+                logger.info(f"  Previous cumulative correction (t-1→0): {shifts[t-1]}")
+                logger.info(f"  New cumulative correction (t→0): {shifts[t]}")
+        
+        shifts_to_return = shifts
     else:
         shifts_to_return = shifts
     

@@ -187,7 +187,11 @@ def save_tczyx_image(img: Union[BioImage, np.ndarray], path: str, **kwargs) -> N
         elif hasattr(img, 'metadata') and isinstance(img.metadata, dict):
             ome_xml = img.metadata.get('ome_xml', None)
 
+    # force overwrite if file exists
+    if os.path.exists(path):
+        os.remove(path)
     if ome_xml is not None:
+
         OmeTiffWriter.save(arr, path, dim_order="TCZYX", ome_xml=ome_xml, **kwargs)
     else:
         OmeTiffWriter.save(arr, path, dim_order="TCZYX", **kwargs)
