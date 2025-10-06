@@ -2,24 +2,32 @@
 import numpy as np
 import os   
 import sys
+import dask.array as da
+from typing import Union
 
 import logging
 
 from typing import Optional
+
+from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
-# Use relative import to parent directory
-try:
-    from .. import bioimage_pipeline_utils as rp
-except ImportError:
-    # Fallback for when script is run directly (not as module)
-    import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    import bioimage_pipeline_utils as rp
+# Universal import fix - add parent directories to sys.path
+from pathlib import Path
+
+# Add standard_code directory to path
+current_dir = Path(__file__).parent
+standard_code_dir = current_dir.parent
+project_root = standard_code_dir.parent
+for path in [str(project_root), str(standard_code_dir)]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+import bioimage_pipeline_utils as rp
 
 
-def drift_correction_score(image_path: str, channel: int = 0, reference: str = "first", # "first", "median", or "previous"
+def drift_correction_score(image_path: Union[str, None] = None, img_data: Union[np.ndarray, None] = None, channel: int = 0, reference: str = "first", # "first", "median", or "previous"
                            central_crop: float = 0.8, # fraction of XY kept (e.g., 0.8 keeps central 80%) 
                            z_project: str | None = "mean", # None, "mean", "max", or "median" 
                            ) -> float: 
@@ -41,10 +49,19 @@ def drift_correction_score(image_path: str, channel: int = 0, reference: str = "
         A single scalar score in [-1, 1], where 1 indicates near-identical frames.
         If the series has <2 timepoints, returns NaN.
     """
+    # use path if no array given
+    if image_path is not None and img_data is None: 
+        # Validate path
+        if not os.path.isfile(image_path):
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+            # Load image as T×C×Z×Y×X
+        img = rp.load_tczyx_image(image_path)
+        data = img.data
+    elif img_data is not None:
+        data = img_data
+    else:
+        raise ValueError("Either image_path or img_data array must be provided.")
 
-    # Load image as T×C×Z×Y×X
-    img = rp.load_tczyx_image(image_path)
-    data = img.data
     if data.ndim != 5:
         raise ValueError(f"Expected TCZYX, got shape {data.shape}")
     T, C, Z, Y, X = data.shape
@@ -272,8 +289,10 @@ def apply_shift(image: np.ndarray, shift: np.ndarray, mode: str = 'constant', or
     try:
         import cupy as cp
         from cupyx.scipy import ndimage as cndi
+        logger.debug("Using CuPy GPU acceleration for drift correction")
         return _apply_shift_cupy(image, shift, mode, order)
     except ImportError:
+        logger.debug("CuPy not available, falling back to CPU (SciPy)")
         return _apply_shift_numpy(image, shift, mode, order)
 
 def _apply_shift_cupy(image: np.ndarray, shift: np.ndarray, mode: str = 'constant', order: int = 3) -> np.ndarray:
@@ -295,6 +314,10 @@ def _apply_shift_cupy(image: np.ndarray, shift: np.ndarray, mode: str = 'constan
         shifted_np = np.clip(shifted_np, info.min, info.max).astype(image.dtype)
     else:
         shifted_np = shifted_np.astype(image.dtype)
+
+    # Cleanup GPU memory
+    del image_cp, shift_cp, shifted_cp
+    cp.get_default_memory_pool().free_all_blocks()
         
     return shifted_np
 
@@ -313,11 +336,18 @@ def _apply_shift_numpy(image: np.ndarray, shift: np.ndarray, mode: str = 'consta
             shifted = shifted.astype(image.dtype)
             
         return shifted
-    except ImportError:
-        logger.error("SciPy not available for shift application")
-        return image  # Return unchanged if no shift capability
+    except ImportError as e:
+        raise ImportError(
+            "SciPy is required for drift correction but not available. "
+            "Please install SciPy: pip install scipy"
+        ) from e
 
-def apply_shifts_to_tczyx_stack(stack: np.ndarray, shifts: np.ndarray, mode: str = 'constant', order: int = 3) -> np.ndarray:
+def apply_shifts_to_tczyx_stack(
+    stack: Union[np.ndarray, da.Array], 
+    shifts: np.ndarray, 
+    mode: str = 'constant', 
+    order: int = 3
+) -> np.ndarray:    
     """
     Apply drift correction shifts to a 5D TCZYX image stack (Time-Channel-Z-Y-X).
     
@@ -415,8 +445,16 @@ def apply_shifts_to_tczyx_stack(stack: np.ndarray, shifts: np.ndarray, mode: str
         - Maintains full precision through float32 intermediate processing
         - Optimized memory usage with in-place operations where possible
     """
-    T, C, Z, Y, X = stack.shape
-    shifted_stack = np.empty_like(stack)
+    # Convert dask array to numpy array if needed
+    if hasattr(stack, 'compute'):
+        logger.debug("Converting dask array to numpy array for shift application")
+        stack_np = stack.compute()
+    else:
+        stack_np = np.asarray(stack)
+    
+    T, C, Z, Y, X = stack_np.shape
+    
+    shifted_stack = np.empty_like(stack_np)
     
     # Determine if we have 2D or 3D shifts
     shift_dims = shifts.shape[1]
@@ -427,13 +465,13 @@ def apply_shifts_to_tczyx_stack(stack: np.ndarray, shifts: np.ndarray, mode: str
             shift_yx = shifts[t]  # [dy, dx]
             for c in range(C):
                 for z in range(Z):
-                    shifted_stack[t, c, z] = apply_shift(stack[t, c, z], shift_yx, mode=mode, order=order)
+                    shifted_stack[t, c, z] = apply_shift(stack_np[t, c, z], shift_yx, mode=mode, order=order)
     elif shift_dims == 3:
         # 3D shifts: [dz, dy, dx] - apply to entire 3D volume
         for t in range(T):
             shift_zyx = shifts[t]  # [dz, dy, dx]
             for c in range(C):
-                shifted_stack[t, c] = apply_shift(stack[t, c], shift_zyx, mode=mode, order=order)
+                shifted_stack[t, c] = apply_shift(stack_np[t, c], shift_zyx, mode=mode, order=order)
     else:
         raise ValueError(f"Shifts must have shape (T, 2) or (T, 3), got shape {shifts.shape}")
     
@@ -443,3 +481,56 @@ def apply_shifts_to_tczyx_stack(stack: np.ndarray, shifts: np.ndarray, mode: str
 
 # ==================== SYNTHETIC DATA GENERATION ====================
 # see synthetic_data_generators.py for related functions
+
+
+
+# ==================== TEST FUNCTIONS =============================
+#
+
+def test_synthetic_2d():
+    from synthetic_data_generators import create_simple_squares
+    import numpy as np
+
+    # load test folder fom .env file
+    from dotenv import load_dotenv
+    load_dotenv()
+    test_folder = os.path.join(os.getenv("TEST_FOLDER", "."), "drift_correction", "utils")
+    
+    if not os.path.isdir(test_folder):
+        os.makedirs(test_folder)
+    
+    print(f"Test folder: {test_folder}")
+
+    img_data, ground_truth_img_data, applied_shifts = create_simple_squares()
+
+    # The applied_shifts are in (dy, dx) format and represent the drift applied to create the synthetic data
+    # To correct the drift, we need to apply the negative of these shifts
+    correction_shifts = -np.array(applied_shifts)
+    corrected_image = apply_shifts_to_tczyx_stack(img_data, correction_shifts, mode='constant', order=3)
+
+    # Validate the correction
+    applied_shifts = np.allclose(img_data,corrected_image, atol=1)
+    if not applied_shifts:
+        print(f"Image has been shifted")
+
+    identical = np.allclose(corrected_image, ground_truth_img_data, atol=1)
+    print(f"Identical: {identical}")
+
+    score_input = drift_correction_score(img_data=img_data, channel=0, reference="first", central_crop=0.8, z_project=None)
+    score_corrected = drift_correction_score(img_data=corrected_image, channel=0, reference="first", central_crop=0.8, z_project=None)
+    score_ground_truth = drift_correction_score(img_data=ground_truth_img_data, channel=0, reference="first", central_crop=0.8, z_project=None)
+
+    rp.save_tczyx_image(img_data, os.path.join(test_folder, "synthetic_input.tif"))
+    rp.save_tczyx_image(corrected_image, os.path.join(test_folder, "synthetic_corrected.tif"))
+    rp.save_tczyx_image(ground_truth_img_data, os.path.join(test_folder, "synthetic_ground_truth.tif"))
+
+        
+    print(f"Synthetic 2D Test Scores:")
+    print(f"  Input Score: {score_input:.4f}")
+    print(f"  Corrected Score: {score_corrected:.4f}")
+    print(f"  Ground Truth Score: {score_ground_truth:.4f}")
+
+
+
+if __name__ == "__main__":
+    test_synthetic_2d()

@@ -6,17 +6,11 @@ run_pipeline.egg-info/dependency_links.txt
 run_pipeline.egg-info/top_level.txt
 standard_code/__init__.py
 standard_code/python/__init__.py
-standard_code/python/_compare_ernet_synthetic.py
-standard_code/python/_generate_synthetic_er.py
-standard_code/python/_imagej_drift_correction.py
-standard_code/python/_imported_drift_corrections.py
-standard_code/python/_run_pipeline_helper_functions.py
 standard_code/python/bioimage_pipeline_utils.py
 standard_code/python/convert_to_tif.py
 standard_code/python/copy_files_with_extension.py
 standard_code/python/delete_folder.py
 standard_code/python/drift_correction.py
-standard_code/python/drift_correction_2.py
 standard_code/python/extract_metadata.py
 standard_code/python/find_maxima.py
 standard_code/python/mask2imageJROI.py

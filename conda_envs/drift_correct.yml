@@ -15,6 +15,7 @@ dependencies:
   - scikit-image>=0.19.0
   - scikit-learn>=1.1
 
+
   # I/O + helpers
   - nd2reader
   - scyjava
@@ -43,3 +44,4 @@ dependencies:
       # GPU registration libraries
       - pyGPUreg
       - imreg_dft
+      - python-dotenv

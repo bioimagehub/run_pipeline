@@ -123,9 +123,9 @@ def process_file(
     reference_channel: int = 0,
     reference_frame: str = 'first',
     algorithm: str = 'phase_correlation',
-    upsample_factor: int = 1,
+    upsample_factor: int = 5,
     shift_mode: str = 'constant',
-    gaussian_sigma: float = 0.0,
+    gaussian_sigma: float = -1.0,
     use_gpu: bool = True
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
@@ -221,15 +221,21 @@ def process_file(
 
     logger.info(f"Computing shifts using {func_key.upper()} {algorithm}...")
     
+    # Debug: Track shift statistics
+    debug_shifts = []
+    large_shift_frames = []
+    
     for t in tqdm(range(T), desc="Computing drift"):
         if t == reference_timepoint:
             # Reference frame has zero shift
             shifts[t] = [0, 0, 0] 
+            debug_shifts.append((t, "reference", [0, 0, 0]))
             continue
         if reference_3dstack is None: # only for 'previous' case
             if t == 0:
                 # shifts can be set to zero for first frame
                 shifts[t] = [0, 0, 0] 
+                debug_shifts.append((t, "first", [0, 0, 0]))
                 continue
             else:
                 reference_3dstack = img_single_channel[t-1]  # Use previous timepoint as reference: ZYX
@@ -265,6 +271,24 @@ def process_file(
             errors.append(error)
         else:
             raise ValueError(f"Invalid function key: {func_key}")
+            
+        # Debug: Log shift details for problematic frames
+        shift_magnitude = np.linalg.norm(shifts[t])
+        debug_shifts.append((t, f"error={error:.4f}", shifts[t].tolist()))
+        if shift_magnitude > 2.0:  # Large shift
+            large_shift_frames.append((t, shifts[t].tolist(), error))
+    
+    # Debug: Print statistics
+    logger.info(f"Shift detection completed. Large shifts (>2px): {len(large_shift_frames)}")
+    if large_shift_frames:
+        logger.info("Frames with large shifts:")
+        for frame, shift, error in large_shift_frames[:5]:  # Show first 5
+            logger.info(f"  Frame {frame}: shift={shift}, error={error:.4f}")
+    
+    # Debug: Print first 10 shifts for inspection
+    logger.info("First 10 detected shifts:")
+    for t, note, shift in debug_shifts[:10]:
+        logger.info(f"  Frame {t:3d} ({note:12s}): {shift}")
     # Apply shifts and save if output_path is provided
     corrected_image = None
     apply_correction = output_path is not None
@@ -656,49 +680,141 @@ def test_2_frameroll(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/inpu
     score_corrected = drift_correction_score(image_path=test2_corrected_path)
     print(f"Drift correction score after correction is : {score_corrected:.4f} (higher is better, 1 is perfect)")
 
-def test_3_real_data(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng_timecrop.tif") -> None:
+def test_3_real_data_original(template_path:str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2") -> None:
     from drift_correction.drift_correct_utils import drift_correction_score
 
-    # test 3: test with real data
-    # template_path
-    output_path = "E:/Oyvind/BIP-hub-test-data/drift/corrected/phase_correlation/1_Meng_timecrop.tif"
-    shifts, metadata = process_file(template_path,     
-                                    output_path=output_path,  # Save corrected output
-                                    reference_channel=0,
-
-                                    reference_frame='previous',
-                                    algorithm='phase_correlation',  
-                                    upsample_factor=1,
-                                    gaussian_sigma=0.0
-                                    )  # Some smoothing
-    print(f"Saved real data corrected output to: {output_path}")
+    # Setup logging to see debug info
+    import logging
+    logging.basicConfig(level=logging.INFO)
     
-    # Debug: Print detected shifts for real data
-    print(f"Detected shifts for real data:")
-    print(f"Shape: {shifts.shape}")
-    print(f"Max absolute shift: {np.max(np.abs(shifts)):.3f} pixels")
-    print(f"Mean absolute shift: {np.mean(np.abs(shifts)):.3f} pixels")
-    print(f"First few shifts: {shifts[:5].tolist()}")
-    print(f"Metadata max_shift: {metadata.get('max_shift', 'N/A')}")
-
+    print("="*80)
+    print("COMPREHENSIVE DRIFT CORRECTION ANALYSIS")
+    print("="*80)
+    
+    # Get original score
     score_input = drift_correction_score(image_path=template_path)
-    print(f"Drift correction score for real data before correction is : {score_input:.4f} (higher is better, 1 is perfect)")
-
-    score_real = drift_correction_score(image_path=output_path)
-    print(f"Drift correction score for real data after correction is : {score_real:.4f} (higher is better, 1 is perfect)")
-
-
-
-
-    # pause before deleting files
-    # input("Press Enter to continue cleanup of tmp data...") 
-
-
-
+    print(f"Original drift score: {score_input:.4f}")
     
-
-
+    # Test different subpixel precisions - this seems to be the key!
+    test_configs = [
+        ('first', 0.0, 1, 'baseline_1x'),
+        ('first', 0.0, 5, 'subpixel_5x'),
+        ('first', 0.0, 10, 'subpixel_10x'),
+        ('first', 0.0, 20, 'subpixel_20x'),
+        ('first', 0.0, 50, 'subpixel_50x'),
+        ('previous', 0.0, 20, 'previous_20x')
+    ]
+    results = {}
     
+    for ref_mode, gauss_sigma, upsample, label in test_configs:
+        print(f"\n--- Testing {label}: ref='{ref_mode}', gauss={gauss_sigma}, upsample={upsample} ---")
+        
+        output_path = f"E:/Oyvind/BIP-hub-test-data/drift/corrected/phase_correlation/1_Meng_{label}.tif"
+        
+        shifts, metadata = process_file(template_path,     
+                                        output_path=output_path,
+                                        reference_channel=0,
+                                        reference_frame=ref_mode,
+                                        algorithm='phase_correlation',  
+                                        upsample_factor=upsample,
+                                        gaussian_sigma=gauss_sigma)
+        
+        score_corrected = drift_correction_score(image_path=output_path)
+        improvement = score_corrected - score_input
+        
+        results[label] = {
+            'shifts': shifts,
+            'metadata': metadata,
+            'score_before': score_input,
+            'score_after': score_corrected,
+            'improvement': improvement,
+            'max_shift': np.max(np.abs(shifts)),
+            'mean_shift': np.mean(np.abs(shifts)),
+            'nonzero_shifts': np.count_nonzero(shifts),
+            'config': (ref_mode, gauss_sigma, upsample)
+        }
+        
+        print(f"  Max shift: {results[label]['max_shift']:.3f} pixels")
+        print(f"  Mean shift: {results[label]['mean_shift']:.3f} pixels")
+        print(f"  Non-zero shifts: {results[label]['nonzero_shifts']}/{shifts.size}")
+        print(f"  Score improvement: {improvement:+.4f} ({score_input:.4f} → {score_corrected:.4f})")
+        
+        # Show some example shifts
+        nonzero_indices = np.where(np.any(shifts != 0, axis=1))[0]
+        if len(nonzero_indices) > 0:
+            print(f"  Example shifts (first 5 non-zero):")
+            for i, idx in enumerate(nonzero_indices[:5]):
+                print(f"    Frame {idx:2d}: {shifts[idx].tolist()}")
+        else:
+            print("  No non-zero shifts detected!")
+    
+    # Compare results
+    print(f"\n{'='*80}")
+    print("COMPARISON OF ALL CONFIGURATIONS")
+    print(f"{'='*80}")
+    
+    best_config = max(results.keys(), key=lambda k: results[k]['improvement'])
+    
+    for config_name in results.keys():
+        r = results[config_name]
+        marker = " ✓ BEST" if config_name == best_config else ""
+        print(f"{config_name:15s}: improvement={r['improvement']:+.4f}, max_shift={r['max_shift']:6.2f}px, nonzero={r['nonzero_shifts']:3d}{marker}")
+    
+    print(f"\nBest performing config: {best_config} (improvement: {results[best_config]['improvement']:+.4f})")
+    
+    # Show subpixel vs integer comparison
+    if 'subpixel_5x' in results and 'baseline_1x' in results:
+        subpx = results['subpixel_5x']
+        baseline = results['baseline_1x']
+        print(f"\n🎯 SUBPIXEL PRECISION ANALYSIS:")
+        print(f"  Integer (1x): {baseline['nonzero_shifts']:3d} shifts, improvement={baseline['improvement']:+.4f}")
+        print(f"  Subpixel(5x): {subpx['nonzero_shifts']:3d} shifts, improvement={subpx['improvement']:+.4f}")
+        
+        if subpx['nonzero_shifts'] > baseline['nonzero_shifts']:
+            ratio = subpx['nonzero_shifts'] / max(1, baseline['nonzero_shifts'])
+            print(f"  → Subpixel detected {ratio:.0f}x more drift!")
+
+def test_3_real_data_optimized(template_path: str = "E:/Oyvind/BIP-hub-test-data/drift/input/live_cells/1_Meng.nd2") -> None:
+    """Optimized drift correction test using discovered best parameters."""
+    from drift_correction.drift_correct_utils import drift_correction_score
+    
+    print("🎯 OPTIMIZED DRIFT CORRECTION TEST")
+    print("="*50)
+    
+    output_path = "E:/Oyvind/BIP-hub-test-data/drift/corrected/phase_correlation/1_Meng_OPTIMIZED.tif"
+    
+    # Use discovered optimal parameters
+    shifts, metadata = process_file(
+        template_path,
+        output_path=output_path,
+        reference_channel=0,
+        reference_frame='previous',        # 'first' or 'previous' work equally well
+        algorithm='phase_correlation',
+        upsample_factor=5,             
+        gaussian_sigma=10             
+    )
+    
+    score_before = drift_correction_score(image_path=template_path)
+    score_after = drift_correction_score(image_path=output_path)
+    improvement = score_after - score_before
+    
+    print(f"📊 RESULTS:")
+    print(f"  Before correction: {score_before:.4f}")
+    print(f"  After correction:  {score_after:.4f}")
+    print(f"  Improvement:       {improvement:+.4f}")
+    print(f"  Shifts detected:   {np.count_nonzero(shifts)}/{shifts.size} ({100*np.count_nonzero(shifts)/shifts.size:.1f}%)")
+    print(f"  Max shift:         {np.max(np.abs(shifts)):.3f} pixels")
+    print(f"  Mean shift:        {np.mean(np.abs(shifts)):.3f} pixels")
+    
+    if improvement > 0:
+        print("✅ SUCCESS: Drift correction improved alignment!")
+    else:
+        print("⚠️  Minimal improvement - data may have little drift")
+        
+    return improvement
+
+
+
 
 
 def main() -> None:
@@ -725,15 +841,15 @@ def main() -> None:
                        choices=["first", "previous", "mean", "mean10"],
                        help="Frame to use as reference ('first', 'previous', 'mean', 'mean10')")
 
-    parser.add_argument("--upsample-factor", type=int, default=1,
-                       help="Subpixel precision factor (1=pixel, higher=subpixel)")
+    parser.add_argument("--upsample-factor", type=int, default=5,
+                       help="Subpixel precision factor (1=pixel, 5=recommended subpixel, higher=more precise)")
     parser.add_argument("--shift-mode", type=str, default="constant",
                        choices=["constant", "nearest", "reflect", "wrap"],
                        help="How to handle out-of-bounds pixels when applying shifts")
     parser.add_argument("--shift-cval", type=float, default=0.0,
                        help="Constant value for out-of-bounds pixels (when shift-mode=constant)")
-    parser.add_argument("--gaussian-sigma", type=float, default=1.0,
-                       help="Gaussian smoothing sigma for preprocessing (use -1 to disable, default: 1.0)")
+    parser.add_argument("--gaussian-sigma", type=float, default=-1.0,
+                       help="Gaussian smoothing sigma for preprocessing (use -1 to disable, default: -1.0=disabled)")
     parser.add_argument("--no-gpu", action="store_true",
                        help="Disable GPU acceleration for shift application")
     
@@ -909,10 +1025,11 @@ def main() -> None:
     logger.info(f"Drift correction pipeline completed. Processed {len(input_files)} files.")
 
 if __name__ == "__main__":
-    #main()  # Run main function with argument parsing disabled duriing debugging
+    #main()  # Run main function with argument parsing disabled during debugging
     #test_1_synthetic()  # Perfect accuracy
     #test_2_frameroll()  # Perfect accuracy
-    test_3_real_data()  # Not working
+    #test_3_real_data_original()  # Comprehensive analysis
+    test_3_real_data_optimized()  # Optimized solution
 
     
 
