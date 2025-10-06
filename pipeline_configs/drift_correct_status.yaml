@@ -7,4 +7,4 @@ segments:
 - name: Drift correction on real
   last_processed: "2025-10-06"
   code_version: 0.0.10
-  run_duration: 3m39.6913709s
+  run_duration: 2m42.3305878s
