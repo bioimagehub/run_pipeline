@@ -1,6 +1,6 @@
 [project]
 name = "run-pipeline"
-version = "0.0.0"
+dynamic = ["version"]
 requires-python = ">=3.11"
 description = "Pipeline runner with uv groups for per-segment envs"
 readme = "README.md"
@@ -10,6 +10,9 @@ license = "MIT"
 
 [tool.setuptools]
 packages = ["standard_code", "standard_code.python", "standard_code.python.drift_correction_utils"]
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

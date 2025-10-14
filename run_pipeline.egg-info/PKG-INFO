@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: run-pipeline
-Version: 0.0.0
+Version: 0.0.10
 Summary: Pipeline runner with uv groups for per-segment envs
 License-Expression: MIT
 Requires-Python: >=3.11
