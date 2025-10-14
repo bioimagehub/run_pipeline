@@ -6,6 +6,12 @@ _*
 *.pyc
 *.log
 
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+
 # Ignore all folders inside pipeline_configs/
 pipeline_configs/*/
 
