@@ -2,5 +2,10 @@ segments:
 - name: phase cross correlations with GPU on Test 2
   content_hash: 2c31e63b612a9bdedeb4f2ee460438d30c8370897212acfe2c6a09a2982a453c
   last_processed: "2025-10-14"
-  code_version: 0.0.10
-  run_duration: 36.0720112s
+  code_version: 0.0.11
+  run_duration: 10.4757042s
+- name: phase cross correlations with GPU on Test 2 with first frame as reference
+  content_hash: 1dd614842a2b572fc06354f6ee216a1a2f5682f7eef40cccc3e4ff8c98f75cde
+  last_processed: "2025-10-14"
+  code_version: 0.0.11
+  run_duration: 10.3343932s

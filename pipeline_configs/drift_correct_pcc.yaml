@@ -34,3 +34,21 @@ run:
   
   # ========== GPU Acceleration ==========
   - --gpu  # Uncomment to use GPU acceleration
+- name: phase cross correlations with GPU on Test 2 with first frame as reference
+  environment: uv:drift_correct
+  commands:
+  - python: '%REPO%/standard_code/python/drift_correction.py'
+  
+  # ========== Input/Output Arguments ==========
+  - --input-search-pattern: '%TEST_FOLDER%/drift/input/test_2/1_Meng_timecrop_template_rolled-t15.tif'  # Input file pattern (supports wildcards)
+  - --output-folder: '%TEST_FOLDER%/drift/output/test_2'  # Output folder for corrected images
+  - --output-suffix: '_phase_cor_gpu_first'  # Suffix to add to output filenames (default: _drift_corrected)
+  
+  # ========== Drift Correction Parameters ==========
+  - --method: phase_cross_correlation  # Algorithm: phase_cross_correlation, stackreg_translation
+  - --reference: first  # Reference frame: first, previous
+  - --reference-channel: 0  # Channel index for registration (0-based, default: 0)
+  - --upsample-factor: 10  # Subpixel precision (10 = 0.1 pixel, 100 = 0.01 pixel)
+  
+  # ========== GPU Acceleration ==========
+  - --gpu  # Uncomment to use GPU acceleration
