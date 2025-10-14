@@ -1,0 +1,5 @@
+segments:
+- name: phase cross correlations with GPU
+  last_processed: "2025-10-14"
+  code_version: 0.0.10
+  run_duration: 38.2639189s
