@@ -530,7 +530,5 @@ def test_synthetic_2d():
     print(f"  Corrected Score: {score_corrected:.4f}")
     print(f"  Ground Truth Score: {score_ground_truth:.4f}")
 
-
-
 if __name__ == "__main__":
     test_synthetic_2d()

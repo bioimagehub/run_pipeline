@@ -20,10 +20,10 @@ standard_code/python/mask_get_edges.py
 standard_code/python/mask_measure.py
 standard_code/python/mask_substract.py
 standard_code/python/merge_channels.py
+standard_code/python/progress_manager.py
 standard_code/python/rename_files.py
 standard_code/python/rename_folder.py
 standard_code/python/segment_ilastik.py
 standard_code/python/segment_nellie.py
 standard_code/python/segment_threshold.py
-standard_code/python/test_python.py
 standard_code/python/track_indexed_mask.py

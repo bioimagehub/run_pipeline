@@ -69,3 +69,7 @@
 - currently we are using %REPO% and %YAML% as relative paths. but lets add the option for more
 - for example if %TEST_FOLDER% are found then look in the .env file for a tag called TEST_FOLDER.
 - if not found then ask the user to either type in the path or add to env. if the path is not found then trow an error. 
+
+
+
+## Mean10 not working

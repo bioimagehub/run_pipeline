@@ -8,3 +8,20 @@ segments:
   last_processed: "2025-10-06"
   code_version: 0.0.10
   run_duration: 2m42.3305878s
+- name: Drift correction - cropped test data
+  last_processed: "2025-10-14"
+  code_version: 0.0.10
+  run_duration: 5m34.905813s
+- name: Drift correction - live cells
+- name: phase cross correlations no GPU
+  last_processed: "2025-10-14"
+  code_version: 0.0.10
+  run_duration: 57.5976066s
+- name: phase cross correlations with GPU
+  last_processed: "2025-10-14"
+  code_version: 0.0.10
+  run_duration: 1m2.2666131s
+- name: pystackreg no GPU
+  last_processed: "2025-10-14"
+  code_version: 0.0.10
+  run_duration: 1m44.5671838s

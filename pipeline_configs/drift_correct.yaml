@@ -1,87 +1,74 @@
+# ============================================================================
+# Drift Correction Pipeline - Translation-Only Registration
+# ============================================================================
+# 
+# This pipeline performs translation-only (XYZ shifts) drift correction using
+# minimal implementations that wrap established libraries:
+#   - phase_cross_correlation: Uses scikit-image (CPU) or cuCIM (GPU)
+#   - stackreg_translation: Uses pystackreg (ImageJ TurboReg)
+#
+# ⚠️ TRANSLATION ONLY: No rotation, scaling, or non-linear transformations
+#
+# Usage:
+#   .\run_pipeline.exe drift_correct.yaml
+#
+# Environment: drift_correct (includes scikit-image, pystackreg, cupy)
+# ============================================================================
+
 run:
-- name: Drift cropped version
+- name: phase cross correlations no GPU
   environment: uv:drift_correct
   commands:
   - python: '%REPO%/standard_code/python/drift_correction.py'
   
   # ========== Input/Output Arguments ==========
-  - --input-search-pattern: '%TEST_FOLDER%/drift/input/test_3/*.tif'  # Input file pattern (supports wildcards)
-  - --output-folder: '%TEST_FOLDER%/drift/input/test_3'
-  # - --search-subfolders  # Uncomment to search subfolders recursively
-  # - --collapse-delimiter: '__'  # Delimiter for collapsing nested folder names (default: __)
+  - --input-search-pattern: '%TEST_FOLDER%/drift/input/test_2/1_Meng_timecrop_template_rolled-t15.tif'  # Input file pattern (supports wildcards)
+  - --output-folder: '%TEST_FOLDER%/drift/output/test_2'  # Output folder for corrected images
+  - --output-suffix: '_phase_cor'  # Suffix to add to output filenames (default: _drift_corrected)
   
   # ========== Drift Correction Parameters ==========
-  - --algorithm: phase_correlation  # Algorithm to use: phase_correlation, mock (default: phase_correlation)
-  - --reference-channel: 0  # Channel index for drift detection, 0-based (default: 0)
-  - --reference-frame: previous  # Reference frame: first, previous, mean, mean10 (default: first)
-  - --upsample-factor: 5  # Subpixel precision: 1=pixel, 5=recommended, higher=more precise (default: 5)
-
-  # ========== Shift Application Parameters ==========
-  # - --shift-mode: constant  # Out-of-bounds handling: constant, nearest, reflect, wrap (default: constant)
-  # - --shift-cval: 0.0  # Constant value for out-of-bounds pixels when shift-mode=constant (default: 0.0)
+  - --method: phase_cross_correlation  # Algorithm: phase_cross_correlation, stackreg_translation
+  - --reference: previous  # Reference frame: first, previous
+  - --reference-channel: 0  # Channel index for registration (0-based, default: 0)
+  - --upsample-factor: 10  # Subpixel precision (10 = 0.1 pixel, 100 = 0.01 pixel)
   
-  # ========== Preprocessing Parameters ==========
-  - --gaussian-sigma: 0  # Gaussian smoothing sigma for preprocessing, -1 to disable (default: -1.0)
-  
-  # ========== Output Options ==========
-  # - --no-save-shifts  # Uncomment to skip saving shift arrays as .npy files
-  # - --no-save-metadata  # Uncomment to skip saving processing metadata as .yaml files
-  - --output-file-name-extension: _corrected_args  # Extension to add to output filenames (default: _drift_corrected)
+  # ========== GPU Acceleration ==========
+  # - --gpu  # Uncomment to use GPU acceleration (requires cuCIM)
 
-  # ========== Processing Options ==========
-  # - --no-gpu  # Uncomment to disable GPU acceleration for shift application
-  # - --no-parallel  # Uncomment to disable parallel processing
-  # - --n-jobs: -1  # Number of parallel jobs, -1 for all cores (default: -1)
-  
-  # ========== Utility Options ==========
-  # - --list-algorithms  # List available algorithms and exit (for testing)
-  # - --test-all  # Test all algorithms on test data and exit (for development)
-  # - --test-image: /path/to/test.tif  # Custom test image path for --test-all
-  # - --dry-run  # Print planned actions but don't process files (for debugging)
-  # - --version  # Print version and exit
-
-run:
-- name: Drift correction on real
+- name: phase cross correlations with GPU
   environment: uv:drift_correct
   commands:
   - python: '%REPO%/standard_code/python/drift_correction.py'
   
   # ========== Input/Output Arguments ==========
-  - --input-search-pattern: '%TEST_FOLDER%/drift/input/live_cells/*.nd2'  # Input file pattern (supports wildcards)
-  - --output-folder: '%TEST_FOLDER%/drift/input/live_cells'
-  # - --search-subfolders  # Uncomment to search subfolders recursively
-  # - --collapse-delimiter: '__'  # Delimiter for collapsing nested folder names (default: __)
+  - --input-search-pattern: '%TEST_FOLDER%/drift/input/test_2/1_Meng_timecrop_template_rolled-t15.tif'  # Input file pattern (supports wildcards)
+  - --output-folder: '%TEST_FOLDER%/drift/output/test_2'  # Output folder for corrected images
+  - --output-suffix: '_phase_cor_gpu'  # Suffix to add to output filenames (default: _drift_corrected)
   
   # ========== Drift Correction Parameters ==========
-  - --algorithm: phase_correlation  # Algorithm to use: phase_correlation, mock (default: phase_correlation)
-  - --reference-channel: 0  # Channel index for drift detection, 0-based (default: 0)
-  - --reference-frame: previous  # Reference frame: first, previous, mean, mean10 (default: first)
-  - --upsample-factor: 5  # Subpixel precision: 1=pixel, 5=recommended, higher=more precise (default: 5)
-
-  # ========== Shift Application Parameters ==========
-  # - --shift-mode: constant  # Out-of-bounds handling: constant, nearest, reflect, wrap (default: constant)
-  # - --shift-cval: 0.0  # Constant value for out-of-bounds pixels when shift-mode=constant (default: 0.0)
+  - --method: phase_cross_correlation  # Algorithm: phase_cross_correlation, stackreg_translation
+  - --reference: previous  # Reference frame: first, previous
+  - --reference-channel: 0  # Channel index for registration (0-based, default: 0)
+  - --upsample-factor: 10  # Subpixel precision (10 = 0.1 pixel, 100 = 0.01 pixel)
   
-  # ========== Preprocessing Parameters ==========
-  - --gaussian-sigma: 0  # Gaussian smoothing sigma for preprocessing, -1 to disable (default: -1.0)
-  
-  # ========== Output Options ==========
-  # - --no-save-shifts  # Uncomment to skip saving shift arrays as .npy files
-  # - --no-save-metadata  # Uncomment to skip saving processing metadata as .yaml files
-  - --output-file-name-extension: _corrected_args  # Extension to add to output filenames (default: _drift_corrected)
+  # ========== GPU Acceleration ==========
+  - --gpu  # Uncomment to use GPU acceleration (requires cuCIM)
 
-  # ========== Processing Options ==========
-  # - --no-gpu  # Uncomment to disable GPU acceleration for shift application
-  # - --no-parallel  # Uncomment to disable parallel processing
-  # - --n-jobs: -1  # Number of parallel jobs, -1 for all cores (default: -1)
+- name: pystackreg no GPU
+  environment: uv:drift_correct
+  commands:
+  - python: '%REPO%/standard_code/python/drift_correction.py'
   
-  # ========== Utility Options ==========
-  # - --list-algorithms  # List available algorithms and exit (for testing)
-  # - --test-all  # Test all algorithms on test data and exit (for development)
-  # - --test-image: /path/to/test.tif  # Custom test image path for --test-all
-  # - --dry-run  # Print planned actions but don't process files (for debugging)
-  # - --version  # Print version and exit
-
-- name: stop_pipeline
-  type: stop
-  message: stopping
+  # ========== Input/Output Arguments ==========
+  - --input-search-pattern: '%TEST_FOLDER%/drift/input/test_2/1_Meng_timecrop_template_rolled-t15.tif'  # Input file pattern (supports wildcards)
+  - --output-folder: '%TEST_FOLDER%/drift/output/test_2'  # Output folder for corrected images
+  - --output-suffix: '_stackreg'  # Suffix to add to output filenames (default: _drift_corrected)
+  
+  # ========== Drift Correction Parameters ==========
+  - --method: stackreg_translation  # Algorithm: phase_cross_correlation, stackreg_translation
+  - --reference: previous  # Reference frame: first, previous
+  - --reference-channel: 0  # Channel index for registration (0-based, default: 0)
+  - --upsample-factor: 10  # Subpixel precision (10 = 0.1 pixel, 100 = 0.01 pixel)
+  
+  # ========== GPU Acceleration ==========
+  # - --gpu  # Uncomment to use GPU acceleration (requires cuCIM)
