@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 def stackreg_register(
     zyx_stack: np.ndarray,
-    reference: Literal["first", "previous", "mean"] = "first"
+    reference: Literal["first", "previous", "mean"] = "first",
+    bandpass_low_sigma: Optional[float] = None,
+    bandpass_high_sigma: Optional[float] = None
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """
     StackReg TRANSLATION-ONLY registration using pystackreg.
@@ -41,6 +43,14 @@ def stackreg_register(
         - "first": Register all frames to T=0
         - "previous": Register each frame to previous frame
         - "mean": Register to mean projection (computed by StackReg)
+    bandpass_low_sigma : Optional[float]
+        Lower sigma for Difference of Gaussians (DoG) bandpass filter.
+        Suppresses structures smaller than this value (e.g., 20 for vesicles).
+        Must be specified with bandpass_high_sigma. Default: None (no filtering)
+    bandpass_high_sigma : Optional[float]
+        Upper sigma for Difference of Gaussians (DoG) bandpass filter.
+        Preserves structures larger than this value (e.g., 100 for cells).
+        Must be specified with bandpass_low_sigma. Default: None (no filtering)
     
     Returns
     -------
@@ -61,6 +71,8 @@ def stackreg_register(
     - "mean" reference is computed by StackReg internally for stability
     - pystackreg.StackReg.register_transform_stack() is used with 
       transformation=StackReg.TRANSLATION
+    - DoG bandpass filtering is applied BEFORE registration to suppress
+      unwanted features (e.g., bright vesicles in cell tracking)
       
     Raises
     ------
@@ -81,6 +93,31 @@ def stackreg_register(
     
     logger.info(f"StackReg TRANSLATION mode - {'2D' if is_2d else '3D'} registration")
     logger.info(f"Reference: {reference}")
+    
+    # Apply DoG bandpass filter if requested
+    if bandpass_low_sigma is not None and bandpass_high_sigma is not None:
+        from skimage.filters import difference_of_gaussians
+        logger.info(f"Applying DoG bandpass filter (low={bandpass_low_sigma}, high={bandpass_high_sigma})")
+        filtered_stack = np.zeros_like(zyx_stack, dtype=np.float32)
+        for t in range(T):
+            if is_2d:
+                filtered_stack[t] = difference_of_gaussians(
+                    zyx_stack[t].astype(np.float32),
+                    bandpass_low_sigma,
+                    bandpass_high_sigma
+                )
+            else:
+                # Apply DoG to each Z-slice for 3D data
+                for z in range(zyx_stack.shape[1]):
+                    filtered_stack[t, z] = difference_of_gaussians(
+                        zyx_stack[t, z].astype(np.float32),
+                        bandpass_low_sigma,
+                        bandpass_high_sigma
+                    )
+        zyx_stack = filtered_stack
+        logger.info("DoG filtering complete")
+    elif (bandpass_low_sigma is None) != (bandpass_high_sigma is None):
+        logger.warning("Both bandpass_low_sigma and bandpass_high_sigma must be specified for filtering. Skipping DoG filter.")
     
     # Validate reference
     if reference not in ["first", "previous", "mean"]:

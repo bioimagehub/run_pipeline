@@ -16,7 +16,7 @@ Copyright (c) 2024 BIPHUB - Bioimage Informatics Hub, University of Oslo
 """
 
 import logging
-from typing import Tuple, Union, Literal
+from typing import Tuple, Union, Literal, Optional
 import numpy as np
 from scipy.ndimage import shift as scipy_shift
 
@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 def phase_cross_correlation_cpu(
     zyx_stack: np.ndarray,
     reference: Union[Literal["first", "previous", "mean", "median"], int] = "first",
-    upsample_factor: int = 10
+    upsample_factor: int = 10,
+    bandpass_low_sigma: Optional[float] = None,
+    bandpass_high_sigma: Optional[float] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     CPU-based phase cross-correlation using scikit-image.
@@ -49,6 +51,14 @@ def phase_cross_correlation_cpu(
         - int: Register all frames to specific timepoint T=N
     upsample_factor : int
         Subpixel accuracy (10 = 0.1 pixel, 100 = 0.01 pixel precision)
+    bandpass_low_sigma : Optional[float]
+        Lower sigma for Difference of Gaussians (DoG) bandpass filter.
+        Suppresses structures smaller than this value (e.g., 20 for vesicles).
+        Must be specified with bandpass_high_sigma. Default: None (no filtering)
+    bandpass_high_sigma : Optional[float]
+        Upper sigma for Difference of Gaussians (DoG) bandpass filter.
+        Preserves structures larger than this value (e.g., 100 for cells).
+        Must be specified with bandpass_low_sigma. Default: None (no filtering)
     
     Returns
     -------
@@ -67,14 +77,41 @@ def phase_cross_correlation_cpu(
     - "mean"/"median" compute a reference projection first, then register 
       all frames to this stable reference (good for noisy data)
     - Integer reference allows registering to any stable timepoint
+    - DoG bandpass filtering is applied BEFORE registration to suppress
+      unwanted features (e.g., bright vesicles in cell tracking)
     """
     from skimage.registration import phase_cross_correlation
+    from skimage.filters import difference_of_gaussians
     
     T = zyx_stack.shape[0]
     is_2d = zyx_stack.ndim == 3  # (T, Y, X)
     
     logger.info(f"Phase cross-correlation (CPU) - {'2D' if is_2d else '3D'} registration")
     logger.info(f"Reference: {reference}, Upsample factor: {upsample_factor}")
+    
+    # Apply DoG bandpass filter if requested
+    if bandpass_low_sigma is not None and bandpass_high_sigma is not None:
+        logger.info(f"Applying DoG bandpass filter (low={bandpass_low_sigma}, high={bandpass_high_sigma})")
+        filtered_stack = np.zeros_like(zyx_stack, dtype=np.float32)
+        for t in range(T):
+            if is_2d:
+                filtered_stack[t] = difference_of_gaussians(
+                    zyx_stack[t].astype(np.float32),
+                    bandpass_low_sigma,
+                    bandpass_high_sigma
+                )
+            else:
+                # Apply DoG to each Z-slice for 3D data
+                for z in range(zyx_stack.shape[1]):
+                    filtered_stack[t, z] = difference_of_gaussians(
+                        zyx_stack[t, z].astype(np.float32),
+                        bandpass_low_sigma,
+                        bandpass_high_sigma
+                    )
+        zyx_stack = filtered_stack
+        logger.info("DoG filtering complete")
+    elif (bandpass_low_sigma is None) != (bandpass_high_sigma is None):
+        logger.warning("Both bandpass_low_sigma and bandpass_high_sigma must be specified for filtering. Skipping DoG filter.")
     
     # Prepare reference frame
     if reference == "first":
@@ -283,7 +320,9 @@ def _phase_cross_correlation_cupy(a: np.ndarray, b: np.ndarray, upsample_factor:
 def phase_cross_correlation_gpu(
     zyx_stack: np.ndarray,
     reference: Union[Literal["first", "previous", "mean", "median"], int] = "first",
-    upsample_factor: int = 10
+    upsample_factor: int = 10,
+    bandpass_low_sigma: Optional[float] = None,
+    bandpass_high_sigma: Optional[float] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     GPU-accelerated phase cross-correlation using CuPy (optimized for speed).
@@ -332,6 +371,29 @@ def phase_cross_correlation_gpu(
     logger.info(f"Transferring {zyx_stack.nbytes / 1e9:.2f} GB to GPU memory...")
     zyx_stack_gpu = cp.asarray(zyx_stack, dtype=cp.float32)
     logger.info("GPU transfer complete")
+    
+    # Apply DoG bandpass filter on GPU (MUCH faster than CPU!)
+    if bandpass_low_sigma is not None and bandpass_high_sigma is not None:
+        from cupyx.scipy.ndimage import gaussian_filter as gpu_gaussian_filter
+        logger.info(f"Applying DoG bandpass filter ON GPU (low={bandpass_low_sigma}, high={bandpass_high_sigma})")
+        
+        # Process each timepoint
+        for t in range(T):
+            if is_2d:
+                # 2D: Apply DoG directly
+                low_filtered = gpu_gaussian_filter(zyx_stack_gpu[t], sigma=bandpass_low_sigma)
+                high_filtered = gpu_gaussian_filter(zyx_stack_gpu[t], sigma=bandpass_high_sigma)
+                zyx_stack_gpu[t] = high_filtered - low_filtered
+            else:
+                # 3D: Apply DoG to each Z-slice
+                for z in range(zyx_stack_gpu.shape[1]):
+                    low_filtered = gpu_gaussian_filter(zyx_stack_gpu[t, z], sigma=bandpass_low_sigma)
+                    high_filtered = gpu_gaussian_filter(zyx_stack_gpu[t, z], sigma=bandpass_high_sigma)
+                    zyx_stack_gpu[t, z] = high_filtered - low_filtered
+        
+        logger.info("GPU DoG filtering complete (data stayed on GPU)")
+    elif (bandpass_low_sigma is None) != (bandpass_high_sigma is None):
+        logger.warning("Both bandpass_low_sigma and bandpass_high_sigma must be specified for filtering. Skipping DoG filter.")
     
     # Prepare reference frame (keep on GPU!)
     if reference == "first":

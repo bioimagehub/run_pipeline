@@ -26,6 +26,8 @@ def drift_correct(
     channels_to_register: Optional[List[int]] = None,
     upsample_factor: int = 10,
     max_shift: float = 50.0,
+    bandpass_low_sigma: Optional[float] = None,
+    bandpass_high_sigma: Optional[float] = None,
 ) -> np.ndarray:
     """
     Apply TRANSLATION-ONLY drift correction to TCZYX image.
@@ -55,6 +57,14 @@ def drift_correct(
         (10 = 0.1 pixel precision, 100 = 0.01 pixel precision)
     max_shift : float
         Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)
+    bandpass_low_sigma : Optional[float]
+        Lower sigma for Difference of Gaussians (DoG) bandpass filter.
+        Suppresses structures smaller than this value (e.g., 20 for vesicles).
+        Must be specified with bandpass_high_sigma. Default: None (no filtering)
+    bandpass_high_sigma : Optional[float]
+        Upper sigma for Difference of Gaussians (DoG) bandpass filter.
+        Preserves structures larger than this value (e.g., 100 for cells).
+        Must be specified with bandpass_low_sigma. Default: None (no filtering)
     
     Returns
     -------
@@ -73,6 +83,10 @@ def drift_correct(
     --------
     >>> img = rp.load_tczyx_image("timelapse.tif")
     >>> corrected = drift_correct(img, method="phase_cross_correlation")
+    >>> rp.save_tczyx_image(corrected, "corrected.tif")
+    
+    >>> # With DoG bandpass filter to suppress vesicles and preserve cells
+    >>> corrected = drift_correct(img, bandpass_low_sigma=20, bandpass_high_sigma=100)
     >>> rp.save_tczyx_image(corrected, "corrected.tif")
     """
     # Validate inputs
@@ -127,21 +141,30 @@ def drift_correct(
             shifts, _ = phase_cross_correlation_gpu(
                 reg_data, 
                 reference=reference, 
-                upsample_factor=upsample_factor
+                upsample_factor=upsample_factor,
+                bandpass_low_sigma=bandpass_low_sigma,
+                bandpass_high_sigma=bandpass_high_sigma
             )
         else:
             logger.info("Using CPU phase cross-correlation (scikit-image)")
             shifts, _ = phase_cross_correlation_cpu(
                 reg_data, 
                 reference=reference, 
-                upsample_factor=upsample_factor
+                upsample_factor=upsample_factor,
+                bandpass_low_sigma=bandpass_low_sigma,
+                bandpass_high_sigma=bandpass_high_sigma
             )
     
     elif method == "stackreg_translation":
         from standard_code.python.drift_correction_utils.pystackreg import stackreg_register
         
         logger.info("Using StackReg TRANSLATION mode")
-        shifts, _ = stackreg_register(reg_data, reference=reference)
+        shifts, _ = stackreg_register(
+            reg_data, 
+            reference=reference,
+            bandpass_low_sigma=bandpass_low_sigma,
+            bandpass_high_sigma=bandpass_high_sigma
+        )
     else:
         raise ValueError(f"Unknown method: {method}")
     
@@ -275,6 +298,18 @@ if __name__ == "__main__":
         default=50.0,
         help="Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)"
     )
+    parser.add_argument(
+        "--bandpass-low-sigma",
+        type=float,
+        default=None,
+        help="Lower sigma for DoG bandpass filter (suppresses structures smaller than this, e.g., 20 for vesicles). Must be used with --bandpass-high-sigma"
+    )
+    parser.add_argument(
+        "--bandpass-high-sigma",
+        type=float,
+        default=None,
+        help="Upper sigma for DoG bandpass filter (preserves structures larger than this, e.g., 100 for cells). Must be used with --bandpass-low-sigma"
+    )
     
     args = parser.parse_args()
     
@@ -325,7 +360,9 @@ if __name__ == "__main__":
                 use_gpu=args.gpu,
                 channels_to_register=[args.reference_channel],
                 upsample_factor=args.upsample_factor,
-                max_shift=args.max_shift
+                max_shift=args.max_shift,
+                bandpass_low_sigma=args.bandpass_low_sigma,
+                bandpass_high_sigma=args.bandpass_high_sigma
             )
             
             # Save result
