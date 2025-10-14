@@ -7,7 +7,6 @@ run:
   - --input-search-pattern: ./input_T10C2_Phaffin-M4K
   - --drift-correct-channel: 0
   - --collapse-delimiter: __
-  last_processed: "2025-09-11"
 - name: Convert C4 cyt/nuc folder to tif (no projection)
   environment: convert_to_tif
   commands:
@@ -15,7 +14,6 @@ run:
   - ./standard_code/python/convert_to_tif.py
   - --input-search-pattern: ./input_C4_cyt1_cyt2_cyt3_nuc
   - --collapse-delimiter: __
-  last_processed: "2025-09-11"
 - name: Merge channels for Cellpose (cyt=sum of 0,1,2; nuc=3)
   environment: convert_to_tif
   commands:
@@ -24,7 +22,6 @@ run:
   - --input-folder: ./input_C4_cyt1_cyt2_cyt3_nuc_tif
   - --output-folder: ./cellpose_input/merged
   - --merge-channels: '[[0,1,2],[3]]'
-  last_processed: "2025-09-11"
 - name: Run Cellpose on cytoplasm (chan=0, chan2=1)
   environment: cellpose3
   commands:
@@ -41,7 +38,6 @@ run:
   - --cellprob_threshold: -4
   - --exclude_on_edges
   - --verbose
-  last_processed: "2025-09-11"
 - name: Run Cellpose on nucleus (chan=1 only)
   environment: cellpose3
   commands:
@@ -58,7 +54,6 @@ run:
   - --diameter: 250
   - --exclude_on_edges
   - --verbose
-  last_processed: "2025-09-11"
 - name: Convert C2Z38 ER-FA to tif (no projection)
   environment: convert_to_tif
   commands:
@@ -66,7 +61,6 @@ run:
   - ./standard_code/python/convert_to_tif.py
   - --input-search-pattern: ./input_C2Z38_ER-FA
   - --collapse-delimiter: __
-  last_processed: "2025-09-11"
 - name: Segment with Nellie on ER-FA
   environment: nellie
   commands:
@@ -75,4 +69,3 @@ run:
   - --input-search-pattern: ./input_C2Z38_ER-FA_tif/*.tif
   - --output-dir: ./nellie_output
   - --ch: 0
-  last_processed: "2025-09-11"

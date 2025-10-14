@@ -117,7 +117,7 @@ def drift_correct(
     # Compute shifts using selected method
     shifts: np.ndarray
     if method == "phase_cross_correlation":
-        from standard_code.python.drift_correction.phase_cross_correlation import (
+        from standard_code.python.drift_correction_utils.phase_cross_correlation import (
             phase_cross_correlation_cpu,
             phase_cross_correlation_gpu
         )
@@ -138,7 +138,7 @@ def drift_correct(
             )
     
     elif method == "stackreg_translation":
-        from standard_code.python.drift_correction.pystackreg import stackreg_register
+        from standard_code.python.drift_correction_utils.pystackreg import stackreg_register
         
         logger.info("Using StackReg TRANSLATION mode")
         shifts, _ = stackreg_register(reg_data, reference=reference)

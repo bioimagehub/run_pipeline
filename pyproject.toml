@@ -9,7 +9,7 @@ license = "MIT"
 # Example add new package: uv add --group drift-correct "scikit-image>=0.19.0" 
 
 [tool.setuptools]
-packages = ["standard_code", "standard_code.python"]
+packages = ["standard_code", "standard_code.python", "standard_code.python.drift_correction_utils"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

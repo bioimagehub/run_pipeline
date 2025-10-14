@@ -27,3 +27,8 @@ standard_code/python/segment_ilastik.py
 standard_code/python/segment_nellie.py
 standard_code/python/segment_threshold.py
 standard_code/python/track_indexed_mask.py
+standard_code/python/drift_correction_utils/__init__.py
+standard_code/python/drift_correction_utils/drift_correct_utils.py
+standard_code/python/drift_correction_utils/phase_cross_correlation.py
+standard_code/python/drift_correction_utils/pystackreg.py
+standard_code/python/drift_correction_utils/synthetic_data_generators.py

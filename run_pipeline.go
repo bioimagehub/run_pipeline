@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath" // Added for handling file paths
 	"reflect"
 	"run_pipeline/go/find_anaconda_path"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,7 +36,8 @@ type Config struct {
 
 // SegmentStatus holds execution status for a single segment
 type SegmentStatus struct {
-	Name          string `yaml:"name"`                     // The name of the segment
+	Name          string `yaml:"name"`                     // The name of the segment (for human readability)
+	ContentHash   string `yaml:"content_hash"`             // Hash of segment content (primary matching key)
 	LastProcessed string `yaml:"last_processed,omitempty"` // Timestamp of when this segment was last processed
 	CodeVersion   string `yaml:"code_version,omitempty"`   // Git version/tag/commit hash used when this segment was processed
 	RunDuration   string `yaml:"run_duration,omitempty"`   // Wall-clock duration of this segment (e.g., "1m23.456s")
@@ -340,35 +343,109 @@ func getVersion() string {
 	return getGitVersion()
 }
 
+// computeSegmentHash creates a deterministic hash of a segment's content
+// Includes: name, type, message, environment, and all commands
+// This hash is used to detect if a segment has been modified
+func computeSegmentHash(segment Segment) string {
+	var builder strings.Builder
+
+	// Include all fields that define the segment's behavior
+	builder.WriteString("name:")
+	builder.WriteString(segment.Name)
+	builder.WriteString("|type:")
+	builder.WriteString(segment.Type)
+	builder.WriteString("|msg:")
+	builder.WriteString(segment.Message)
+	builder.WriteString("|env:")
+	builder.WriteString(segment.Environment)
+	builder.WriteString("|cmds:")
+
+	// Process commands deterministically
+	for _, cmd := range segment.Commands {
+		switch v := cmd.(type) {
+		case string:
+			builder.WriteString(v)
+			builder.WriteString("|")
+		case map[interface{}]interface{}:
+			// Sort keys for deterministic ordering
+			keys := make([]string, 0, len(v))
+			for k := range v {
+				keys = append(keys, fmt.Sprintf("%v", k))
+			}
+			sort.Strings(keys)
+
+			for _, k := range keys {
+				builder.WriteString(k)
+				builder.WriteString("=")
+				builder.WriteString(fmt.Sprintf("%v", v[k]))
+				builder.WriteString(";")
+			}
+			builder.WriteString("|")
+		}
+	}
+
+	// Compute SHA256 hash
+	hash := sha256.Sum256([]byte(builder.String()))
+	return fmt.Sprintf("%x", hash)
+}
+
+// determineForcePoint finds the first segment that needs reprocessing
+// Returns -1 if all segments are up to date
+// Returns the index of the first segment that triggers force mode otherwise
+func determineForcePoint(config Config, status Status) int {
+	// Build hash map from status file for O(1) lookup
+	statusByHash := make(map[string]SegmentStatus)
+	for _, s := range status.Segments {
+		statusByHash[s.ContentHash] = s
+	}
+
+	for i, segment := range config.Run {
+		// Skip special control types (but trigger on force type)
+		stepType := strings.ToLower(segment.Type)
+		if stepType == "pause" || stepType == "stop" {
+			continue
+		}
+		if stepType == "force" {
+			fmt.Printf("→ Force mode triggered by explicit 'force' step at '%s'\n", segment.Name)
+			return i
+		}
+
+		// Compute current hash
+		currentHash := computeSegmentHash(segment)
+
+		// Check if this exact segment (by hash) was processed before
+		prevStatus, exists := statusByHash[currentHash]
+
+		if !exists {
+			fmt.Printf("→ Segment '%s' not found in status (new or modified)\n", segment.Name)
+			return i
+		}
+
+		if prevStatus.LastProcessed == "" {
+			fmt.Printf("→ Segment '%s' exists in status but was never completed\n", segment.Name)
+			return i
+		}
+
+		// Segment matches and was completed - continue checking
+	}
+
+	return -1 // All segments up to date
+}
+
 // loadOrCreateStatus loads existing status file or creates a new one
-func loadOrCreateStatus(statusPath string, segmentNames []string) Status {
+func loadOrCreateStatus(statusPath string, segments []Segment) Status {
 	var status Status
 
 	// Try to load existing status file
 	if data, err := os.ReadFile(statusPath); err == nil {
 		if err := yaml.Unmarshal(data, &status); err == nil {
 			// Status file loaded successfully
-			// Ensure all segments from config are present in status
-			statusMap := make(map[string]*SegmentStatus)
-			for i := range status.Segments {
-				statusMap[status.Segments[i].Name] = &status.Segments[i]
-			}
-
-			// Add missing segments
-			for _, name := range segmentNames {
-				if _, exists := statusMap[name]; !exists {
-					status.Segments = append(status.Segments, SegmentStatus{Name: name})
-				}
-			}
 			return status
 		}
 	}
 
-	// Create new status with all segment names
-	status.Segments = make([]SegmentStatus, len(segmentNames))
-	for i, name := range segmentNames {
-		status.Segments[i] = SegmentStatus{Name: name}
-	}
+	// Create new empty status (segments will be added as they're processed)
+	status.Segments = make([]SegmentStatus, 0)
 	return status
 }
 
@@ -386,10 +463,10 @@ func saveStatus(statusPath string, status Status) error {
 	return nil
 }
 
-// getSegmentStatus finds the status entry for a given segment name
-func getSegmentStatus(status *Status, segmentName string) *SegmentStatus {
+// getSegmentStatus finds the status entry for a given segment hash
+func getSegmentStatus(status *Status, contentHash string) *SegmentStatus {
 	for i := range status.Segments {
-		if status.Segments[i].Name == segmentName {
+		if status.Segments[i].ContentHash == contentHash {
 			return &status.Segments[i]
 		}
 	}
@@ -445,6 +522,116 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 	return cmdArgs
 }
 
+// ensureUvEnvironment ensures the environment-specific .venv exists with required dependency group installed
+// Creates separate .venv_<group> directories for isolation (like conda envs)
+// Only syncs if the specific .venv_<group> doesn't exist
+func ensureUvEnvironment(mainProgramDir string, environment string) string {
+	// Extract group name from environment string
+	// Supports: "uv:group", "uv@3.11:group", etc.
+	groupName := extractUvGroup(environment)
+	if groupName == "" {
+		log.Fatalf("Invalid UV environment format: %s (expected 'uv:group' or 'uv@3.11:group')", environment)
+	}
+
+	// Create environment-specific venv directory: .venv_<group>
+	venvName := fmt.Sprintf(".venv_%s", groupName)
+	venvPath := filepath.Join(mainProgramDir, venvName)
+
+	// Check if this specific environment already exists
+	if isDirectory(venvPath) {
+		// Environment exists, assume it's up to date
+		// Users can delete .venv_<group> to force reinstall
+		return venvPath
+	}
+
+	// Environment doesn't exist, create it with uv venv + uv pip install
+	fmt.Printf("Creating UV environment for '%s' (first time setup)...\n", groupName)
+	fmt.Printf("Installing dependency group: %s\n", groupName)
+
+	uvExe := findUvExecutable(mainProgramDir)
+	if uvExe == "" {
+		log.Fatal("UV executable not found. Please install UV.")
+	}
+
+	// Step 1: Create the venv using uv venv
+	venvCmd := exec.Command(uvExe, "venv", venvPath)
+	venvCmd.Dir = mainProgramDir
+	venvCmd.Stdout = os.Stdout
+	venvCmd.Stderr = os.Stderr
+
+	fmt.Printf("Running: %s venv %s\n", uvExe, venvPath)
+	if err := venvCmd.Run(); err != nil {
+		log.Fatalf("Failed to create venv for '%s': %v", groupName, err)
+	}
+
+	// Step 2: Install packages using uv pip install with the specific venv
+	// This reads from pyproject.toml and installs the specified group
+	pipCmd := exec.Command(uvExe, "pip", "install", "--python", venvPath, "--group", groupName, ".")
+	pipCmd.Dir = mainProgramDir
+	pipCmd.Stdout = os.Stdout
+	pipCmd.Stderr = os.Stderr
+
+	fmt.Printf("Running: %s pip install --python %s --group %s .\n", uvExe, venvPath, groupName)
+	if err := pipCmd.Run(); err != nil {
+		log.Fatalf("Failed to install packages for '%s': %v", groupName, err)
+	}
+
+	fmt.Printf("✓ UV environment '%s' created successfully at %s\n", groupName, venvPath)
+	return venvPath
+}
+
+// extractUvGroup extracts the dependency group name from UV environment string
+// Examples: "uv:drift-correct" -> "drift-correct"
+//
+//	"uv@3.11:segment-ernet" -> "segment-ernet"
+func extractUvGroup(environment string) string {
+	env := strings.ToLower(environment)
+
+	// Handle "uv@version:group" format
+	if strings.HasPrefix(env, "uv@") {
+		parts := strings.Split(env, ":")
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+		return ""
+	}
+
+	// Handle "uv:group" format
+	if strings.HasPrefix(env, "uv:") {
+		return strings.TrimPrefix(env, "uv:")
+	}
+
+	return ""
+}
+
+// findUvExecutable locates the uv executable
+func findUvExecutable(mainProgramDir string) string {
+	// Check local candidates first
+	externalUV := filepath.Join(mainProgramDir, "external", "UV")
+	localCandidates := []string{
+		filepath.Join(externalUV, "uv.exe"),
+		filepath.Join(externalUV, "bin", "uv.exe"),
+		filepath.Join(mainProgramDir, "uv.exe"),
+		filepath.Join(mainProgramDir, "uv", "uv.exe"),
+		filepath.Join(mainProgramDir, "tools", "uv.exe"),
+		filepath.Join(mainProgramDir, "tools", "uv", "uv.exe"),
+		filepath.Join(mainProgramDir, "bin", "uv.exe"),
+	}
+
+	for _, p := range localCandidates {
+		if isFile(p) {
+			return p
+		}
+	}
+
+	// Check if uv is on PATH
+	if path, err := exec.LookPath("uv"); err == nil {
+		return path
+	}
+
+	return ""
+}
+
 // Function to prepare command arguments for uv execution
 // Expects segment.Environment to be of the form "uv:<group>"
 // makeUvCommand builds the uv command args and returns the desired Python version (if any)
@@ -454,52 +641,38 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 //	"uv@3.11:<group>"         -> forces Python 3.11
 //	default Python may be overridden with env var UV_DEFAULT_PYTHON (e.g., 3.11 or 3.10)
 func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, string) {
-	// Determine the correct uv runner prefix, installing or falling back to pipx if needed
-	cmdArgs := getUvRunnerPrefix(mainProgramDir)
+	// Ensure environment-specific .venv_<group> exists with required group
+	venvPath := ensureUvEnvironment(mainProgramDir, segment.Environment)
 
-	// Always run in isolated env to avoid picking up project .venv or system env
-	cmdArgs = append(cmdArgs, "--isolated")
+	// Build command to run Python from the environment-specific venv
+	venvPython := filepath.Join(venvPath, "Scripts", "python.exe")
+	cmdArgs := []string{venvPython}
 
-	// Extract optional Python version and group from environment string
-	envLower := strings.ToLower(segment.Environment)
-	uvPython := strings.TrimSpace(os.Getenv("UV_DEFAULT_PYTHON"))
-	if uvPython == "" {
-		uvPython = "3.11" // default for broad wheel availability
-	}
-
-	var group string
-	if strings.HasPrefix(envLower, "uv@") {
-		// format uv@<pyver>:<group>
-		rest := strings.TrimPrefix(envLower, "uv@")
-		parts := strings.SplitN(rest, ":", 2)
-		if len(parts) == 2 {
-			if parts[0] != "" {
-				uvPython = parts[0]
-			}
-			group = parts[1]
-		} else {
-			// No group specified, just a version
-			if parts[0] != "" {
-				uvPython = parts[0]
-			}
-		}
-	} else {
-		group = strings.TrimPrefix(envLower, "uv:")
-	}
-
-	if group != "" {
-		cmdArgs = append(cmdArgs, "--group", group)
-	}
-
-	// Loop through commands similar to Python/ImageJ path handling
+	// Loop through commands to build the full command line
 	for _, cmd := range segment.Commands {
 		switch v := cmd.(type) {
 		case string:
+			// Skip standalone "python" strings as we're already using venv python
+			if strings.ToLower(v) == "python" {
+				continue
+			}
 			resolved := resolvePath(v, mainProgramDir, yamlDir)
 			cmdArgs = append(cmdArgs, resolved)
 		case map[interface{}]interface{}:
 			for flag, value := range v {
-				cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
+				flagStr := fmt.Sprintf("%v", flag)
+				// Skip "python" key in maps as we're already using venv python
+				if strings.ToLower(flagStr) == "python" {
+					// Just add the value (the script path)
+					if value != nil && value != "null" {
+						valStr := fmt.Sprintf("%v", value)
+						resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+						cmdArgs = append(cmdArgs, resolved)
+					}
+					continue
+				}
+
+				cmdArgs = append(cmdArgs, flagStr)
 				if value != nil && value != "null" {
 					valStr := fmt.Sprintf("%v", value)
 					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
@@ -511,7 +684,7 @@ func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, s
 		}
 	}
 
-	return cmdArgs, uvPython
+	return cmdArgs, "" // Return empty string for uvPython since we're not using it anymore
 }
 
 // getUvRunnerPrefix ensures `uv` is available and returns the appropriate command prefix:
@@ -710,18 +883,86 @@ func main() {
 	yamlNameWithoutExt := strings.TrimSuffix(yamlBaseName, filepath.Ext(yamlBaseName))
 	statusPath := filepath.Join(yamlDir, yamlNameWithoutExt+"_status.yaml")
 
-	// Extract segment names for status initialization
-	segmentNames := make([]string, len(config.Run))
-	for i, segment := range config.Run {
-		segmentNames[i] = segment.Name
-	}
-
 	// Load or create status file
-	status := loadOrCreateStatus(statusPath, segmentNames)
+	status := loadOrCreateStatus(statusPath, config.Run)
 	fmt.Printf("Using status file: %v\n", statusPath)
 
+	// Determine where force mode should start (unless already forced via CLI)
+	forcePointIndex := -1
+	if !forceReprocessing {
+		forcePointIndex = determineForcePoint(config, status)
+
+		if forcePointIndex == -1 {
+			fmt.Println("\n✓ All segments up to date. No reprocessing needed.")
+			fmt.Println("  Use --force to run anyway.\n")
+
+			// Even when everything is up to date, ensure 1-to-1 correspondence
+			// by keeping only one status entry per config segment (in order)
+			var cleanedSegments []SegmentStatus
+			for i := 0; i < len(config.Run); i++ {
+				stepType := strings.ToLower(config.Run[i].Type)
+				if stepType == "pause" || stepType == "stop" || stepType == "force" {
+					continue // Skip control segments
+				}
+				hash := computeSegmentHash(config.Run[i])
+				// Find the status entry with this hash
+				for _, s := range status.Segments {
+					if s.ContentHash == hash {
+						cleanedSegments = append(cleanedSegments, s)
+						break // Only keep one entry per hash
+					}
+				}
+			}
+			// Only save if we actually cleaned something
+			if len(cleanedSegments) != len(status.Segments) {
+				status.Segments = cleanedSegments
+				if err := saveStatus(statusPath, status); err != nil {
+					log.Fatalf("Error saving cleaned status: %v", err)
+				}
+			}
+		} else {
+			fmt.Printf("\n⚠ Changes detected at segment %d: '%s'\n",
+				forcePointIndex+1, config.Run[forcePointIndex].Name)
+			fmt.Println("  → Force mode activated from this point onwards")
+			fmt.Println("  → Clearing status entries from this point onwards\n")
+
+			// Keep only status entries that match config segments BEFORE the force point
+			// This ensures 1-to-1 mapping between config and status
+			var keptSegments []SegmentStatus
+			for i := 0; i < forcePointIndex; i++ {
+				stepType := strings.ToLower(config.Run[i].Type)
+				if stepType == "pause" || stepType == "stop" || stepType == "force" {
+					continue // Skip control segments
+				}
+				hash := computeSegmentHash(config.Run[i])
+				// Find the status entry with this hash
+				for _, s := range status.Segments {
+					if s.ContentHash == hash {
+						keptSegments = append(keptSegments, s)
+						break // Only keep one entry per hash
+					}
+				}
+			}
+			status.Segments = keptSegments
+
+			if err := saveStatus(statusPath, status); err != nil {
+				log.Fatalf("Error saving cleaned status: %v", err)
+			}
+		}
+	} else {
+		fmt.Println("\n⚠ Force mode enabled via --force flag")
+		fmt.Println("  → All segments will be reprocessed\n")
+		forcePointIndex = 0
+	}
+
+	// Build status lookup for fast checking during execution
+	statusByHash := make(map[string]*SegmentStatus)
+	for i := range status.Segments {
+		statusByHash[status.Segments[i].ContentHash] = &status.Segments[i]
+	}
+
 	// Iterate over each segment defined in the configuration
-	for _, segment := range config.Run {
+	for i, segment := range config.Run {
 		// Handle pause and stop types
 		stepType := strings.ToLower(segment.Type)
 		switch stepType {
@@ -730,7 +971,7 @@ func main() {
 			if msg == "" {
 				msg = "Paused. Press Enter to continue."
 			}
-			fmt.Printf("[PAUSE] %s\n", msg)
+			fmt.Printf("\n[PAUSE] %s\n", msg)
 			reader := bufio.NewReader(os.Stdin)
 			_, _ = reader.ReadString('\n')
 			continue
@@ -739,40 +980,42 @@ func main() {
 			if msg == "" {
 				msg = "Stopped by stop step. Exiting."
 			}
-			fmt.Printf("[STOP] %s\n", msg)
+			fmt.Printf("\n[STOP] %s\n", msg)
 			os.Exit(0)
 		case "force":
 			msg := segment.Message
 			if msg == "" {
 				msg = "Force mode activated. All subsequent segments will be reprocessed."
 			}
-			fmt.Printf("[FORCE] %s\n", msg)
+			fmt.Printf("\n[FORCE] %s\n", msg)
+			forcePointIndex = i
 			forceReprocessing = true
 			continue
 		}
 
-		// Get status for this segment
-		segmentStatus := getSegmentStatus(&status, segment.Name)
-		if segmentStatus == nil {
-			// Segment not in status, add it
-			status.Segments = append(status.Segments, SegmentStatus{Name: segment.Name})
-			segmentStatus = &status.Segments[len(status.Segments)-1]
+		// Compute hash for this segment
+		currentHash := computeSegmentHash(segment)
+
+		// Check if we should skip this segment
+		shouldSkip := false
+		if forcePointIndex == -1 || i < forcePointIndex {
+			if prevStatus, exists := statusByHash[currentHash]; exists && prevStatus.LastProcessed != "" {
+				fmt.Printf("✓ Skipping '%s' (unchanged, completed %s)\n\n",
+					segment.Name, prevStatus.LastProcessed)
+				shouldSkip = true
+			}
 		}
 
-		// If not in forceReprocessing mode, but we hit a segment that is not processed, activate forceReprocessing for all subsequent segments
-		if !forceReprocessing && segmentStatus.LastProcessed == "" {
-			fmt.Printf("Segment %s has not been processed. \n---Activating force reprocessing for all subsequent segments.---\n\n", segment.Name)
+		if shouldSkip {
+			continue
+		}
+
+		// Activate force mode if we've reached the force point
+		if i >= forcePointIndex && forcePointIndex != -1 {
 			forceReprocessing = true
 		}
 
-		// Check if this segment has already been processed
-		if !forceReprocessing && segmentStatus.LastProcessed != "" {
-			fmt.Printf("Skipping segment %s, already processed on %s\n", segment.Name, segmentStatus.LastProcessed)
-			fmt.Println()
-			continue // Skip to the next segment if already processed and not forcing reprocessing
-		}
-
-		fmt.Printf("Processing segment: %s\n", segment.Name)
+		fmt.Printf("▶ Processing segment: %s\n", segment.Name)
 
 		// Prepare command arguments for executing the environment and subsequent commands
 		var cmdArgs []string // Declare cmdArgs here
@@ -810,6 +1053,16 @@ func main() {
 				log.Fatalf("Error")
 			}
 			// Update status in status file
+			segmentStatus := getSegmentStatus(&status, currentHash)
+			if segmentStatus == nil {
+				// Segment not in status, add it
+				newStatus := SegmentStatus{
+					Name:        segment.Name,
+					ContentHash: currentHash,
+				}
+				status.Segments = append(status.Segments, newStatus)
+				segmentStatus = &status.Segments[len(status.Segments)-1]
+			}
 			segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
 			segmentStatus.CodeVersion = getVersion()
 			segmentStatus.RunDuration = time.Since(startTime).String()
@@ -847,6 +1100,16 @@ func main() {
 		}
 
 		// Update status in status file
+		segmentStatus := getSegmentStatus(&status, currentHash)
+		if segmentStatus == nil {
+			// Segment not in status, add it
+			newStatus := SegmentStatus{
+				Name:        segment.Name,
+				ContentHash: currentHash,
+			}
+			status.Segments = append(status.Segments, newStatus)
+			segmentStatus = &status.Segments[len(status.Segments)-1]
+		}
 		segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
 		segmentStatus.CodeVersion = getVersion()
 		segmentStatus.RunDuration = time.Since(startTime).String()
