@@ -95,35 +95,36 @@ def stackreg_register(
         # 2D registration (T, Y, X)
         logger.info(f"Registering {T} frames (2D)")
         
-        # Register to get transformation matrices (don't transform yet)
-        sr.register_stack(
+        # Register to get transformation matrices (returns all matrices)
+        tmats = sr.register_stack(
             zyx_stack,
             reference=reference
         )
-        
-        # Get the transformation matrices
-        tmats = sr.get_matrix()  # Shape: (T, 3, 3) or (3, 3)
         
         # Extract shifts from transformation matrices
         # Translation matrix format:
         # [[1, 0, TX],
         #  [0, 1, TY],
         #  [0, 0, 1]]
+        # Where TX = X shift (horizontal), TY = Y shift (vertical)
         # 
-        # These shifts tell us how to transform each frame to align with reference
+        # IMPORTANT: StackReg transformation matrices represent the transform
+        # FROM reference TO moving image. To align moving TO reference, we need
+        # the OPPOSITE (negative) of these values.
+        # We store them as [Y, X] to match scipy.ndimage.shift order
         shifts = np.zeros((T, 2), dtype=np.float64)
         
-        # Handle both (T, 3, 3) and (3, 3) matrix shapes
+        # tmats shape is (T, 3, 3) - one matrix per frame
         if tmats.ndim == 2:
-            # Single transformation matrix
+            # Single transformation matrix (shouldn't happen for T>1)
             for t in range(T):
-                shifts[t, 0] = tmats[0, 2]  # TX (Y shift)
-                shifts[t, 1] = tmats[1, 2]  # TY (X shift)
+                shifts[t, 0] = -tmats[1, 2]  # -TY (Y shift) - vertical
+                shifts[t, 1] = -tmats[0, 2]  # -TX (X shift) - horizontal
         else:
             # (T, 3, 3) - one matrix per frame
             for t in range(T):
-                shifts[t, 0] = tmats[t, 0, 2]  # TX (Y shift)
-                shifts[t, 1] = tmats[t, 1, 2]  # TY (X shift)
+                shifts[t, 0] = -tmats[t, 1, 2]  # -TY (Y shift) - vertical
+                shifts[t, 1] = -tmats[t, 0, 2]  # -TX (X shift) - horizontal
         
         logger.info(f"Computed {T} shifts - Mean: {np.mean(shifts, axis=0)}, Max: {np.max(np.abs(shifts)):.2f} px")
         
@@ -143,26 +144,26 @@ def stackreg_register(
             # Extract 2D stack for this Z-slice
             slice_stack = zyx_stack[:, z, :, :]  # (T, Y, X)
             
-            # Register to get transformation matrices (don't transform yet)
-            sr.register_stack(
+            # Register to get transformation matrices (returns all matrices)
+            tmats = sr.register_stack(
                 slice_stack,
                 reference=reference
             )
             
             # Extract shifts for this Z-slice
-            tmats = sr.get_matrix()
-            
-            # Handle both (T, 3, 3) and (3, 3) matrix shapes
+            # tmats shape is (T, 3, 3) - one matrix per frame
+            # Store as [Y, X] to match scipy.ndimage.shift order
+            # Negate because StackReg matrices are FROM reference TO moving
             if tmats.ndim == 2:
-                # Single transformation matrix
+                # Single transformation matrix (shouldn't happen for T>1)
                 for t in range(T):
-                    shifts[t, z, 0] = tmats[0, 2]  # TX (Y shift)
-                    shifts[t, z, 1] = tmats[1, 2]  # TY (X shift)
+                    shifts[t, z, 0] = -tmats[1, 2]  # -TY (Y shift) - vertical
+                    shifts[t, z, 1] = -tmats[0, 2]  # -TX (X shift) - horizontal
             else:
                 # (T, 3, 3) - one matrix per frame
                 for t in range(T):
-                    shifts[t, z, 0] = tmats[t, 0, 2]  # TX (Y shift)
-                    shifts[t, z, 1] = tmats[t, 1, 2]  # TY (X shift)
+                    shifts[t, z, 0] = -tmats[t, 1, 2]  # -TY (Y shift) - vertical
+                    shifts[t, z, 1] = -tmats[t, 0, 2]  # -TX (X shift) - horizontal
         
         # Log statistics across all Z-slices
         mean_shift_per_z = np.mean(shifts, axis=0)  # (Z, 2)
