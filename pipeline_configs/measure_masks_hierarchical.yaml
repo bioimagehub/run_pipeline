@@ -1,0 +1,21 @@
+run:
+- name: Measure hierarchical masks (objects within objects)
+  environment: uv:mask_measure
+  commands:
+  - python
+  - ./standard_code/python/mask_measure_hierarchical.py
+  - --input-search-pattern: '%ILASTIK_TEST_DATA%/input_tif/*.tif'
+  - --mask-search-patterns: 
+  - '%ILASTIK_TEST_DATA%/output_masks/*_segmentation_class2.tif' 
+  - '%ILASTIK_TEST_DATA%/output_masks/*_segmentation_geodesic.tif'
+    # Optional flags:
+  - --output: '%ILASTIK_TEST_DATA%/results_hierarchical'
+  # - --search-subfolders
+  # - --channel: 0  # Measure only channel 0 (e.g., DAPI)
+  # - --no-parallel  # Disable parallel processing
+  
+  # Note: First mask is the parent (e.g., nuclei), subsequent masks are children (e.g., spots within nuclei)
+  # Output: One CSV per mask type containing measurements
+  # Parent CSV includes: parent_id, timepoint, z_slice, channel, image_name, mean, min, max, std, sum, area
+  # Child CSVs include: parent_id, child_id, timepoint, z_slice, channel, image_name, mean, min, max, std, sum, area
+  # image_name: basename of the input file (without extension), linking measurements to the original image

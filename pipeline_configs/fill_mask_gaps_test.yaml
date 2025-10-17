@@ -1,0 +1,19 @@
+pipeline_name: "Fill Mask Gaps - Test"
+description: "Fill gaps in tracked masks from photoconversion experiment"
+
+# UV environment configuration
+uv_env:
+  group: "segmentation"
+
+# Pipeline steps
+steps:
+  - name: "Fill segmentation gaps"
+    module: "fill_mask_gaps"
+    parameters:
+      # Input/Output - adjust path to your actual mask location
+      input-search-pattern: "e:/Coen/Sarah/6849908-IMB-Coen-Sarah-Photoconv/SP20250627/output_masks/*_segmentation.tif"
+      output-folder: "e:/Coen/Sarah/6849908-IMB-Coen-Sarah-Photoconv/SP20250627/output_masks_filled"
+      
+      # Processing parameters
+      max-gap-size: 3  # Fill gaps up to 3 frames
+      suffix: "_filled"

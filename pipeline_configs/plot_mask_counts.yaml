@@ -1,0 +1,11 @@
+pipeline_name: Plot Mask Count Heatmap
+description: Quality control heatmap showing number of masks per timepoint across all images
+
+run:
+  - name: Generate mask count heatmap
+    environment: uv:plot
+    commands:
+      - python
+      - ./standard_code/python/plots/plot_mask_counts.py
+      - --mask-search-pattern: ./output_masks/*_segmentation.tif
+      - --output: ./mask_count_qc.png

@@ -42,7 +42,7 @@ def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_pa
 
     # Create a string buffer to capture the print output
     # Set the logging level for the trackpy logger to ERROR to suppress lower-level messages
-    logging.getLogger('trackpy').setLevel(logging.ERROR)
+    logging.getLogger('trackpy').setLevel(logging.WARNING)
 
 
     df_tracked = tp.link_df(df, search_range=10, pos_columns=['x', 'y'], t_column='t_local')

@@ -782,7 +782,8 @@ def mask_to_rois(mask: np.ndarray, label_info_list: list[LabelInfo]) -> list[Ima
   
 def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
     """Fill holes within each labeled region independently."""
-    filled = np.zeros_like(mask, dtype=mask.dtype)
+    # Start with a copy of the original to preserve existing labels
+    filled = np.copy(mask)
     
     for t_idx in range(mask.shape[0]):
         for c_idx in range(mask.shape[1]):
@@ -793,7 +794,9 @@ def fill_holes_indexed(mask: np.ndarray) -> np.ndarray:
                         continue  # Skip background
                     region_mask = slice_ == label_id
                     filled_region = binary_fill_holes(region_mask)
-                    filled[t_idx, c_idx, z_idx][filled_region] = label_id
+                    # Only fill where holes exist (filled but not in original)
+                    holes = filled_region & ~region_mask
+                    filled[t_idx, c_idx, z_idx][holes] = label_id
                     
     return filled
 

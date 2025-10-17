@@ -1,0 +1,13 @@
+run:
+  - name: Plot mask overlays
+    environment: uv:plot
+    commands:
+      - python
+      - ./standard_code/python/plot_mask.py
+      - --input-search-pattern: ./input_tif/*.tif
+      - --mask-search-pattern: ./output_masks/*_segmentation.tif
+      - --output-folder: ./visualizations
+      - --alpha: 0.5
+      - --channel: 0
+      # Uncomment to show specific Z slice instead of MIP:
+      # - --z-slice: 5
