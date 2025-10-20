@@ -109,6 +109,41 @@ segment-ernet = [
 	"bioio-tifffile",
 	"bioio-nd2",
 ]
+mask_measure = [
+	"numpy",
+	"pandas",
+	"scikit-image",
+	"tqdm",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+]
+plot = [
+	"numpy",
+	"matplotlib",
+	"pandas",
+	"seaborn",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+]
+segmentation = [
+	"numpy",
+	"scipy",
+	"scikit-image",
+	"pandas",
+	"trackpy",
+	"tqdm",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+]
 
 # Development dependencies
 dev = [

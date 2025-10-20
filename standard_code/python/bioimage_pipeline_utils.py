@@ -246,7 +246,6 @@ def get_files_to_process2(search_pattern: str, search_subfolders: bool) -> list:
     files_to_process = sorted(files_to_process)
     return files_to_process
 
-
 def collapse_filename(file_path: str, base_folder: str, delimiter: str = "__") -> str:
     """
     Collapse a full file path into a single string filename that encodes the relative
@@ -286,6 +285,156 @@ def uncollapse_filename(collapsed: str, base_folder: str, delimiter: str = "__")
 
     original_path:str = os.path.join(base_folder, rel_path)
     return original_path
+
+# ...existing code...
+
+def get_grouped_files_to_process(
+    search_patterns: dict[str, str],
+    search_subfolders: bool
+) -> dict[str, dict[str, str]]:
+    """
+    Group files from multiple search patterns by their common basename.
+    
+    This function finds files matching multiple glob patterns and groups them by
+    the portion of the filename that matches the '*' wildcard. This is useful when
+    you have related files with different suffixes or in different locations.
+    
+    Parameters:
+    -----------
+    search_patterns : dict[str, str]
+        Dictionary mapping pattern names to glob patterns. The patterns should
+        contain a '*' wildcard that will be used for matching. The pattern name
+        becomes the key in the nested result dictionary.
+        Example: {
+            'image': 'input/*.tif',
+            'mask': 'masks/*_mask.tif',
+            'tracking': 'tracking/*_tracked.tif'
+        }
+    
+    search_subfolders : bool
+        If True, searches recursively using '**' pattern.
+    
+    Returns:
+    --------
+    dict[str, dict[str, str]]
+        Nested dictionary where:
+        - Outer key: basename (the part matching '*')
+        - Inner key: pattern name (from input dict)
+        - Inner value: full file path
+        
+        Example result: {
+            'image001': {
+                'image': 'input/image001.tif',
+                'mask': 'masks/image001_mask.tif',
+                'tracking': 'tracking/image001_tracked.tif'
+            },
+            'image002': {
+                'image': 'input/image002.tif',
+                'mask': 'masks/image002_mask.tif'
+            }
+        }
+    
+    Raises:
+    -------
+    ValueError
+        If any pattern doesn't contain a '*' wildcard
+        If pattern names are duplicated
+    
+    Notes:
+    ------
+    - Files are only included in groups where the basename matches
+    - A group may have missing patterns if no matching file is found
+    - Use this when you need to process related files together
+    
+    Examples:
+    ---------
+    >>> patterns = {
+    ...     'image': './input/*.tif',
+    ...     'mask': './masks/*_mask.tif'
+    ... }
+    >>> groups = get_grouped_files_to_process(patterns, search_subfolders=False)
+    >>> for basename, files in groups.items():
+    ...     if 'image' in files and 'mask' in files:
+    ...         process_pair(files['image'], files['mask'])
+    """
+    import re
+    import os
+    
+    # Validate inputs
+    if not search_patterns:
+        raise ValueError("search_patterns dictionary cannot be empty")
+    
+    # Check for duplicate pattern names
+    if len(search_patterns) != len(set(search_patterns.keys())):
+        raise ValueError("Pattern names must be unique")
+    
+    # Validate all patterns have '*'
+    for name, pattern in search_patterns.items():
+        if '*' not in pattern:
+            raise ValueError(f"Pattern '{name}' must contain a '*' wildcard: {pattern}")
+    
+    # For each pattern, find files and extract basename
+    pattern_files = {}  # pattern_name -> [(basename, full_path), ...]
+    
+    for pattern_name, pattern in search_patterns.items():
+        files = get_files_to_process2(pattern, search_subfolders)
+        
+        # Extract the part before the '*' to use as prefix
+        prefix_match = re.search(r'(.*)\*', pattern)
+        prefix = prefix_match.group(1) if prefix_match else ''
+        
+        # Extract the part after the '*' to use as suffix
+        suffix_match = re.search(r'\*(.*)', pattern)
+        suffix = suffix_match.group(1) if suffix_match else ''
+        
+        basenames_and_paths = []
+        for file_path in files:
+            # Get the part of filename that matched the '*'
+            if prefix:
+                # Get relative path from prefix
+                if file_path.startswith(prefix):
+                    rel_path = file_path[len(prefix):]
+                else:
+                    # Prefix might be relative, try basename matching
+                    rel_path = os.path.basename(file_path)
+            else:
+                rel_path = os.path.basename(file_path)
+            
+            # Remove suffix if present
+            if suffix:
+                # Handle file extension in suffix
+                if rel_path.endswith(suffix):
+                    basename = rel_path[:-len(suffix)]
+                else:
+                    # Try without extension matching
+                    basename_no_ext = os.path.splitext(rel_path)[0]
+                    suffix_no_ext = os.path.splitext(suffix)[0]
+                    if basename_no_ext.endswith(suffix_no_ext):
+                        basename = basename_no_ext[:-len(suffix_no_ext)]
+                    else:
+                        basename = rel_path
+            else:
+                basename = os.path.splitext(rel_path)[0]
+            
+            basenames_and_paths.append((basename, file_path))
+        
+        pattern_files[pattern_name] = basenames_and_paths
+    
+    # Group by basename
+    grouped: dict[str, dict[str, str]] = {}
+    
+    for pattern_name, basename_path_list in pattern_files.items():
+        for basename, file_path in basename_path_list:
+            if basename not in grouped:
+                grouped[basename] = {}
+            grouped[basename][pattern_name] = file_path
+    
+    # Sort by basename for consistency
+    grouped = dict(sorted(grouped.items()))
+    
+    return grouped
+
+
 
 
 def split_comma_separated_strstring(value:str) -> list[str]:

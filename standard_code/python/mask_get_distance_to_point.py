@@ -94,10 +94,11 @@ def compute_distance_map(mask: np.ndarray, start: tuple[int, int], method: str =
         raise ValueError(f"Unknown method '{method}'. Choose from 'euclidean', 'cityblock', 'chessboard', 'geodesic'.")
 
 
-def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_method:str) -> None:
+def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_method: str, bin_size: Optional[int] = None) -> None:
     os.makedirs(output_dir, exist_ok=True)
     basename = os.path.splitext(os.path.basename(mask_path))[0]
-    output_path = os.path.join(output_dir, f"{basename}_{distance_method}.tif")
+    bin_suffix = f"_bin{bin_size}" if bin_size else ""
+    output_path = os.path.join(output_dir, f"{basename}_{distance_method}{bin_suffix}.tif")
 
     mask = rp.load_tczyx_image(mask_path)
     if not mask or mask.data is None:
@@ -145,6 +146,13 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
                     try:
                         _, _, nearest = find_nearest_non_zero(mask_2d, point)
                         distance_map = compute_distance_map(mask_2d, nearest, method=distance_method)
+                        
+                        # Apply binning if bin_size is specified
+                        if bin_size is not None and bin_size > 0:
+                            # Bin distances: (distance - 1) // bin_size + 1
+                            # This ensures: 1-5 -> 1, 6-10 -> 2, etc.
+                            finite_mask = np.isfinite(distance_map)
+                            distance_map[finite_mask] = np.floor((distance_map[finite_mask] - 1) / bin_size) + 1
                         
                         # if t_idx == 0:
                         #     rp.plot_masks((mask_2d, "Mask"), (distance_map, "Distance Map"), metadata=metadata)
@@ -210,7 +218,7 @@ def process_folder(args: argparse.Namespace, parallel:bool) -> None:
     if not parallel:
         for yaml_path, mask_path in tqdm(tasks, desc="Processing files", unit="file"):
             try:
-                process_file(yaml_path, mask_path, args.output_folder, args.distance_method)
+                process_file(yaml_path, mask_path, args.output_folder, args.distance_method, args.bin_size)
             except Exception as e:
                 print(f"[ERROR] Failed to process {yaml_path}: {e}")
         return
@@ -223,7 +231,7 @@ def process_folder(args: argparse.Namespace, parallel:bool) -> None:
         cpu_count = max(cpu_count - 1, 1)
 
         with ProcessPoolExecutor(max_workers=cpu_count) as executor:
-            futures = [executor.submit(process_file, y, m, args.output_folder, args.distance_method) for y, m in tasks]
+            futures = [executor.submit(process_file, y, m, args.output_folder, args.distance_method, args.bin_size) for y, m in tasks]
 
             for future in tqdm(as_completed(futures), total=len(futures), desc="Processing", unit="file"):
                 try:
@@ -241,6 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--yaml-search-pattern", type=str, required=False, help="Glob for YAMLs, e.g. './output_masks/*_segmentation_metadata.yaml'")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only if pattern doesn't already include '**')")
     parser.add_argument("--distance-method", type=str, default="geodesic", choices=["euclidean", "cityblock", "chessboard", "geodesic"], help="Distance computation method.")
+    parser.add_argument("--bin-size", type=int, default=None, help="Bin size for distance values. E.g., bin_size=5 maps distances 1-5 to 1, 6-10 to 2, etc.")
     parser.add_argument("--output-folder", type=str, help="Destination folder for output distance maps.")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
 

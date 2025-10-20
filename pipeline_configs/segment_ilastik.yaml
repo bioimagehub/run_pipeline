@@ -1,0 +1,14 @@
+run:
+- name: Ilastik nucleus segmentation
+  environment: run_ilastik
+  commands:
+  - python
+  - ./standard_code/python/segment_ilastik.py
+  - --ilastik-path: C:/Program Files/ilastik-1.4.1.post1/ilastik.exe
+  - --input-search-pattern: '%ILASTIK_TEST_DATA%/input_Ilastik/*.npy'
+  - --project-path: '%ILASTIK_TEST_DATA%/ilastik_nuc_ch_4.ilp'
+  - --min-sizes: 40000
+  - --max-sizes: 200000
+  - --output-folder: '%ILASTIK_TEST_DATA%/output_masks'
+  - --keep-labels: 2
+  - --remove-xy-edges
