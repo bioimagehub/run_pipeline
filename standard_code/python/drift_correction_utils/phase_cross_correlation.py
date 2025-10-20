@@ -1,174 +1,242 @@
 """
 Phase Cross-Correlation Drift Correction - Translation Only
 
-Uses scikit-image (CPU) and CuPy (GPU) for fast, subpixel-accurate translation detection.
-
-⚠️ TRANSLATION ONLY: Mathematically guaranteed via Fourier phase shift theorem.
-
-GPU Implementation:
-    - Optimized for minimal CPU↔GPU memory transfers
-    - Bulk transfer to GPU at start, bulk transfer from GPU at end
-    - All computation stays on GPU (shift detection + shift application)
-    - Achieves ~10x speedup over CPU for typical bioimage stacks
+Simple phase cross-correlation implementation for drift correction using scipy.
 
 MIT License
 Copyright (c) 2024 BIPHUB - Bioimage Informatics Hub, University of Oslo
 """
 
 import logging
-from typing import Tuple, Union, Literal, Optional
+from typing import Tuple, Literal
 import numpy as np
+from bioio import BioImage
 from scipy.ndimage import shift as scipy_shift
+from skimage.registration import phase_cross_correlation
+from tqdm import tqdm
+import sys
+import os
+
+
+# Use relative import to parent directory
+try:
+    from .. import bioimage_pipeline_utils as rp
+except ImportError:
+    # Fallback for when script is run directly (not as module)
+
+    # Go up to standard_code/python directory to find bioimage_pipeline_utils
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, parent_dir)
+    import bioimage_pipeline_utils as rp
 
 logger = logging.getLogger(__name__)
 
 
-def phase_cross_correlation_cpu(
-    zyx_stack: np.ndarray,
-    reference: Union[Literal["first", "previous", "mean", "median"], int] = "first",
-    upsample_factor: int = 10,
-    bandpass_low_sigma: Optional[float] = None,
-    bandpass_high_sigma: Optional[float] = None
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    CPU-based phase cross-correlation using scikit-image.
+def _crop_center(data: np.ndarray, crop_fraction: float) -> np.ndarray:
+    """Crop edges of image stack, keeping center pixels.
     
-    ⚠️ TRANSLATION ONLY: Returns XYZ shifts only, no rotation or scaling.
-    
-    Uses scikit-image's phase_cross_correlation which is mathematically
-    guaranteed to only compute translation shifts via Fourier phase shift theorem.
-    
-    Parameters
-    ----------
-    zyx_stack : np.ndarray
-        Input stack with shape (T, Z, Y, X) or (T, Y, X) for 2D
-    reference : Union[Literal["first", "previous", "mean", "median"], int]
-        Reference frame strategy:
-        - "first": Register all frames to T=0 (most common)
-        - "previous": Register each frame to previous frame (sequential/cumulative)
-        - "mean": Register to mean projection across all timepoints
-        - "median": Register to median projection (robust to outliers)
-        - int: Register all frames to specific timepoint T=N
-    upsample_factor : int
-        Subpixel accuracy (10 = 0.1 pixel, 100 = 0.01 pixel precision)
-    bandpass_low_sigma : Optional[float]
-        Lower sigma for Difference of Gaussians (DoG) bandpass filter.
-        Suppresses structures smaller than this value (e.g., 20 for vesicles).
-        Must be specified with bandpass_high_sigma. Default: None (no filtering)
-    bandpass_high_sigma : Optional[float]
-        Upper sigma for Difference of Gaussians (DoG) bandpass filter.
-        Preserves structures larger than this value (e.g., 100 for cells).
-        Must be specified with bandpass_low_sigma. Default: None (no filtering)
-    
-    Returns
-    -------
-    shifts : np.ndarray
-        Translation shifts in pixels (subpixel accuracy)
-        - 2D case: Shape (T, 2) for YX shifts
-        - 3D case: Shape (T, 3) for ZYX shifts
-        For reference="previous", returns cumulative shifts relative to T=0
-    corrected : np.ndarray
-        Drift-corrected stack with same shape as input
+    Args:
+        data: Input array with shape (T, Y, X)
+        crop_fraction: Fraction to keep (e.g., 0.8 keeps center 80%)
         
-    Notes
-    -----
-    - "previous" mode accumulates shifts: each frame is registered to the 
-      previous frame, and cumulative shifts are tracked relative to T=0
-    - "mean"/"median" compute a reference projection first, then register 
-      all frames to this stable reference (good for noisy data)
-    - Integer reference allows registering to any stable timepoint
-    - DoG bandpass filtering is applied BEFORE registration to suppress
-      unwanted features (e.g., bright vesicles in cell tracking)
+    Returns:
+        Cropped array centered on original
     """
-    from skimage.registration import phase_cross_correlation
-    from skimage.filters import difference_of_gaussians
+    if crop_fraction >= 1.0:
+        return data
     
-    T = zyx_stack.shape[0]
-    is_2d = zyx_stack.ndim == 3  # (T, Y, X)
+    T, H, W = data.shape
+    crop_h = int(H * crop_fraction)
+    crop_w = int(W * crop_fraction)
     
-    logger.info(f"Phase cross-correlation (CPU) - {'2D' if is_2d else '3D'} registration")
-    logger.info(f"Reference: {reference}, Upsample factor: {upsample_factor}")
+    # Calculate crop boundaries centered on image
+    start_h = (H - crop_h) // 2
+    start_w = (W - crop_w) // 2
+    end_h = start_h + crop_h
+    end_w = start_w + crop_w
     
-    # Apply DoG bandpass filter if requested
-    if bandpass_low_sigma is not None and bandpass_high_sigma is not None:
-        logger.info(f"Applying DoG bandpass filter (low={bandpass_low_sigma}, high={bandpass_high_sigma})")
-        filtered_stack = np.zeros_like(zyx_stack, dtype=np.float32)
-        for t in range(T):
-            if is_2d:
-                filtered_stack[t] = difference_of_gaussians(
-                    zyx_stack[t].astype(np.float32),
-                    bandpass_low_sigma,
-                    bandpass_high_sigma
-                )
-            else:
-                # Apply DoG to each Z-slice for 3D data
-                for z in range(zyx_stack.shape[1]):
-                    filtered_stack[t, z] = difference_of_gaussians(
-                        zyx_stack[t, z].astype(np.float32),
-                        bandpass_low_sigma,
-                        bandpass_high_sigma
-                    )
-        zyx_stack = filtered_stack
-        logger.info("DoG filtering complete")
-    elif (bandpass_low_sigma is None) != (bandpass_high_sigma is None):
-        logger.warning("Both bandpass_low_sigma and bandpass_high_sigma must be specified for filtering. Skipping DoG filter.")
+    cropped = data[:, start_h:end_h, start_w:end_w]
+    logger.info(f"Cropped from ({H}, {W}) to ({crop_h}, {crop_w}) for faster registration")
     
-    # Prepare reference frame
-    if reference == "first":
-        ref_frame = zyx_stack[0]
-    elif reference == "mean":
-        ref_frame = np.mean(zyx_stack, axis=0)
-        logger.info("Using mean projection as reference")
-    elif reference == "median":
-        ref_frame = np.median(zyx_stack, axis=0)
+    return cropped
+
+
+def _register_image_xy_cpu(
+        img: BioImage,
+        reference: Literal['first', 'previous', 'median'] = 'first',
+        channel: int = 0,
+        show_progress: bool = True,
+        crop_fraction: float = 1.0,
+        upsample_factor: int = 10
+        ) -> Tuple[BioImage, np.ndarray]: 
+    '''Register a TCZYX image using translation in XY dimensions only.
+    
+    Performs drift correction by computing transformations using phase cross-correlation
+    from a max-projected reference channel, then applying those transformations to all 
+    channels in the full 3D stack. Uses subpixel-accurate shifts via upsampling.
+    
+    The Z dimension is max-projected for registration calculation only, but the
+    full 3D volume is transformed and returned.
+    
+    Args:
+        img: BioImage object containing TCZYX image data. Must have at least
+            2 timepoints for registration to be meaningful.
+        reference: Registration reference strategy:
+            - 'first': Register all frames to the first timepoint
+            - 'previous': Register each frame to its previous frame (default)
+            - 'median': Register all frames to the temporal median image
+        channel: Zero-indexed channel to use for computing transformations.
+            Typically choose the brightest or most stable channel.
+        show_progress: Whether to display progress bars (default: True).
+        no_gpu: Placeholder for API compatibility (not used in this implementation).
+        crop_fraction: Fraction of image to use for registration (default: 1.0).
+            Values < 1.0 crop edges to speed up registration (e.g., 0.8 uses
+            center 80% of image). Cropping preserves center pixel alignment,
+            ensuring shift values remain accurate. Only applied to registration
+            calculation, not to output image.
+        upsample_factor: Subpixel precision factor (default: 10). Higher values
+            give better accuracy but slower computation. 1 = integer pixels only,
+            10 = 0.1 pixel precision, 100 = 0.01 pixel precision.
+    
+    Returns:
+        Tuple containing:
+            - registered (BioImage): Drift-corrected BioImage object with 5D 
+              TCZYX data and preserved metadata
+            - shifts (np.ndarray): Shift vectors for each timepoint,
+              shape (T, 2) for Y and X dimensions. Compatible with PyStackReg
+              transformation matrix format for drop-in replacement.
+    
+    Raises:
+        ValueError: If image has insufficient dimensions or invalid channel index
+        
+    Example:
+        >>> img = rp.load_tczyx_image("timelapse.tif")
+        >>> registered, shifts = register_image_xy(img, reference='first', channel=0)
+        >>> registered.save("corrected.tif")
+        
+    Note:
+        For images with only 1 timepoint, returns original BioImage unchanged
+        with zero shift vectors.
+    '''
+    logger.info(f"Starting XY drift correction (phase cross-correlation) with reference='{reference}', channel={channel}")
+    
+    # Extract reference channel as 4D TZYX array
+    ref_channel_data = img.get_image_data("TZYX", C=channel)
+
+    # Max projection over Z (axis=1) to reduce to 2D for registration
+    ref_channel_data = np.max(ref_channel_data, axis=1, keepdims=False)  # Shape: (T, Y, X)
+
+    # Crop edges for faster registration if requested
+    ref_channel_data = _crop_center(ref_channel_data, crop_fraction)
+
+    # Verify we have multiple timepoints
+    if ref_channel_data.shape[0] <= 1:
+        logger.warning("Image has only 1 timepoint, returning original data")
+        return img, np.zeros((1, 2))
+    
+    n_frames = ref_channel_data.shape[0]
+    
+    logger.info(f"Computing shifts from max-projected stack with shape {ref_channel_data.shape} using reference '{reference}'")
+    
+    # Compute reference image based on strategy
+    if reference == 'first':
+        ref_frame = ref_channel_data[0]
+    elif reference == 'median':
+        ref_frame = np.median(ref_channel_data, axis=0)
         logger.info("Using median projection as reference")
-    elif isinstance(reference, int):
-        if reference < 0 or reference >= T:
-            raise ValueError(f"Reference timepoint {reference} out of range [0, {T-1}]")
-        ref_frame = zyx_stack[reference]
-        logger.info(f"Using timepoint {reference} as reference")
-    elif reference == "previous":
+    elif reference == 'previous':
         ref_frame = None  # Will be updated in loop
     else:
-        raise ValueError(f"Unknown reference mode: {reference}")
+        raise ValueError(f"Unknown reference strategy: {reference}")
     
-    # Compute shifts
-    shift_dim = 2 if is_2d else 3
-    shifts = np.zeros((T, shift_dim), dtype=np.float64)
-    cumulative_shift = np.zeros(shift_dim, dtype=np.float64)
+    # Compute shifts for each frame
+    if show_progress:
+        iterator = tqdm(range(n_frames), desc="Finding shifts", unit="frame")
+    else:
+        iterator = range(n_frames)
     
-    for t in range(T):
+    shifts = np.zeros((n_frames, 2), dtype=np.float64)
+    cumulative_shift = np.zeros(2, dtype=np.float64)
+    
+    for t in iterator:
         if t == 0:
             # First frame has zero shift
             shifts[t] = 0
-            if reference == "previous":
-                ref_frame = zyx_stack[0]
+            if reference == 'previous':
+                ref_frame = ref_channel_data[0]
             continue
         
         # Update reference for "previous" mode
-        if reference == "previous":
-            ref_frame = zyx_stack[t - 1]
+        if reference == 'previous':
+            ref_frame = ref_channel_data[t - 1]
         
-        # Compute shift
+        # Compute shift with subpixel accuracy
         shift, error, phasediff = phase_cross_correlation(
             ref_frame,
-            zyx_stack[t],
-            upsample_factor=upsample_factor
+            ref_channel_data[t],
+            upsample_factor=upsample_factor,
+            space="real",
+            normalization="phase"
         )
         
-        if reference == "previous":
+        if reference == 'previous':
             # Accumulate shifts for "previous" mode
             cumulative_shift += shift
             shifts[t] = cumulative_shift
         else:
             shifts[t] = shift
+
+    logger.info(f"Computed {n_frames} shifts - Mean: {np.mean(shifts, axis=0)}, Max: {np.max(np.abs(shifts)):.2f} px")
+
+    # Release reference channel memory
+    del ref_channel_data
+
+    # Load entire image dataset (5D TCZYX)
+    img_data = img.data
+
+    # Apply the transformations to all channels and Z-slices
+    logger.info(f"Applying transformations to full stack with shape {img_data.shape}")
+    registered_data = np.zeros_like(img_data)
     
-    logger.info(f"Computed {T} shifts - Mean: {np.mean(shifts, axis=0)}, Max: {np.max(np.abs(shifts)):.2f} px")
+    # Setup progress tracking
+    if show_progress:
+        pbar = tqdm(total=img_data.shape[1] * img_data.shape[0], desc="Applying shifts", unit="frame")
     
-    # Apply shifts
-    corrected = apply_shifts(zyx_stack, shifts)
+    for c in range(img_data.shape[1]):  # Loop over channels
+        if show_progress:
+            pbar.set_description(f"Applying shifts C={c}") # pyright: ignore[reportPossiblyUnboundVariable] # 
+        else:
+            logger.info(f"Transforming channel {c}/{img_data.shape[1]-1}")
+        
+        channel_data = img.get_image_data("TZYX", C=c)
+        
+        # Apply transformation to each Z-slice and timepoint
+        for z in range(channel_data.shape[1]):  # Loop over Z
+            for t in range(channel_data.shape[0]):  # Loop over time
+                registered_data[t, c, z, :, :] = scipy_shift(
+                    channel_data[t, z, :, :],
+                    shift=[shifts[t, 0], shifts[t, 1]],
+                    order=1,
+                    mode='constant',
+                    cval=0
+                )
+                if show_progress and z == 0:  # Update once per frame (only on first Z-slice)
+                    pbar.update(1) # pyright: ignore[reportPossiblyUnboundVariable] # 
     
-    return shifts, corrected
+    if show_progress:
+        pbar.close() # pyright: ignore[reportPossiblyUnboundVariable] # 
+
+    logger.info("XY drift correction completed successfully")
+
+    # Create BioImage with registered data and preserved metadata
+    img_registered = BioImage(
+        registered_data,
+        physical_pixel_sizes=img.physical_pixel_sizes,
+        channel_names=img.channel_names,
+        metadata=img.metadata
+    )
+
+    return img_registered, shifts
 
 
 def _phase_cross_correlation_cupy(a: np.ndarray, b: np.ndarray, upsample_factor: int = 1) -> Tuple[np.ndarray, float, float]:
@@ -317,18 +385,16 @@ def _phase_cross_correlation_cupy(a: np.ndarray, b: np.ndarray, upsample_factor:
     return (result, err, 0.0)
 
 
-def phase_cross_correlation_gpu(
-    zyx_stack: np.ndarray,
-    reference: Union[Literal["first", "previous", "mean", "median"], int] = "first",
-    upsample_factor: int = 10,
-    bandpass_low_sigma: Optional[float] = None,
-    bandpass_high_sigma: Optional[float] = None
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    GPU-accelerated phase cross-correlation using CuPy (optimized for speed).
-    
-    ⚠️ TRANSLATION ONLY: Returns XYZ shifts only, no rotation or scaling.
-    ⚠️ NO FALLBACK: Raises error if CuPy/CUDA not available.
+def _register_image_xy_gpu(
+        img: BioImage,
+        reference: Literal['first', 'previous', 'median'] = 'first',
+        channel: int = 0,
+        show_progress: bool = True,
+        crop_fraction: float = 1.0,
+        upsample_factor: int = 10
+        ) -> Tuple[BioImage, np.ndarray]:
+    '''
+    GPU-accelerated registration using CuPy with optimized memory management.
     
     Optimization Strategy:
         1. Transfer entire stack to GPU once at start
@@ -336,225 +402,213 @@ def phase_cross_correlation_gpu(
         3. Apply all shifts on GPU (data never leaves GPU)
         4. Transfer corrected stack back to CPU once at end
         Result: Minimal CPU↔GPU transfers = Maximum performance
-    
-    Parameters
-    ----------
-    Same as phase_cross_correlation_cpu
-    
-    Returns
-    -------
-    Same as phase_cross_correlation_cpu
-    
-    Raises
-    ------
-    ImportError
-        If CuPy is not available
-    RuntimeError
-        If CUDA is not available or GPU processing fails
-        
-    Performance
-    -----------
-    Typically achieves ~10x speedup over CPU for standard bioimage stacks.
-    Speedup increases with larger time-series due to reduced transfer overhead.
-    """
+    '''
     import cupy as cp
+    from cupyx.scipy.ndimage import shift as cupy_shift
     
+    logger.info(f"Starting XY drift correction (GPU/CuPy) with reference='{reference}', channel={channel}")
     logger.info("Using CuPy GPU acceleration for phase cross-correlation")
     
-    T = zyx_stack.shape[0]
-    is_2d = zyx_stack.ndim == 3
+    # Extract reference channel as 4D TZYX array
+    ref_channel_data = img.get_image_data("TZYX", C=channel)
+
+    # Max projection over Z (axis=1) to reduce to 2D for registration
+    ref_channel_data = np.max(ref_channel_data, axis=1, keepdims=False)  # Shape: (T, Y, X)
+
+    # Crop edges for faster registration if requested (on CPU before GPU transfer)
+    ref_channel_data = _crop_center(ref_channel_data, crop_fraction)
+
+    # Verify we have multiple timepoints
+    if ref_channel_data.shape[0] <= 1:
+        logger.warning("Image has only 1 timepoint, returning original data")
+        return img, np.zeros((1, 2))
     
-    logger.info(f"Phase cross-correlation (GPU/CuPy) - {'2D' if is_2d else '3D'} registration")
-    logger.info(f"Reference: {reference}, Upsample factor: {upsample_factor}")
+    n_frames = ref_channel_data.shape[0]
     
-    # Transfer entire stack to GPU once (major optimization!)
-    logger.info(f"Transferring {zyx_stack.nbytes / 1e9:.2f} GB to GPU memory...")
-    zyx_stack_gpu = cp.asarray(zyx_stack, dtype=cp.float32)
+    logger.info(f"Computing shifts from max-projected stack with shape {ref_channel_data.shape} using reference '{reference}'")
+    
+    # Transfer reference stack to GPU once (major optimization!)
+    logger.info(f"Transferring {ref_channel_data.nbytes / 1e9:.2f} GB reference stack to GPU...")
+    ref_channel_gpu = cp.asarray(ref_channel_data, dtype=cp.float32)
     logger.info("GPU transfer complete")
     
-    # Apply DoG bandpass filter on GPU (MUCH faster than CPU!)
-    if bandpass_low_sigma is not None and bandpass_high_sigma is not None:
-        from cupyx.scipy.ndimage import gaussian_filter as gpu_gaussian_filter
-        logger.info(f"Applying DoG bandpass filter ON GPU (low={bandpass_low_sigma}, high={bandpass_high_sigma})")
-        
-        # Process each timepoint
-        for t in range(T):
-            if is_2d:
-                # 2D: Apply DoG directly
-                low_filtered = gpu_gaussian_filter(zyx_stack_gpu[t], sigma=bandpass_low_sigma)
-                high_filtered = gpu_gaussian_filter(zyx_stack_gpu[t], sigma=bandpass_high_sigma)
-                zyx_stack_gpu[t] = high_filtered - low_filtered
-            else:
-                # 3D: Apply DoG to each Z-slice
-                for z in range(zyx_stack_gpu.shape[1]):
-                    low_filtered = gpu_gaussian_filter(zyx_stack_gpu[t, z], sigma=bandpass_low_sigma)
-                    high_filtered = gpu_gaussian_filter(zyx_stack_gpu[t, z], sigma=bandpass_high_sigma)
-                    zyx_stack_gpu[t, z] = high_filtered - low_filtered
-        
-        logger.info("GPU DoG filtering complete (data stayed on GPU)")
-    elif (bandpass_low_sigma is None) != (bandpass_high_sigma is None):
-        logger.warning("Both bandpass_low_sigma and bandpass_high_sigma must be specified for filtering. Skipping DoG filter.")
-    
-    # Prepare reference frame (keep on GPU!)
-    if reference == "first":
-        ref_frame_gpu = zyx_stack_gpu[0]
-        ref_frame = None  # Will compute on GPU
-    elif reference == "mean":
-        ref_frame_gpu = cp.mean(zyx_stack_gpu, axis=0)
-        logger.info("Using mean projection as reference (computed on GPU)")
-        ref_frame = None
-    elif reference == "median":
-        ref_frame_gpu = cp.median(zyx_stack_gpu, axis=0)
+    # Compute reference image based on strategy (on GPU!)
+    if reference == 'first':
+        ref_frame_gpu = ref_channel_gpu[0]
+    elif reference == 'median':
+        ref_frame_gpu = cp.median(ref_channel_gpu, axis=0)
         logger.info("Using median projection as reference (computed on GPU)")
-        ref_frame = None
-    elif isinstance(reference, int):
-        if reference < 0 or reference >= T:
-            raise ValueError(f"Reference timepoint {reference} out of range [0, {T-1}]")
-        ref_frame_gpu = zyx_stack_gpu[reference]
-        logger.info(f"Using timepoint {reference} as reference")
-        ref_frame = None
-    elif reference == "previous":
-        ref_frame_gpu = None  # Will be updated in loop
-        ref_frame = None
+    elif reference == 'previous':
+        ref_frame_gpu = ref_channel_gpu[0]  # Initialize with first frame
     else:
-        raise ValueError(f"Unknown reference mode: {reference}")
+        raise ValueError(f"Unknown reference strategy: {reference}")
     
     # Compute shifts
-    shift_dim = 2 if is_2d else 3
-    shifts = np.zeros((T, shift_dim), dtype=np.float64)
-    cumulative_shift = np.zeros(shift_dim, dtype=np.float64)
+    if show_progress:
+        iterator = tqdm(range(n_frames), desc="Finding shifts (GPU)", unit="frame")
+    else:
+        iterator = range(n_frames)
     
-    for t in range(T):
+    shifts = np.zeros((n_frames, 2), dtype=np.float64)
+    cumulative_shift = np.zeros(2, dtype=np.float64)
+    
+    for t in iterator:
         if t == 0:
+            # First frame has zero shift
             shifts[t] = 0
-            if reference == "previous":
-                ref_frame_gpu = zyx_stack_gpu[0]
             continue
         
         # Update reference for "previous" mode (on GPU!)
-        if reference == "previous":
-            ref_frame_gpu = zyx_stack_gpu[t - 1]
+        if reference == 'previous':
+            ref_frame_gpu = ref_channel_gpu[t - 1]
         
         # Compute shift on GPU (data stays on GPU - no transfer!)
-        current_frame_gpu = zyx_stack_gpu[t]
+        current_frame_gpu = ref_channel_gpu[t]
         
-        # Pass GPU arrays directly (optimized!)
+        # Pass GPU arrays directly (optimized!) with subpixel accuracy
         shift, error, phasediff = _phase_cross_correlation_cupy(
             ref_frame_gpu,
             current_frame_gpu,
             upsample_factor=upsample_factor
         )
         
-        if reference == "previous":
+        if reference == 'previous':
+            # Accumulate shifts for "previous" mode
             cumulative_shift += shift
             shifts[t] = cumulative_shift
         else:
             shifts[t] = shift
-    
-    logger.info(f"Computed {T} shifts - Mean: {np.mean(shifts, axis=0)}, Max: {np.max(np.abs(shifts)):.2f} px")
-    
+
+    logger.info(f"Computed {n_frames} shifts - Mean: {np.mean(shifts, axis=0)}, Max: {np.max(np.abs(shifts)):.2f} px")
+
     # Clean up GPU memory after shift computation
+    del ref_channel_gpu, ref_frame_gpu
     cp.get_default_memory_pool().free_all_blocks()
     cp.get_default_pinned_memory_pool().free_all_blocks()
-    
-    # Apply shifts using GPU acceleration (data stays on GPU!)
-    logger.info("Applying shifts on GPU...")
-    corrected_gpu = apply_shifts_gpu(zyx_stack_gpu, shifts)
-    
-    # Transfer final result back to CPU
-    corrected = cp.asnumpy(corrected_gpu).astype(zyx_stack.dtype)
-    
-    # Final GPU memory cleanup
-    del zyx_stack_gpu, corrected_gpu
-    cp.get_default_memory_pool().free_all_blocks()
-    cp.get_default_pinned_memory_pool().free_all_blocks()
-    
-    return shifts, corrected
 
+    # Load entire image dataset (5D TCZYX)
+    img_data = img.data
 
-def apply_shifts(stack: np.ndarray, shifts: np.ndarray) -> np.ndarray:
-    """
-    Apply translation shifts to a stack (CPU version).
+    # Apply the transformations to all channels and Z-slices
+    logger.info(f"Applying transformations to full stack with shape {img_data.shape}")
+    logger.info(f"Transferring {img_data.nbytes / 1e9:.2f} GB full stack to GPU...")
     
-    Parameters
-    ----------
-    stack : np.ndarray
-        Input stack (T, Z, Y, X) or (T, Y, X)
-    shifts : np.ndarray
-        Translation shifts (T, 3) for ZYX or (T, 2) for YX
-    
-    Returns
-    -------
-    np.ndarray
-        Corrected stack with same shape as input
-    """
-    corrected = np.zeros_like(stack)
-    T = stack.shape[0]
-    is_2d = stack.ndim == 3
-    
-    for t in range(T):
-        if is_2d:
-            # 2D: shift YX
-            corrected[t] = scipy_shift(
-                stack[t],
-                shift=shifts[t],
-                order=1,  # Linear interpolation
-                mode='constant',
-                cval=0
-            )
-        else:
-            # 3D: shift ZYX
-            corrected[t] = scipy_shift(
-                stack[t],
-                shift=shifts[t],
-                order=1,
-                mode='constant',
-                cval=0
-            )
-    
-    return corrected
-
-
-def apply_shifts_gpu(stack_gpu, shifts: np.ndarray):
-    """
-    Apply translation shifts to a stack on GPU (optimized for minimal CPU↔GPU transfers).
-    
-    This function expects the stack to already be on GPU and returns the result on GPU.
-    This design minimizes expensive CPU↔GPU memory transfers.
-    
-    Parameters
-    ----------
-    stack_gpu : cupy.ndarray
-        Input stack on GPU (T, Z, Y, X) or (T, Y, X)
-    shifts : np.ndarray
-        Translation shifts (T, 3) for ZYX or (T, 2) for YX
-    
-    Returns
-    -------
-    cupy.ndarray
-        Corrected stack on GPU with same shape as input
-    """
-    import cupy as cp
-    from cupyx.scipy.ndimage import shift as cupy_shift
-    
-    T = stack_gpu.shape[0]
+    # Transfer full stack to GPU once
+    img_data_gpu = cp.asarray(img_data, dtype=cp.float32)
+    logger.info("GPU transfer complete")
     
     # Preallocate output on GPU
-    corrected_gpu = cp.zeros_like(stack_gpu)
+    registered_data_gpu = cp.zeros_like(img_data_gpu)
     
-    for t in range(T):
-        # Apply shift on GPU (data never leaves GPU!)
-        corrected_gpu[t] = cupy_shift(
-            stack_gpu[t],
-            shift=shifts[t],
-            order=3,  # Cubic interpolation for better quality
-            mode='constant',
-            cval=0.0
-        )
+    # Setup progress tracking
+    if show_progress:
+        pbar = tqdm(total=img_data.shape[1] * img_data.shape[0], desc="Applying shifts (GPU)", unit="frame")
+    
+    for c in range(img_data.shape[1]):  # Loop over channels
+        if show_progress:
+            pbar.set_description(f"Applying shifts (GPU) C={c}")  # pyright: ignore[reportPossiblyUnboundVariable]
+        else:
+            logger.info(f"Transforming channel {c}/{img_data.shape[1]-1}")
         
-        # Periodic cleanup to prevent memory fragmentation
-        if t % 10 == 0 and t > 0:
-            cp.get_default_memory_pool().free_all_blocks()
+        # Apply transformation to each Z-slice and timepoint (all on GPU!)
+        for z in range(img_data.shape[2]):  # Loop over Z
+            for t in range(img_data.shape[0]):  # Loop over time
+                registered_data_gpu[t, c, z, :, :] = cupy_shift(
+                    img_data_gpu[t, c, z, :, :],
+                    shift=[shifts[t, 0], shifts[t, 1]],
+                    order=1,  # Cubic interpolation for better quality
+                    mode='constant',
+                    cval=0.0
+                )
+                if show_progress and z == 0:  # Update once per frame (only on first Z-slice)
+                    pbar.update(1)  # pyright: ignore[reportPossiblyUnboundVariable]
+            
+            # Periodic cleanup to prevent memory fragmentation
+            if z % 5 == 0 and z > 0:
+                cp.get_default_memory_pool().free_all_blocks()
     
-    return corrected_gpu
+    if show_progress:
+        pbar.close()  # pyright: ignore[reportPossiblyUnboundVariable]
 
+    logger.info("Transferring corrected stack from GPU to CPU...")
+    # Transfer final result back to CPU
+    registered_data = cp.asnumpy(registered_data_gpu).astype(img_data.dtype)
+    
+    # Final GPU memory cleanup
+    del img_data_gpu, registered_data_gpu
+    cp.get_default_memory_pool().free_all_blocks()
+    cp.get_default_pinned_memory_pool().free_all_blocks()
+    
+    logger.info("XY drift correction completed successfully")
+
+    # Create BioImage with registered data and preserved metadata
+    img_registered = BioImage(
+        registered_data,
+        physical_pixel_sizes=img.physical_pixel_sizes,
+        channel_names=img.channel_names,
+        metadata=img.metadata
+    )
+
+    return img_registered, shifts
+
+
+def register_image_xy(
+        img: BioImage,
+        reference: Literal['first', 'previous', 'median'] = 'first',
+        channel: int = 0,
+        show_progress: bool = True,
+        no_gpu: bool = False,
+        crop_fraction: float = 1.0,
+        upsample_factor: int = 10
+        ) -> Tuple[BioImage, np.ndarray]:
+    '''Register a TCZYX image using translation in XY dimensions only.
+    
+    Performs drift correction by computing transformations using phase cross-correlation
+    from a max-projected reference channel, then applying those transformations to all 
+    channels in the full 3D stack. Automatically uses GPU acceleration if available.
+    
+    Args:
+        img: BioImage object containing TCZYX image data.
+        reference: Registration reference strategy ('first', 'previous', or 'median').
+        channel: Zero-indexed channel to use for computing transformations.
+        show_progress: Whether to display progress bars (default: True).
+        no_gpu: Force CPU execution even if GPU is available (default: False).
+        crop_fraction: Fraction of image to use for registration (default: 1.0).
+        upsample_factor: Subpixel precision factor (default: 10). Higher = more accurate
+            but slower. 1 = integer pixels, 10 = 0.1px precision, 100 = 0.01px precision.
+    
+    Returns:
+        Tuple containing registered BioImage and shift vectors (T, 2) for Y and X.
+    '''
+    if no_gpu:
+        return _register_image_xy_cpu(img, reference, channel, show_progress, crop_fraction, upsample_factor)
+    else:
+        try:
+            import cupy as cp
+            # Verify GPU is available
+            _ = cp.cuda.Device(0)
+            return _register_image_xy_gpu(img, reference, channel, show_progress, crop_fraction, upsample_factor)
+        except (ImportError, RuntimeError) as e:
+            logger.warning(f"GPU not available ({e}), falling back to CPU")
+            return _register_image_xy_cpu(img, reference, channel, show_progress, crop_fraction, upsample_factor)
+
+
+def test_code():
+    # Configure logging to show INFO messages
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    
+    path = r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15.tif"
+    img = rp.load_tczyx_image(path)
+    registered, shifts = register_image_xy(img, reference='previous', channel=0, no_gpu=False, crop_fraction=0.8)
+
+    #np.save(r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15_PCC_shifts.npy", shifts)
+    outpath = r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15_PCC_corrected.tif"
+     # delete previous output files if they exist
+    
+    if os.path.exists(outpath):
+        os.remove(outpath)
+    registered.save(outpath)
+
+
+if __name__ == "__main__":
+    test_code()

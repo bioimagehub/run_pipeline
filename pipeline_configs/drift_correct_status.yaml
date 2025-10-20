@@ -1,27 +1,31 @@
 segments:
-- name: Drift correction on synthetic data
-  last_processed: "2025-10-06"
-  code_version: 0.0.10
-  run_duration: 26.6782014s
-- name: stop_pipeline
-- name: Drift correction on real
-  last_processed: "2025-10-06"
-  code_version: 0.0.10
-  run_duration: 2m42.3305878s
-- name: Drift correction - cropped test data
-  last_processed: "2025-10-14"
-  code_version: 0.0.10
-  run_duration: 5m34.905813s
-- name: Drift correction - live cells
-- name: phase cross correlations no GPU
-  last_processed: "2025-10-14"
-  code_version: 0.0.10
-  run_duration: 52.2495393s
-- name: phase cross correlations with GPU
-  last_processed: "2025-10-14"
-  code_version: 0.0.10
-  run_duration: 36.1168485s
-- name: pystackreg no GPU
-  last_processed: "2025-10-14"
-  code_version: 0.0.10
-  run_duration: 1m43.3788331s
+- name: StackReg Translation (Test 2)
+  content_hash: fe564cd01002c07e9ab27368ea46ef20e73e09e7d828fcca96a2d3855f9ff3ff
+  last_processed: "2025-10-16"
+  code_version: 0.0.11
+  run_duration: 1m25.3930653s
+- name: Phase Cross-Correlation GPU (Test 2)
+  content_hash: 9aefb7fbc01b213d664074c0be61d8a6669e4f9a70e2b419e9504eaa53fecdfb
+  last_processed: "2025-10-16"
+  code_version: 0.0.11
+  run_duration: 8.7663772s
+- name: Phase Cross-Correlation CPU (Test 2)
+  content_hash: f61a1ff6512ed46b9c826c272bf6b5beee7e28fbd9bf2578dd6878a0d1754fe7
+  last_processed: "2025-10-16"
+  code_version: 0.0.11
+  run_duration: 22.122989s
+- name: StackReg Translation (Test 3 - Real Data)
+  content_hash: 25df7b60252846e50e64ad20205e6b677bf9c69e354b02fb5a0c714c9baa0456
+  last_processed: "2025-10-16"
+  code_version: 0.0.11
+  run_duration: 3m59.593036s
+- name: Phase Cross-Correlation GPU (Test 3 - Real Data)
+  content_hash: 56613ff096272464205b7f08cd18b5c412d4eb5001d9f214bbaf45425546d6cd
+  last_processed: "2025-10-16"
+  code_version: 0.0.11
+  run_duration: 12.7509853s
+- name: Phase Cross-Correlation CPU (Test 3 - Real Data)
+  content_hash: 1cc747b152845eead71a7e68478814835e4f9e519728e72538574bec213e0151
+  last_processed: "2025-10-16"
+  code_version: 0.0.11
+  run_duration: 49.6869703s

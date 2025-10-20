@@ -13,14 +13,14 @@ import numpy as np
 from bioio import BioImage
 from pystackreg import StackReg
 from tqdm import tqdm
-
+import sys
+import os
 # Use relative import to parent directory
 try:
     from .. import bioimage_pipeline_utils as rp
 except ImportError:
     # Fallback for when script is run directly (not as module)
-    import sys
-    import os
+
     # Go up to standard_code/python directory to find bioimage_pipeline_utils
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, parent_dir)
@@ -28,12 +28,44 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def _crop_center(data: np.ndarray, crop_fraction: float) -> np.ndarray:
+    """Crop edges of image stack, keeping center pixels.
+    
+    Args:
+        data: Input array with shape (T, Y, X)
+        crop_fraction: Fraction to keep (e.g., 0.8 keeps center 80%)
+        
+    Returns:
+        Cropped array centered on original
+    """
+    if crop_fraction >= 1.0:
+        return data
+    
+    T, H, W = data.shape
+    crop_h = int(H * crop_fraction)
+    crop_w = int(W * crop_fraction)
+    
+    # Calculate crop boundaries centered on image
+    start_h = (H - crop_h) // 2
+    start_w = (W - crop_w) // 2
+    end_h = start_h + crop_h
+    end_w = start_w + crop_w
+    
+    cropped = data[:, start_h:end_h, start_w:end_w]
+    logger.info(f"Cropped from ({H}, {W}) to ({crop_h}, {crop_w}) for faster registration")
+    
+    return cropped
+
+
+
 def register_image_xy(
         img: BioImage,
         reference: Literal['first', 'previous', 'median'] = 'previous',
         channel: int = 0,
         show_progress: bool = True,
-        no_gpu: bool = False
+        no_gpu: bool = False,
+        crop_fraction: float = 1.0
         ) -> Tuple[BioImage, np.ndarray]: 
     '''Register a TCZYX image using translation in XY dimensions only.
     
@@ -55,6 +87,12 @@ def register_image_xy(
         channel: Zero-indexed channel to use for computing transformations.
             Typically choose the brightest or most stable channel.
         show_progress: Whether to display progress bars (default: True).
+        no_gpu: Placeholder for API compatibility (not used in this implementation).
+        crop_fraction: Fraction of image to use for registration (default: 1.0).
+            Values < 1.0 crop edges to speed up registration (e.g., 0.8 uses
+            center 80% of image). Cropping preserves center pixel alignment,
+            ensuring shift values remain accurate. Only applied to registration
+            calculation, not to output image.
     
     Returns:
         Tuple containing:
@@ -84,6 +122,9 @@ def register_image_xy(
     # Max projection over Z (axis=1) to reduce to 2D for registration
     # Shape: (T, Y, X) -> (T, Y, X)
     ref_channel_data = np.max(ref_channel_data, axis=1, keepdims=False)
+
+    # Crop edges for faster registration if requested
+    ref_channel_data = _crop_center(ref_channel_data, crop_fraction)
 
     # Verify we have multiple timepoints
     if ref_channel_data.shape[0] <= 1:
@@ -125,7 +166,7 @@ def register_image_xy(
     
     for c in range(img_data.shape[1]):  # Loop over channels (axis=1 in TCZYX)
         if show_progress:
-            pbar.set_description(f"Applying shifts C={c}")
+            pbar.set_description(f"Applying shifts C={c}") # pyright: ignore[reportPossiblyUnboundVariable] # 
         else:
             logger.info(f"Transforming channel {c}/{img_data.shape[1]-1}")
         
@@ -136,10 +177,10 @@ def register_image_xy(
             z_slice = channel_data[:, z, :, :]  # Extract TYX slice
             registered_data[:, c, z, :, :] = sr.transform_stack(z_slice, tmats=tmats)
             if show_progress and z == 0:  # Update once per frame (only on first Z-slice)
-                pbar.update(z_slice.shape[0])
+                pbar.update(z_slice.shape[0]) # pyright: ignore[reportPossiblyUnboundVariable] # 
     
     if show_progress:
-        pbar.close()
+        pbar.close() # pyright: ignore[reportPossiblyUnboundVariable] # 
 
     logger.info("XY drift correction completed successfully")
 
@@ -156,12 +197,14 @@ def test2_code():
     
     path = r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15.tif"
     img = rp.load_tczyx_image(path)
-    registered, tmats = register_image_xy(img, reference='previous', channel=0)
+    registered, tmats = register_image_xy(img, reference='previous', channel=0, crop_fraction=0.8)
 
-    np.save(r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15_sStackReg_tmats.npy", tmats)
     
-    #rp.save_tczyx_image(registered, r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15_sStackReg_corrected.tif")
-    registered.save(r"E:\Oyvind\BIP-hub-test-data\drift\input\test_2\1_Meng_timecrop_template_rolled-t15_sStackReg_corrected.tif")
+    # delete previous output files if they exist
+    outpath = r"E:\Oyvind\BIP-hub-test-data\drift\input\test_3\1_Meng_timecrop_StackReg_corrected.tif"
+    if os.path.exists(outpath):
+        os.remove(outpath)
+    registered.save(outpath)
 
 
 def test3_code():
@@ -171,10 +214,14 @@ def test3_code():
     path = r"E:\Oyvind\BIP-hub-test-data\drift\input\test_3\1_Meng_timecrop.tif"
     img = rp.load_tczyx_image(path)
     registered, tmats = register_image_xy(img, reference='previous', channel=0)
-
-    registered.save(r"E:\Oyvind\BIP-hub-test-data\drift\input\test_3\1_Meng_timecrop_StackReg_corrected.tif")
+    
+    # delete previous output files if they exist
+    outpath = r"E:\Oyvind\BIP-hub-test-data\drift\input\test_3\1_Meng_timecrop_StackReg_corrected.tif"
+    if os.path.exists(outpath):
+        os.remove(outpath)
+    registered.save(outpath)
 
 
 if __name__ == "__main__":
-
-    test3_code()
+    test2_code()
+    # test3_code()
