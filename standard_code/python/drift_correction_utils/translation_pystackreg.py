@@ -65,7 +65,9 @@ def register_image_xy(
         channel: int = 0,
         show_progress: bool = True,
         no_gpu: bool = False,
-        crop_fraction: float = 1.0
+        crop_fraction: float = 1.0,
+        upsample_factor: int = 1,
+        max_shift: float = -1.0
         ) -> Tuple[BioImage, np.ndarray]: 
     '''Register a TCZYX image using translation in XY dimensions only.
     
@@ -115,6 +117,18 @@ def register_image_xy(
         In the future, a GPU-accelerated version of apply shifts may be implemented.
     '''
     logger.info(f"Starting XY drift correction with reference='{reference}', channel={channel}")
+    
+    
+    if no_gpu:
+        logger.info("GPU acceleration disabled, but is also not available for stackreg.")
+    
+    if upsample_factor !=1:
+        logger.info("Upsample factor parameter is not used in StackReg translation mode.")
+    
+    if max_shift != -1.0:
+        logger.info("Max shift parameter is not used in StackReg translation mode.")
+
+
     
     # Extract reference channel as 4D TZYX array
     ref_channel_data = img.get_image_data("TZYX", C=channel)

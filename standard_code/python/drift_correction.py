@@ -58,7 +58,7 @@ def process_files(args):
             elif args.method == "phase_cross_correlation_v2":
                 from drift_correction_utils.phase_cross_correlation_v2 import register_image_xy
             elif args.method == "phase_cross_correlation_v3":
-                from drift_correction_utils.phase_cross_correlation_v3 import register_image_xy
+                from standard_code.python.drift_correction_utils.phase_cross_correlation import register_image_xy
             else:
                 logger.error(f"Unknown method: {args.method}")
                 continue        
@@ -71,7 +71,9 @@ def process_files(args):
                     show_progress=True,
                     no_gpu=args.no_gpu,
                     reference=args.reference,
-                    crop_fraction=args.crop_fraction
+                    crop_fraction=args.crop_fraction,
+                    upsample_factor=args.upsample_factor,
+                    max_shift=args.max_shift
                 )
 
                 registered_img.save(output_file_path)
@@ -125,8 +127,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--method",
         default="phase_cross_correlation",
-        choices=["phase_cross_correlation", "stackreg", "phase_cross_correlation_v2", "phase_cross_correlation_v3"],
-        help="Registration method (default: phase_cross_correlation). v3 = GPU-optimized with v2 accuracy"
+        choices=["phase_cross_correlation", "stackreg"],
+        help="Registration method (default: phase_cross_correlation)"
     )
 
     parser.add_argument(
@@ -161,19 +163,18 @@ if __name__ == "__main__":
         help="Fraction of image to use for registration (0.0-1.0, default: 1.0). Values < 1.0 crop edges to speed up registration (e.g., 0.8 uses center 80%)"
     )
     
-    
-    # parser.add_argument(
-    #     "--upsample-factor",
-    #     type=int,
-    #     default=10,
-    #     help="Subpixel accuracy for phase_cross_correlation (10 = 0.1 pixel, default: 10)"
-    # )
-    # parser.add_argument(
-    #     "--max-shift",
-    #     type=float,
-    #     default=50.0,
-    #     help="Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)"
-    # )
+    parser.add_argument(
+        "--upsample-factor",
+        type=int,
+        default=10,
+        help="Subpixel accuracy for phase_cross_correlation (10 = 0.1 pixel, default: 10)"
+    )
+    parser.add_argument(
+        "--max-shift",
+        type=float,
+        default=50.0,
+        help="Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)"
+    )
     # parser.add_argument(
     #     "--bandpass-low-sigma",
     #     type=float,
