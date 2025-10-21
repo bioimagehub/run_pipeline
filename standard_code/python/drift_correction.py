@@ -55,6 +55,10 @@ def process_files(args):
                 from drift_correction_utils.phase_cross_correlation import register_image_xy
             elif args.method == "stackreg":
                 from drift_correction_utils.translation_pystackreg import register_image_xy
+            elif args.method == "phase_cross_correlation_v2":
+                from drift_correction_utils.phase_cross_correlation_v2 import register_image_xy
+            elif args.method == "phase_cross_correlation_v3":
+                from drift_correction_utils.phase_cross_correlation_v3 import register_image_xy
             else:
                 logger.error(f"Unknown method: {args.method}")
                 continue        
@@ -121,20 +125,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--method",
         default="phase_cross_correlation",
-        choices=["phase_cross_correlation", "stackreg"],
-        help="Registration method (default: phase_cross_correlation)"
+        choices=["phase_cross_correlation", "stackreg", "phase_cross_correlation_v2", "phase_cross_correlation_v3"],
+        help="Registration method (default: phase_cross_correlation). v3 = GPU-optimized with v2 accuracy"
     )
-    parser.add_argument(
-        "--reference",
-        default="first",
-        choices=["first", "previous", "median"],
-        help="Reference frame strategy (default: first)"
-    )
+
     parser.add_argument(
         "--reference-channel",
         type=int,
         default=0,
         help="Channel index to use for registration (0-based, default: 0)"
+    )
+    parser.add_argument(
+        "--reference",
+        type=str,
+        default="first",
+        choices=["first", "previous", "median"],
+        help="Reference frame for registration (default: first). 'first' = register all to first frame, 'previous' = register each to previous frame, 'median' = register to median projection"
     )
     parser.add_argument(
         "--no-save-tmats",
