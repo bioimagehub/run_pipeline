@@ -10,7 +10,7 @@ Copyright (c) 2024 BIPHUB - Bioimage Informatics Hub, University of Oslo
 
 import numpy as np
 import logging
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Callable
 
 import bioimage_pipeline_utils as rp
 
@@ -165,7 +165,8 @@ def compute_and_update_frame_translations_dt(
     img: np.ndarray,
     dt: int,
     options: Dict[str, Any],
-    shifts: Optional[List[List[float]]] = None
+    shifts: Optional[List[List[float]]] = None,
+    progress_callback: Optional[Callable[[int], None]] = None
 ) -> List[List[float]]:
     """
     Compute translations between frames separated by dt.
@@ -213,6 +214,10 @@ def compute_and_update_frame_translations_dt(
         for i, tt in enumerate(range(t-dt, nt)):
             for d in range(3):
                 shifts[tt][d] += (i/dt) * add_shift[d]
+        
+        # Report progress
+        if progress_callback:
+            progress_callback(dt)
     
     return shifts
 
@@ -234,7 +239,8 @@ def register_hyperstack_subpixel(
     img: np.ndarray,
     shifts: List[List[float]],
     fill_value: float = 0.0,
-    use_gpu: bool = False
+    use_gpu: bool = False,
+    progress_callback: Optional[Callable[[int], None]] = None
 ) -> np.ndarray:
     """
     Apply subpixel shifts to TCZYX image.
@@ -251,7 +257,7 @@ def register_hyperstack_subpixel(
     use_cupy = use_gpu and GPU_AVAILABLE
     
     if use_cupy:
-        logger.info("Using GPU for image transformation...")
+        logger.debug("Using GPU for image transformation...")
     
     for t in range(T):
         sx, sy, sz = shifts[t]
@@ -276,6 +282,10 @@ def register_hyperstack_subpixel(
                         shifted_np = scipy_shift(img[t, c, z, :, :], shift=[sy_frac, sx_frac], order=1, mode='constant', cval=fill_value)
                     
                     out[t, c, z_out, sy_int:sy_int+Y, sx_int:sx_int+X] = shifted_np
+            
+            # Report progress after each channel (so T*C total updates)
+            if progress_callback:
+                progress_callback(1)
     
     return out
 
@@ -288,7 +298,8 @@ def register_image_xy(
     no_gpu: bool = False,
     crop_fraction: float = 1.0,
     upsample_factor: int = 10,
-    max_shift: float = 50.0
+    max_shift: float = 50.0,
+    progress_callback: Optional[Callable[[int], None]] = None
 ) -> Tuple[Any, np.ndarray]:
     """
     Register TCZYX image using translation in XY - GPU-optimized v3.
@@ -309,17 +320,17 @@ def register_image_xy(
         use_gpu=not no_gpu
     )
     
-    logger.info(f"Computing drift shifts (v3 GPU-optimized) using {reference} reference...")
+    logger.debug(f"Computing drift shifts (v3 GPU-optimized) using {reference} reference...")
     
     # Compute shifts
     dt = 1
-    shifts = compute_and_update_frame_translations_dt(img_data, dt, options)
+    shifts = compute_and_update_frame_translations_dt(img_data, dt, options, progress_callback=progress_callback)
     
     # Invert for correction
     shifts = invert_shifts(shifts)
     
-    logger.info("Applying shifts to image stack...")
-    registered_data = register_hyperstack_subpixel(img_data, shifts, fill_value=0.0, use_gpu=not no_gpu)
+    logger.debug("Applying shifts to image stack...")
+    registered_data = register_hyperstack_subpixel(img_data, shifts, fill_value=0.0, use_gpu=not no_gpu, progress_callback=progress_callback)
     
     registered_img = rp.BioImage(
         registered_data,

@@ -8,7 +8,7 @@ Copyright (c) 2024 BIPHUB - Bioimage Informatics Hub, University of Oslo
 """
 
 import logging
-from typing import Tuple, Literal, Optional
+from typing import Tuple, Literal, Optional, Callable
 import numpy as np
 from bioio import BioImage
 from pystackreg import StackReg
@@ -67,7 +67,8 @@ def register_image_xy(
         no_gpu: bool = False,
         crop_fraction: float = 1.0,
         upsample_factor: int = 1,
-        max_shift: float = -1.0
+        max_shift: float = -1.0,
+        progress_callback: Optional[Callable[[int], None]] = None
         ) -> Tuple[BioImage, np.ndarray]: 
     '''Register a TCZYX image using translation in XY dimensions only.
     
@@ -116,17 +117,17 @@ def register_image_xy(
         with identity transformation matrix.
         In the future, a GPU-accelerated version of apply shifts may be implemented.
     '''
-    logger.info(f"Starting XY drift correction with reference='{reference}', channel={channel}")
+    logger.debug(f"Starting XY drift correction with reference='{reference}', channel={channel}")
     
     
     if no_gpu:
-        logger.info("GPU acceleration disabled, but is also not available for stackreg.")
+        logger.debug("GPU acceleration disabled, but is also not available for stackreg.")
     
     if upsample_factor !=1:
-        logger.info("Upsample factor parameter is not used in StackReg translation mode.")
+        logger.debug("Upsample factor parameter is not used in StackReg translation mode.")
     
     if max_shift != -1.0:
-        logger.info("Max shift parameter is not used in StackReg translation mode.")
+        logger.debug("Max shift parameter is not used in StackReg translation mode.")
 
 
     
@@ -149,18 +150,25 @@ def register_image_xy(
     sr = StackReg(StackReg.TRANSLATION)
 
     # Register the stack to compute transformation matrices
-    logger.info(f"Computing transformations from max-projected stack with shape {ref_channel_data.shape} using reference '{reference}'")
+    logger.debug(f"Computing transformations from max-projected stack with shape {ref_channel_data.shape} using reference '{reference}'")
     
-    if show_progress:
-        # Create progress bar for registration
+    if show_progress and progress_callback is None:
+        # Create progress bar for registration (only if no external progress_callback)
         pbar = tqdm(total=ref_channel_data.shape[0], desc="Finding shifts", unit="frame")
         
-        def progress_callback(current_iteration, end_iteration):
+        def progress_callback_internal(current_iteration, end_iteration):
             pbar.n = current_iteration + 1  # +1 because pystackreg starts from 0
             pbar.refresh()
         
-        tmats = sr.register_stack(ref_channel_data, reference=reference, progress_callback=progress_callback)
+        tmats = sr.register_stack(ref_channel_data, reference=reference, progress_callback=progress_callback_internal)
         pbar.close()
+    elif progress_callback is not None:
+        # Use external progress callback
+        def progress_callback_wrapper(current_iteration, end_iteration):
+            if current_iteration > 0:  # Don't report first frame
+                progress_callback(1)
+        
+        tmats = sr.register_stack(ref_channel_data, reference=reference, progress_callback=progress_callback_wrapper)
     else:
         tmats = sr.register_stack(ref_channel_data, reference=reference)
 
@@ -171,18 +179,18 @@ def register_image_xy(
     img_data = img.data
 
     # Apply the transformations to all channels and Z-slices
-    logger.info(f"Applying transformations to full stack with shape {img_data.shape}")
+    logger.debug(f"Applying transformations to full stack with shape {img_data.shape}")
     registered_data = np.zeros_like(img_data)
     
     # Setup progress tracking
-    if show_progress:
+    if show_progress and progress_callback is None:
         pbar = tqdm(total=img_data.shape[1] * img_data.shape[0], desc="Applying shifts", unit="frame")
     
     for c in range(img_data.shape[1]):  # Loop over channels (axis=1 in TCZYX)
-        if show_progress:
+        if show_progress and progress_callback is None:
             pbar.set_description(f"Applying shifts C={c}") # pyright: ignore[reportPossiblyUnboundVariable] # 
         else:
-            logger.info(f"Transforming channel {c}/{img_data.shape[1]-1}")
+            logger.debug(f"Transforming channel {c}/{img_data.shape[1]-1}")
         
         channel_data = img.get_image_data("TZYX", C=c)
         
@@ -190,13 +198,16 @@ def register_image_xy(
         for z in range(channel_data.shape[1]):  # Loop over Z (axis=1 in TZYX)
             z_slice = channel_data[:, z, :, :]  # Extract TYX slice
             registered_data[:, c, z, :, :] = sr.transform_stack(z_slice, tmats=tmats)
-            if show_progress and z == 0:  # Update once per frame (only on first Z-slice)
+            if show_progress and progress_callback is None and z == 0:  # Update once per frame (only on first Z-slice)
                 pbar.update(z_slice.shape[0]) # pyright: ignore[reportPossiblyUnboundVariable] # 
+            elif progress_callback and z == 0:  # Report to external callback
+                for _ in range(z_slice.shape[0]):
+                    progress_callback(1)
     
-    if show_progress:
+    if show_progress and progress_callback is None:
         pbar.close() # pyright: ignore[reportPossiblyUnboundVariable] # 
 
-    logger.info("XY drift correction completed successfully")
+    logger.debug("XY drift correction completed successfully")
 
     img_registered = BioImage(registered_data, physical_pixel_sizes=img.physical_pixel_sizes,
                               channel_names=img.channel_names, metadata=img.metadata)

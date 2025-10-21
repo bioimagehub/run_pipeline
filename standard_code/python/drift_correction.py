@@ -9,17 +9,125 @@ Copyright (c) 2024 BIPHUB - Bioimage Informatics Hub, University of Oslo
 """
 
 import logging
-from typing import Literal, Optional, List, Union
+from typing import Literal, Optional, List, Union, Dict, Any, Callable
 import numpy as np
 
 from bioio import BioImage
 import bioimage_pipeline_utils as rp
+from progress_manager import process_folder_unified
 
 logger = logging.getLogger(__name__)
 
 
-def process_files(args):
+def process_single_file_drift_correction(
+    input_path: str,
+    output_path: str,
+    *,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    method: str = "phase_cross_correlation",
+    reference_channel: int = 0,
+    reference: Literal["first", "previous", "median"] = "first",
+    no_gpu: bool = False,
+    crop_fraction: float = 1.0,
+    upsample_factor: int = 10,
+    max_shift: float = 50.0,
+    no_save_tmats: bool = False
+) -> Dict[str, Any]:
+    """
+    Process a single file for drift correction.
+    
+    This function matches the FileProcessor protocol for use with progress_manager.
+    
+    Args:
+        input_path: Path to input image file
+        output_path: Path to save corrected image
+        progress_callback: Optional callback for progress updates (timepoints processed)
+        method: Registration method ('phase_cross_correlation' or 'stackreg')
+        reference_channel: Channel index to use for registration (0-based)
+        reference: Reference frame strategy ('first', 'previous', 'median')
+        no_gpu: Disable GPU acceleration
+        crop_fraction: Fraction of image to use for registration (0.0-1.0)
+        upsample_factor: Subpixel accuracy for phase_cross_correlation
+        max_shift: Maximum expected shift in pixels
+        no_save_tmats: Do not save transformation matrices
+        
+    Returns:
+        Dict with 'success' boolean and optional 'error' string
+    """
+    try:
+        # Load image
+        img = rp.load_tczyx_image(input_path)
+        
+        # Load the appropriate registration function
+        if method == "phase_cross_correlation":
+            from drift_correction_utils.phase_cross_correlation import register_image_xy
+        elif method == "stackreg":
+            from drift_correction_utils.translation_pystackreg import register_image_xy
+        else:
+            return {'success': False, 'error': f"Unknown method: {method}"}
+        
+        # Register image with progress callback
+        registered_img, tmats = register_image_xy(
+            img,
+            channel=reference_channel,
+            show_progress=False,  # We use progress_callback instead
+            no_gpu=no_gpu,
+            reference=reference,
+            crop_fraction=crop_fraction,
+            upsample_factor=upsample_factor,
+            max_shift=max_shift,
+            progress_callback=progress_callback
+        )
+        
+        # Save corrected image
+        registered_img.save(output_path)
+        
+        # Save transformation matrices if requested
+        if not no_save_tmats:
+            tmats_file = output_path.replace('.tif', '_tmats.npy')
+            np.save(tmats_file, tmats)
+            logger.debug(f"Saved transformation matrices to: {tmats_file}")
+        
+        return {'success': True}
+        
+    except Exception as e:
+        logger.error(f"Failed to process {input_path}: {e}")
+        return {'success': False, 'error': str(e)}
 
+
+def estimate_timepoints_from_file(file_path: str) -> int:
+    """
+    Estimate total processing steps for progress tracking.
+    
+    Total = T (detection phase) + T*C (application phase for all channels)
+    
+    Args:
+        file_path: Path to image file
+        
+    Returns:
+        Total number of processing steps (T + T*C)
+    """
+    try:
+        img = rp.load_tczyx_image(file_path)
+        T = img.dims.T
+        C = img.dims.C
+        # Detection phase processes T frames, application phase processes T*C frames
+        return T + (T * C)
+    except Exception as e:
+        logger.warning(f"Failed to estimate timepoints for {file_path}: {e}")
+        return 1
+
+
+def process_files(args):
+    """
+    Process multiple files with drift correction using parallel or sequential processing.
+    
+    Args:
+        args: Argparse namespace with configuration parameters
+    """
+    import os
+    from pathlib import Path
+    
     # Expand glob pattern using standardized helper function
     input_files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=False)
     if not input_files:
@@ -33,70 +141,46 @@ def process_files(args):
     output_folder.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output folder: {output_folder}")
     
-    # Process each file sequentially
-    if args.no_parallel:
-        for file_path in input_files:
-
-            output_file_path = os.path.join(
-                output_folder,
-                f"{Path(file_path).stem}{args.output_suffix}.tif"
-            )
-
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Processing file: {file_path}")
-            try:
-                img = rp.load_tczyx_image(file_path)
-            except Exception as e:
-                logger.error(f"Failed to load image {file_path}: {e}")
-                continue
-            
-            # load the appropriate registration function
-            if args.method == "phase_cross_correlation":
-                from drift_correction_utils.phase_cross_correlation import register_image_xy
-            elif args.method == "stackreg":
-                from drift_correction_utils.translation_pystackreg import register_image_xy
-            elif args.method == "phase_cross_correlation_v2":
-                from drift_correction_utils.phase_cross_correlation_v2 import register_image_xy
-            elif args.method == "phase_cross_correlation_v3":
-                from standard_code.python.drift_correction_utils.phase_cross_correlation import register_image_xy
-            else:
-                logger.error(f"Unknown method: {args.method}")
-                continue        
-            
-            
-            try:
-                registered_img, tmats = register_image_xy(
-                    img,
-                    channel=args.reference_channel,
-                    show_progress=True,
-                    no_gpu=args.no_gpu,
-                    reference=args.reference,
-                    crop_fraction=args.crop_fraction,
-                    upsample_factor=args.upsample_factor,
-                    max_shift=args.max_shift
-                )
-
-                registered_img.save(output_file_path)
-
-                if not args.no_save_tmats:
-                    tmats_file = output_file_path.replace('.tif', '_tmats.npy')
-                    np.save(tmats_file, tmats)
-                    logger.info(f"Saved transformation matrices to: {tmats_file}")
-
-                logger.info(f"Saved corrected image to: {output_file_path}")
-            except Exception as e:
-                logger.error(f"Failed to process image {file_path}: {e}")
-                continue
-        
-
-    else:
-        raise NotImplementedError("Parallel processing not implemented in this script version.")
-
-
-
+    # Define custom output path function to use the suffix from args
+    def create_output_path(input_path: str, base_folder: str, output_folder: str, collapse_delimiter: str) -> str:
+        """Custom output path with user-specified suffix."""
+        filename = Path(input_path).stem + args.output_suffix + '.tif'
+        return os.path.join(output_folder, filename)
+    
+    # Use progress_manager for unified parallel/sequential processing
+    results = process_folder_unified(
+        input_files=input_files,
+        output_folder=str(output_folder),
+        base_folder=str(Path(input_files[0]).parent),
+        file_processor=process_single_file_drift_correction,
+        output_extension="",  # We handle extension in create_output_path
+        parallel=not args.no_parallel,
+        n_jobs=None,  # Auto-detect number of workers
+        use_processes=False,  # Use threads for better memory sharing
+        estimate_timepoints_func=estimate_timepoints_from_file,
+        create_output_path_func=create_output_path,
+        # Pass processing parameters
+        method=args.method,
+        reference_channel=args.reference_channel,
+        reference=args.reference,
+        no_gpu=args.no_gpu,
+        crop_fraction=args.crop_fraction,
+        upsample_factor=args.upsample_factor,
+        max_shift=args.max_shift,
+        no_save_tmats=args.no_save_tmats
+    )
+    
+    # Summary
+    successful = sum(1 for r in results if r.get('success', True))
+    failed = len(results) - successful
     
     logger.info(f"\n{'='*60}")
-    logger.info(f"Processing complete! {len(input_files)} file(s) processed")
+    logger.info(f"Processing complete! {successful}/{len(input_files)} file(s) successful")
+    if failed > 0:
+        logger.warning(f"{failed} file(s) failed")
+        for r in results:
+            if not r.get('success', True):
+                logger.error(f"  Failed: {r['input_path']} - {r.get('error', 'Unknown error')}")
     logger.info(f"{'='*60}")
 
 
