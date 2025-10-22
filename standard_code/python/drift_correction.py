@@ -127,14 +127,34 @@ def process_files(args):
     """
     import os
     from pathlib import Path
+    import re
+    
+    # Determine if recursive search is requested
+    search_subfolders = '**' in args.input_search_pattern
     
     # Expand glob pattern using standardized helper function
-    input_files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=False)
+    input_files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=search_subfolders)
     if not input_files:
         logger.error(f"No files found matching pattern: {args.input_search_pattern}")
         exit(1)
     
     logger.info(f"Found {len(input_files)} file(s) to process")
+    
+    # Determine base_folder for path collapsing
+    # If pattern contains '**', use the part before '**' as base
+    # Otherwise, use the parent directory of the pattern
+    if '**' in args.input_search_pattern:
+        # Extract base path before '**'
+        base_folder = args.input_search_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:  # If pattern starts with '**', use current directory
+            base_folder = os.getcwd()
+        # Normalize path separators and resolve to absolute path
+        base_folder = os.path.abspath(base_folder)
+        logger.info(f"Using base folder for path collapsing: {base_folder}")
+        logger.info(f"Subfolders after '**' will be collapsed with delimiter '{args.collapse_delimiter}'")
+    else:
+        # For non-recursive patterns, use parent of first file
+        base_folder = str(Path(input_files[0]).parent)
     
     # Create output folder
     output_folder = Path(args.output_folder)
@@ -143,16 +163,21 @@ def process_files(args):
     
     # Define custom output path function to use the suffix from args
     def create_output_path(input_path: str, base_folder: str, output_folder: str, collapse_delimiter: str) -> str:
-        """Custom output path with user-specified suffix."""
-        filename = Path(input_path).stem + args.output_suffix + '.tif'
+        """Custom output path with user-specified suffix and collapsed folder structure."""
+        # Use collapse_filename to flatten the folder structure
+        collapsed = rp.collapse_filename(input_path, base_folder, collapse_delimiter)
+        # Remove original extension and add suffix + .tif
+        base_name = os.path.splitext(collapsed)[0]
+        filename = base_name + args.output_suffix + '.tif'
         return os.path.join(output_folder, filename)
     
     # Use progress_manager for unified parallel/sequential processing
     results = process_folder_unified(
         input_files=input_files,
         output_folder=str(output_folder),
-        base_folder=str(Path(input_files[0]).parent),
+        base_folder=base_folder,
         file_processor=process_single_file_drift_correction,
+        collapse_delimiter=args.collapse_delimiter,
         output_extension="",  # We handle extension in create_output_path
         parallel=not args.no_parallel,
         n_jobs=None,  # Auto-detect number of workers
@@ -196,7 +221,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input-search-pattern",
         required=True,
-        help="Input file pattern (supports wildcards, e.g., 'data/*.tif')"
+        help="Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively."
     )
     parser.add_argument(
         "--output-folder",
@@ -207,6 +232,11 @@ if __name__ == "__main__":
         "--output-suffix",
         default="_drift_corrected",
         help="Suffix to add to output filenames (default: _drift_corrected). Example: '_cor' or '_phase_cor'"
+    )
+    parser.add_argument(
+        "--collapse-delimiter",
+        default="__",
+        help="Delimiter for collapsing subfolder structure in output filenames when using '**' (default: __). Example: 'folder1/folder2/image.tif' becomes 'folder1__folder2__image.tif'"
     )
     parser.add_argument(
         "--method",

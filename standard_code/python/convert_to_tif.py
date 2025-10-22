@@ -322,20 +322,38 @@ def process_file(
 
 
 def process_pattern(args: argparse.Namespace) -> None:
-    # Determine search set
-    is_glob = any(ch in args.input_search_pattern for ch in "*?[")
-    if is_glob:
-        files = rp.get_files_to_process2(args.input_search_pattern, getattr(args, 'search_subfolders', False) or False)
-        base_folder = os.path.dirname(args.input_search_pattern) or "."
+    # Determine if recursive search is requested
+    search_subfolders = '**' in args.input_search_pattern
+    
+    # Expand glob pattern using standardized helper function
+    files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=search_subfolders)
+    if not files:
+        logger.error(f"No files found matching pattern: {args.input_search_pattern}")
+        return
+    
+    logger.info(f"Found {len(files)} file(s) to process")
+    
+    # Determine base_folder for path collapsing
+    # If pattern contains '**', use the part before '**' as base
+    # Otherwise, use the parent directory of the pattern
+    if '**' in args.input_search_pattern:
+        # Extract base path before '**'
+        base_folder = args.input_search_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:  # If pattern starts with '**', use current directory
+            base_folder = os.getcwd()
+        # Normalize path separators and resolve to absolute path
+        base_folder = os.path.abspath(base_folder)
+        logger.info(f"Using base folder for path collapsing: {base_folder}")
+        logger.info(f"Subfolders after '**' will be collapsed with delimiter '{args.collapse_delimiter}'")
     else:
-        recursive = getattr(args, 'search_subfolders', False) or False
-        pattern = os.path.join(args.input_search_pattern, "**", "*") if recursive else os.path.join(args.input_search_pattern, "*")
-        files = rp.get_files_to_process2(pattern, recursive)
-        base_folder = args.input_search_pattern
+        # For non-recursive patterns, use parent of first file
+        from pathlib import Path
+        base_folder = str(Path(files[0]).parent)
 
     # Destination
     dest = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
     os.makedirs(dest, exist_ok=True)
+    logger.info(f"Output folder: {dest}")
 
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, args.collapse_delimiter)
@@ -367,9 +385,23 @@ def main() -> None:
             "Use --drift-correct-channel to enable correction and --drift-correct-method {cpu,gpu,cupy,auto}."
         )
     )
-    parser.add_argument("--input-search-pattern", type=str, required=True)
-    parser.add_argument("--search-subfolders", action="store_true")
-    parser.add_argument("--collapse-delimiter", type=str, default="__")
+    parser.add_argument(
+        "--input-search-pattern",
+        type=str,
+        required=True,
+        help="Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively."
+    )
+    parser.add_argument(
+        "--search-subfolders",
+        action="store_true",
+        help="(Deprecated) Recursive search is now automatic when '**' is in the pattern"
+    )
+    parser.add_argument(
+        "--collapse-delimiter",
+        type=str,
+        default="__",
+        help="Delimiter for collapsing subfolder structure in output filenames when using '**' (default: __). Example: 'folder1/folder2/image.tif' becomes 'folder1__folder2__image.tif'"
+    )
 
     parser.add_argument("--projection-method", type=str, default=None,
                         choices=[None, "max", "sum", "mean", "median", "min", "std"],
@@ -410,15 +442,24 @@ def main() -> None:
 
     if args.dry_run:
         # Print planned actions for each file, do not write outputs
-        is_glob = any(ch in args.input_search_pattern for ch in "*?[")
-        if is_glob:
-            files = rp.get_files_to_process2(args.input_search_pattern, getattr(args, 'search_subfolders', False) or False)
-            base_folder = os.path.dirname(args.input_search_pattern) or "."
+        search_subfolders = '**' in args.input_search_pattern
+        files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=search_subfolders)
+        
+        if not files:
+            print(f"[DRY RUN] No files found matching pattern: {args.input_search_pattern}")
+            return
+        
+        # Determine base_folder using same logic as main processing
+        if '**' in args.input_search_pattern:
+            base_folder = args.input_search_pattern.split('**')[0].rstrip('/\\')
+            if not base_folder:
+                base_folder = os.getcwd()
+            base_folder = os.path.abspath(base_folder)
+            print(f"[DRY RUN] Using base folder for path collapsing: {base_folder}")
+            print(f"[DRY RUN] Subfolders after '**' will be collapsed with delimiter '{args.collapse_delimiter}'")
         else:
-            recursive = getattr(args, 'search_subfolders', False) or False
-            pattern = os.path.join(args.input_search_pattern, "**", "*") if recursive else os.path.join(args.input_search_pattern, "*")
-            files = rp.get_files_to_process2(pattern, recursive)
-            base_folder = args.input_search_pattern
+            from pathlib import Path
+            base_folder = str(Path(files[0]).parent)
 
         dest = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
         print(f"[DRY RUN] Would process {len(files)} files. Output folder: {dest}")
