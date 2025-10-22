@@ -130,6 +130,8 @@ plot = [
 	"bioio-ome-tiff",
 	"bioio-tifffile",
 	"bioio-nd2",
+	"scipy",
+	"scikit-image",
 ]
 segmentation = [
 	"numpy",

@@ -2,6 +2,8 @@ import subprocess
 import argparse
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import sys
+from zipfile import Path
 import h5py
 import numpy as np
 from bioio.writers import OmeTiffWriter
@@ -76,6 +78,7 @@ def fill_temporal_gaps(output_data: np.ndarray, max_time_gap: int = 1, require_m
     
     If a pixel is background at time t, but has non-zero values at both t-gap and t+gap,
     fill it with the label from t-gap. Supports multi-gap filling.
+    Additionally, fills gaps at the start and end by copying the closest non-zero label.
     
     Args:
         output_data: 5D array in TCZYX order
@@ -109,42 +112,60 @@ def fill_temporal_gaps(output_data: np.ndarray, max_time_gap: int = 1, require_m
                     t_after_idx = t + gap
                     
                     # Check if indices are valid
-                    if t_before_idx < 0 or t_after_idx >= output_data.shape[0]:
-                        continue
-                    
-                    t_before = output_data[t_before_idx, c, z, :, :]
-                    t_after = output_data[t_after_idx, c, z, :, :]
-                    
-                    # Find pixels that:
-                    # 1. Are background at current time
-                    # 2. Have non-zero values at both t-gap and t+gap
-                    # 3. (Optional) Labels match at t-gap and t+gap
-                    has_before = (t_before > 0)
-                    has_after = (t_after > 0)
-                    
-                    if require_matching_labels:
-                        # For indexed masks: require matching labels to prevent merging different objects
-                        match_mask = (t_before == t_after) & (t_before > 0)
-                        fill_mask = is_background & match_mask
-                    else:
-                        # For binary masks: fill based on spatial overlap
-                        fill_mask = is_background & has_before & has_after
-                    
-                    # Count and fill
-                    n_filled = np.sum(fill_mask)
-                    if n_filled > 0:
-                        # Fill with the label from t-gap
-                        t_current[fill_mask] = t_before[fill_mask]
-                        output_data[t, c, z, :, :] = t_current
-                        fill_count += n_filled
-                        
-                        # Update is_background for next gap iteration
+                    if t_before_idx < 0 and t_after_idx < output_data.shape[0]:
+                        # Fill gaps at the start by copying the closest non-zero label
+                        t_after = output_data[t_after_idx, c, z, :, :]
+                        fill_mask = is_background & (t_after > 0)
+                        t_current[fill_mask] = t_after[fill_mask]
+                        fill_count += np.sum(fill_mask)
                         is_background = (t_current == 0)
                         if not np.any(is_background):
-                            break  # No more background pixels to fill
+                            break
+                    
+                    elif t_after_idx >= output_data.shape[0] and t_before_idx >= 0:
+                        # Fill gaps at the end by copying the closest non-zero label
+                        t_before = output_data[t_before_idx, c, z, :, :]
+                        fill_mask = is_background & (t_before > 0)
+                        t_current[fill_mask] = t_before[fill_mask]
+                        fill_count += np.sum(fill_mask)
+                        is_background = (t_current == 0)
+                        if not np.any(is_background):
+                            break
+                    
+                    elif 0 <= t_before_idx < output_data.shape[0] and 0 <= t_after_idx < output_data.shape[0]:
+                        t_before = output_data[t_before_idx, c, z, :, :]
+                        t_after = output_data[t_after_idx, c, z, :, :]
+                        
+                        # Find pixels that:
+                        # 1. Are background at current time
+                        # 2. Have non-zero values at both t-gap and t+gap
+                        # 3. (Optional) Labels match at t-gap and t+gap
+                        has_before = (t_before > 0)
+                        has_after = (t_after > 0)
+                        
+                        if require_matching_labels:
+                            # For indexed masks: require matching labels to prevent merging different objects
+                            match_mask = (t_before == t_after) & (t_before > 0)
+                            fill_mask = is_background & match_mask
+                        else:
+                            # For binary masks: fill based on spatial overlap
+                            fill_mask = is_background & has_before & has_after
+                        
+                        # Count and fill
+                        n_filled = np.sum(fill_mask)
+                        if n_filled > 0:
+                            # Fill with the label from t-gap
+                            t_current[fill_mask] = t_before[fill_mask]
+                            output_data[t, c, z, :, :] = t_current
+                            fill_count += n_filled
+                            
+                            # Update is_background for next gap iteration
+                            is_background = (t_current == 0)
+                            if not np.any(is_background):
+                                break  # No more background pixels to fill
     
     return output_data, fill_count
-
+    
 # gaps are defined as pixels that are zero but have the same non-zero label directly above and below in Z
 def fill_z_gaps(mask: np.ndarray, max_z_gap: int = 1) -> tuple[np.ndarray, int]:
     """Fill holes in the Z direction based on matching labels above and below.
@@ -213,10 +234,18 @@ def fill_z_gaps(mask: np.ndarray, max_z_gap: int = 1) -> tuple[np.ndarray, int]:
     return filled, fill_count
 
 
-def _save_empty_output(args, input_file: str, output_tif_file_path: str) -> None:
+def _save_empty_output(args, input_file: str, output_tif_file_path: str, comment: str = "Segmentation failed", qc_key: str = "segment_ilastik") -> None:
     """Write an empty OME-TIFF (all zeros) with TCZYX order so every input yields an output.
     Tries to infer T, Z, Y, X from the input npy (expected TZYXC) and uses C=1.
     Also writes a metadata YAML mirroring the regular path.
+    Additionally writes a QC YAML file indicating failure.
+    
+    Args:
+        args: Command line arguments
+        input_file: Path to the input file
+        output_tif_file_path: Path where the output file should be saved
+        comment: Reason for failure (will be included in QC file)
+        qc_key: Key to use in QC YAML file (default: segment_ilastik)
     """
     # Infer shape from input where possible
     try:
@@ -275,6 +304,37 @@ def _save_empty_output(args, input_file: str, output_tif_file_path: str) -> None
     except Exception:
         # Non-fatal if metadata can't be written
         pass
+    
+    # Write QC YAML file indicating failure
+    try:
+        output_qc_folder = getattr(args, 'output_qc', None)
+        if output_qc_folder is None:
+            # Default to input file's directory
+            output_qc_folder = os.path.dirname(input_file)
+        
+        os.makedirs(output_qc_folder, exist_ok=True)
+        
+        # QC file saved next to the input file
+        qc_file_path = os.path.join(output_qc_folder, os.path.splitext(os.path.basename(input_file))[0] + "_QC.yaml")
+        
+        qc_data = {
+            "qc": {
+                qc_key: {
+                    "status": "failed",
+                    "comment": comment,
+                    "input_file": input_file,
+                    "output_file": output_tif_file_path,
+                    "project_path": getattr(args, 'project_path', None)
+                }
+            }
+        }
+        
+        with open(qc_file_path, 'w') as f:
+            yaml.dump(qc_data, f, default_flow_style=False, sort_keys=False)
+        
+        logging.info(f"QC file written: {qc_file_path}")
+    except Exception as e:
+        logging.warning(f"Failed to write QC file for {input_file}: {e}")
 
 
 def process_file(args, input_file):
@@ -322,10 +382,12 @@ def process_file(args, input_file):
     # If Ilastik failed and no output exists, write empty output for this file
     if not os.path.exists(h5_path):
         if proc.returncode != 0:
+            comment = f"Ilastik failed with exit code {proc.returncode}"
             print(f"Ilastik failed (code {proc.returncode}) and produced no output for: {input_file}")
         else:
+            comment = f"Ilastik returned success but output file is missing. Expected: {h5_path}"
             print(f"Ilastik returned success but output is missing for: {input_file}. Expected: {h5_path}")
-        _save_empty_output(args, input_file, output_tif_file_path)
+        _save_empty_output(args, input_file, output_tif_file_path, comment, args.qc_key)
         return
 
     # Read Ilastik output
@@ -340,8 +402,9 @@ def process_file(args, input_file):
         # Assume T, Z, Y, X -> add a singleton channel
         data_tczyx = data[:, np.newaxis, :, :, :]
     else:
-        logging.warning(f"Unexpected data shape: {data.shape}, expected 5D (T, Z, Y, X, C) or 4D (T, Z, Y, X)")
-        _save_empty_output(args, input_file, output_tif_file_path)
+        comment = f"Unexpected data shape: {data.shape}, expected 5D (T, Z, Y, X, C) or 4D (T, Z, Y, X)"
+        logging.warning(comment)
+        _save_empty_output(args, input_file, output_tif_file_path, comment, args.qc_key)
         return
 
     # C should always be 1 for segmentation; if not, keep the first channel and continue
@@ -362,9 +425,9 @@ def process_file(args, input_file):
     
     # return if no unique values found
     if len(unique_values) == 0:
+        comment = "No unique label values found after filtering keep_labels"
         logging.warning(f"No unique values found in {input_file}.")
-        #rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
-        _save_empty_output(args, input_file, output_tif_file_path)  # Save metadata for empty output
+        _save_empty_output(args, input_file, output_tif_file_path, comment, args.qc_key)
         return
 
     # make a dataset like data_tczyx but with the len(unique_values) channels
@@ -443,9 +506,9 @@ def process_file(args, input_file):
         unique_npixels = sorted(set(npixels_list))
         print(unique_npixels)
 
+        comment = f"No labels left after min-max size filtering (min_sizes={min_sizes}, max_sizes={max_sizes}). Available sizes: {unique_npixels}"
         print(f"No labels left after min-max filtering in {input_file}.")
-        # rp.save_tczyx_image(np.zeros_like(data_tczyx), output_tif_file_path, dim_order="TCZYX")
-        _save_empty_output(args, input_file, output_tif_file_path)  # Save metadata for empty output
+        _save_empty_output(args, input_file, output_tif_file_path, comment, args.qc_key)
 
         return
     
@@ -481,6 +544,7 @@ def process_file(args, input_file):
         # Apply mapping
         for old_label, new_label in label_mapping.items():
             output_data[:, c, :, :, :][output_data[:, c, :, :, :] == old_label] = new_label 
+
     
     # --- Apply output scaling if needed ---
     scale = getattr(args, 'output_scale', 1)
@@ -600,9 +664,17 @@ if __name__ == "__main__":
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing")
     parser.add_argument("--output-folder", type=str, help="Output folder for processed files")
     parser.add_argument("--output-scale", type=float, default=1, help="Over or under-sampling factor for the output image. Default is 1 (no scaling).")
+    parser.add_argument("--output-qc", type=str, help="Folder to save QC YAML files (default: same folder as input file)")
+    parser.add_argument("--qc-key", type=str, default="segment_ilastik", help="Key to use in QC YAML files (default: segment_ilastik)")
 
 
     args = parser.parse_args()
+    if not os.path.exists(args.project_path):
+        print(f"Please start Ilastik and save the project file to: {args.project_path}")
+    while not os.path.exists(args.project_path):
+        time.sleep(10)
+        continue
 
+        
     # Process the folder
     process_folder(args)

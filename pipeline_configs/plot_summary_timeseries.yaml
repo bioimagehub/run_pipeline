@@ -1,0 +1,15 @@
+# Example config for creating time series plots per group
+# This demonstrates the new --timeseries functionality
+
+run:
+- name: Plot per group quantifications as time series
+  environment: uv:plot
+  commands:
+  - python
+  - ./standard_code/python/plots/plot_summary_per_group.py
+  - --input-folder: ./plots
+  - --metric: all
+  - --timeseries
+  - --output-folder: ./plots_per_group_timeseries
+  - --error-bars: sem
+  - --force-show-all

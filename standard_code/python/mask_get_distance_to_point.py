@@ -2,6 +2,7 @@ import os
 import argparse
 import numpy as np
 import yaml
+import logging
 from tqdm import tqdm
 from typing import List, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -10,6 +11,12 @@ from scipy.spatial.distance import cdist
 
 from bioio.writers import OmeTiffWriter
 import bioimage_pipeline_utils as rp
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 def get_coordinates_from_metadata(yaml_path: str) -> Optional[List[tuple[int, int]]]:
@@ -102,12 +109,12 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
 
     mask = rp.load_tczyx_image(mask_path)
     if not mask or mask.data is None:
-        print(f"[ERROR] Mask data is None: {mask_path}")
+        logging.error(f"Mask data is None: {mask_path}")
         return
 
     coords_list = get_coordinates_from_metadata(yaml_path)
     if coords_list is None:
-        print(f"[WARNING] No valid ROI coordinates found: {yaml_path}")
+        logging.warning(f"No valid ROI coordinates found: {yaml_path}")
         return
 
     with open(yaml_path, 'r') as f:
@@ -116,13 +123,13 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
     try:
         t, c, z = mask.dims.T, mask.dims.C, mask.dims.Z
     except AttributeError:
-        print(f"[ERROR] Missing dimension info in: {mask_path}")
+        logging.error(f"Missing dimension info in: {mask_path}")
         return
 
     try:
         physical_sizes = mask.physical_pixel_sizes or (None, None, None)
     except Exception as e:
-        print(f"[ERROR] Could not retrieve physical pixel sizes: {e}")
+        logging.error(f"Could not retrieve physical pixel sizes: {e}")
         physical_sizes = (None, None, None)
 
     distance_mask = np.full_like(mask.data, np.inf, dtype=np.float32)
@@ -140,7 +147,7 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
                     point = (int(round(coord[1])), int(round(coord[0])))
 
                     if not (0 <= point[0] < mask_2d.shape[0] and 0 <= point[1] < mask_2d.shape[1]):
-                        print(f"[WARNING] Point {point} out of bounds in: {mask_path}")
+                        logging.warning(f"Point {point} out of bounds in: {mask_path}")
                         continue
 
                     try:
@@ -161,7 +168,7 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
                         current = distance_mask[t_idx, c_idx, z_idx, :, :]
                         distance_mask[t_idx, c_idx, z_idx, :, :] = np.fmin(current, distance_map)
                     except ValueError as e:
-                        print(f"[WARNING] Skipping point {point} in {mask_path}: {e}")
+                        logging.warning(f"Skipping point {point} in {mask_path}: {e}")
                         continue
 
     distance_mask = np.where(np.isinf(distance_mask), 0, distance_mask).astype(np.int32)
@@ -176,68 +183,85 @@ def process_file(yaml_path: str, mask_path: str, output_dir: str, distance_metho
     # print(f"[INFO] Saved: {output_path}")
 
 
-def process_folder(args: argparse.Namespace, parallel:bool) -> None:
-    # Build pairs from two glob patterns by substituting '*' with base names
-    mask_files = rp.get_files_to_process2(args.mask_search_pattern, args.search_subfolders) if args.mask_search_pattern else []
-    yaml_files = rp.get_files_to_process2(args.yaml_search_pattern, args.search_subfolders) if args.yaml_search_pattern else []
+def process_folder(args: argparse.Namespace, parallel: bool) -> None:
+    """Process mask/YAML pairs using grouped file matching."""
     os.makedirs(args.output_folder, exist_ok=True)
-
-    tasks = []
-
-    def has_star(p: str) -> bool:
-        return p is not None and ('*' in p or '?' in p or '[' in p)
-
-    if mask_files:
-        if not has_star(args.yaml_search_pattern):
-            print("[WARNING] --yaml-search-pattern has no wildcard. Expecting single file per mask base name.")
-        for mask_path in mask_files:
-            base_name = os.path.splitext(os.path.basename(mask_path))[0]
-            yaml_path = args.yaml_search_pattern.replace('*', base_name)
-            if os.path.exists(yaml_path):
-                tasks.append((yaml_path, mask_path))
-            else:
-                print(f"[WARNING] Missing YAML for mask base '{base_name}': {yaml_path}")
-    elif yaml_files:
-        if not has_star(args.mask_search_pattern):
-            print("[WARNING] --mask-search-pattern has no wildcard. Expecting single file per YAML base name.")
-        for yaml_path in yaml_files:
-            base_name = os.path.splitext(os.path.basename(yaml_path))[0]
-            mask_path = args.mask_search_pattern.replace('*', base_name)
-            if os.path.exists(mask_path):
-                tasks.append((yaml_path, mask_path))
-            else:
-                print(f"[WARNING] Missing mask for YAML base '{base_name}': {mask_path}")
-    else:
-        print("[ERROR] No files matched either pattern.")
-        return
-
-    if not tasks:
-        print("[WARNING] No valid YAML/mask pairs were found.")
-        return
-
-    if not parallel:
-        for yaml_path, mask_path in tqdm(tasks, desc="Processing files", unit="file"):
-            try:
-                process_file(yaml_path, mask_path, args.output_folder, args.distance_method, args.bin_size)
-            except Exception as e:
-                print(f"[ERROR] Failed to process {yaml_path}: {e}")
-        return
     
-    else:
-        cpu_count = os.cpu_count()
-        if not isinstance(cpu_count, int):
-            print("[ERROR] Unable to determine CPU count, defaulting to 1 worker.")
-            cpu_count = 1
-        cpu_count = max(cpu_count - 1, 1)
-
-        with ProcessPoolExecutor(max_workers=cpu_count) as executor:
-            futures = [executor.submit(process_file, y, m, args.output_folder, args.distance_method, args.bin_size) for y, m in tasks]
-
-            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing", unit="file"):
+    # Use grouped file processing to match masks with YAMLs
+    try:
+        search_patterns = {
+            'mask': args.mask_search_pattern,
+            'yaml': args.yaml_search_pattern
+        }
+        
+        grouped_files = rp.get_grouped_files_to_process(
+            search_patterns=search_patterns,
+            search_subfolders=args.search_subfolders
+        )
+        
+        if not grouped_files:
+            logging.error("No files matched the search patterns.")
+            return
+        
+        logging.info(f"Found {len(grouped_files)} file groups to process")
+        
+        # Build task list from groups
+        tasks = []
+        for basename, files in grouped_files.items():
+            if 'mask' in files and 'yaml' in files:
+                tasks.append((files['yaml'], files['mask']))
+                logging.debug(f"Paired: {basename}")
+            else:
+                missing = []
+                if 'mask' not in files:
+                    missing.append('mask')
+                if 'yaml' not in files:
+                    missing.append('yaml')
+                logging.warning(f"Skipping '{basename}': missing {', '.join(missing)}")
+        
+        if not tasks:
+            logging.warning("No valid YAML/mask pairs were found after grouping.")
+            return
+        
+        logging.info(f"Processing {len(tasks)} valid pairs")
+        
+        # Process files
+        if not parallel:
+            for yaml_path, mask_path in tqdm(tasks, desc="Processing files", unit="file"):
                 try:
-                    future.result()
+                    process_file(yaml_path, mask_path, args.output_folder, 
+                               args.distance_method, args.bin_size)
                 except Exception as e:
-                    print(f"[ERROR] A file failed to process: {e}")
+                    logging.error(f"Failed to process {yaml_path}: {e}")
+            return
+        
+        else:
+            cpu_count = os.cpu_count()
+            if not isinstance(cpu_count, int):
+                logging.error("Unable to determine CPU count, defaulting to 1 worker.")
+                cpu_count = 1
+            cpu_count = max(cpu_count - 1, 1)
+            
+            with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+                futures = [
+                    executor.submit(process_file, y, m, args.output_folder, 
+                                  args.distance_method, args.bin_size) 
+                    for y, m in tasks
+                ]
+                
+                for future in tqdm(as_completed(futures), total=len(futures), 
+                                 desc="Processing", unit="file"):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logging.error(f"A file failed to process: {e}")
+    
+    except ValueError as e:
+        logging.error(f"Error in file grouping: {e}")
+        return
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        return
 
 
 if __name__ == "__main__":
