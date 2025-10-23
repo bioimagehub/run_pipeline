@@ -132,6 +132,7 @@ plot = [
 	"bioio-nd2",
 	"scipy",
 	"scikit-image",
+	"scipy",
 ]
 segmentation = [
 	"numpy",

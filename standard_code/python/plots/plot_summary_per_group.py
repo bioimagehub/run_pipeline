@@ -586,6 +586,14 @@ Examples:
     # Load metrics
     df = load_metrics_from_folder(args.input_folder)
     
+    # Filter out failed QC files if QC_Status column exists
+    if 'QC_Status' in df.columns:
+        initial_count = len(df)
+        df = df[df['QC_Status'] != 'failed']
+        filtered_count = initial_count - len(df)
+        if filtered_count > 0:
+            logging.info(f"Filtered out {filtered_count} rows with QC_Status='failed'")
+    
     # Remove rows with missing Experimental_Group
     df = df.dropna(subset=['Experimental_Group'])
     
@@ -596,6 +604,14 @@ Examples:
     df_decay = load_decay_summary_from_folder(args.input_folder)
     
     if not df_decay.empty:
+        # Filter out failed QC files if QC_Status column exists
+        if 'QC_Status' in df_decay.columns:
+            initial_count = len(df_decay)
+            df_decay = df_decay[df_decay['QC_Status'] != 'failed']
+            filtered_count = initial_count - len(df_decay)
+            if filtered_count > 0:
+                logging.info(f"Filtered out {filtered_count} decay summary rows with QC_Status='failed'")
+        
         # Remove rows with missing Experimental_Group
         df_decay = df_decay.dropna(subset=['Experimental_Group'])
         logging.info(f"Loaded {len(df_decay)} decay summary entries")

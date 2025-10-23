@@ -1,14 +1,15 @@
 """
-Visualize distance matrices with colored overlays and intensity heatmaps.
+Quantify signal spread and decay from distance matrices.
 
-This module creates visualizations showing distance information from masks,
-with distance-based coloring and aggregate intensity plots.
+This module performs quantification analysis on distance matrices paired with images,
+measuring signal spread (distance) and decay (time) using region growing segmentation.
 
 Author: BIPHUB - Bioimage Informatics Hub, University of Oslo
 License: MIT
 """
 
 import os
+import sys
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
@@ -31,8 +32,6 @@ try:
     from .. import bioimage_pipeline_utils as rp
 except ImportError:
     # Fallback for when script is run directly (not as module)
-    import sys
-    import os
     # Go up to standard_code/python directory to find bioimage_pipeline_utils
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, parent_dir)
@@ -368,8 +367,9 @@ def plot_distance_time_heatmap(
         normalize_to_t0: If True, normalize each distance bin by its T0 value to show relative changes (default: False)
         force_show: If True, display plot interactively even when output_path is specified (default: False)
         remove_first_n_bins: Number of first (closest) distance bins to remove from visualization (default: 5)
-        max_measure_pixels: Maximum pixels to randomly sample per distance bin (default: 20)
-        random_seed: Seed for random sampling for reproducibility (default: 42)
+        max_measure_pixels: Maximum pixels to randomly sample per distance bin. 
+                            Set to -1 to disable sampling and use all pixels (default: 20)
+        random_seed: Seed for random sampling for reproducibility (default: 42, ignored if max_measure_pixels=-1)
     """
     logging.info(f"Processing: {Path(image_path).name}")
     
@@ -423,17 +423,23 @@ def plot_distance_time_heatmap(
     
     logging.info(f"Using {num_distance_bins} distance bins for visualization")
     logging.info(f"Distance range: {distance_bins[0]:.2f} to {distance_bins[-1]:.2f}")
-    logging.info(f"Random sampling: max {max_measure_pixels} pixels per bin (seed={random_seed})")
+    
+    # Check if sampling is enabled
+    use_sampling = max_measure_pixels > 0
+    if use_sampling:
+        logging.info(f"Random sampling: max {max_measure_pixels} pixels per bin (seed={random_seed})")
+    else:
+        logging.info(f"Random sampling DISABLED (max_measure_pixels={max_measure_pixels}): using ALL pixels per bin")
     
     # Create 2D histogram: rows = distance bins, cols = timepoints
-    # Use random sampling to avoid bias from pixel count variations
+    # Use random sampling to avoid bias from pixel count variations (if enabled)
     # Also track pixel counts per bin
     heatmap_data = np.zeros((num_distance_bins, T))
     pixel_counts = np.zeros((num_distance_bins, T), dtype=int)
     sampled_pixel_counts = np.zeros((num_distance_bins, T), dtype=int)
     
-    # Initialize random number generator with fixed seed for reproducibility
-    rng = np.random.RandomState(random_seed)
+    # Initialize random number generator with fixed seed for reproducibility (only if sampling enabled)
+    rng = np.random.RandomState(random_seed) if use_sampling else None
     
     for t in range(T):
         # Get distance map and corresponding image data for this timepoint
@@ -451,16 +457,21 @@ def plot_distance_time_heatmap(
                 # Get intensities of all pixels in this bin
                 intensities = img_t[bin_mask]
                 
-                # Randomly sample up to max_measure_pixels
-                n_pixels_to_sample = min(max_measure_pixels, len(intensities))
-                
-                # Random sampling without replacement
-                sampled_indices = rng.choice(len(intensities), size=n_pixels_to_sample, replace=False)
-                sampled_intensities = intensities[sampled_indices]
-                
-                # Sum the sampled intensities
-                heatmap_data[i, t] = np.sum(sampled_intensities)
-                sampled_pixel_counts[i, t] = n_pixels_to_sample
+                if use_sampling:
+                    # Randomly sample up to max_measure_pixels
+                    n_pixels_to_sample = min(max_measure_pixels, len(intensities))
+                    
+                    # Random sampling without replacement
+                    sampled_indices = rng.choice(len(intensities), size=n_pixels_to_sample, replace=False)
+                    sampled_intensities = intensities[sampled_indices]
+                    
+                    # Sum the sampled intensities
+                    heatmap_data[i, t] = np.sum(sampled_intensities)
+                    sampled_pixel_counts[i, t] = n_pixels_to_sample
+                else:
+                    # Use all pixels (no sampling)
+                    heatmap_data[i, t] = np.sum(intensities)
+                    sampled_pixel_counts[i, t] = len(intensities)
             else:
                 heatmap_data[i, t] = 0
                 sampled_pixel_counts[i, t] = 0
@@ -478,7 +489,10 @@ def plot_distance_time_heatmap(
     logging.info(f"Sampled pixels per timepoint: min={np.min(total_sampled_per_timepoint)}, "
                 f"max={np.max(total_sampled_per_timepoint)}, "
                 f"mean={np.mean(total_sampled_per_timepoint):.0f}")
-    logging.info(f"Average sampled pixels per bin: {np.mean(avg_sampled_per_bin):.1f} (max allowed: {max_measure_pixels})")
+    if use_sampling:
+        logging.info(f"Average sampled pixels per bin: {np.mean(avg_sampled_per_bin):.1f} (max allowed: {max_measure_pixels})")
+    else:
+        logging.info(f"Average pixels per bin: {np.mean(avg_sampled_per_bin):.1f} (all pixels used, no sampling)")
     
     # Normalize to T0 if requested (subtract T0 to make it zero baseline)
     if normalize_to_t0:
@@ -531,6 +545,7 @@ def plot_distance_time_heatmap(
             csv_df.insert(3, 'Units', 'Intensity_Change_from_T0')
         else:
             csv_df.insert(3, 'Units', 'Sum_Image_Intensity')
+        csv_df.insert(4, 'QC_Status', 'passed')  # Only QC-passed files are processed
         
         # Set index name for distance bins
         csv_df.index.name = 'Distance_Bin'
@@ -547,6 +562,7 @@ def plot_distance_time_heatmap(
             columns=[f'T{t}' for t in range(T)]
         )
         pixel_df.insert(0, 'Base_Filename', base_filename)
+        pixel_df.insert(1, 'QC_Status', 'passed')  # Only QC-passed files are processed
         pixel_df.index.name = 'Distance_Bin'
         pixel_df.to_csv(pixel_count_path, sep='\t')
         logging.info(f"Saved pixel count data to: {pixel_count_path}")
@@ -758,9 +774,11 @@ def quantify_signal_spread_and_decay(
         remove_first_n_bins: Number of first distance bins to remove (default: 5)
         smooth_sigma_distance: Gaussian smoothing sigma applied ONLY in distance dimension.
                                Each timepoint is smoothed independently. (default: 1.5)
-        max_measure_pixels: Maximum pixels to randomly sample per distance bin (default: 20)
+        max_measure_pixels: Maximum pixels to randomly sample per distance bin. 
+                            Set to -1 to disable sampling and use all pixels (default: 20)
         random_seed: Base seed for random sampling. Uses seeds random_seed to random_seed+9 
-                     for 10 sampling runs, then selects the value closest to mean. (default: 42)
+                     for 10 sampling runs, then selects the value closest to mean. 
+                     (default: 42, ignored if max_measure_pixels=-1)
         force_show: Display plots even when saving (default: False)
         mask_alpha: Alpha transparency for mask overlay on heatmap (0=transparent, 1=opaque) (default: 0.5)
         region_grow_threshold: Fraction of running maximum for region growing (0.0-1.0).
@@ -829,8 +847,14 @@ def quantify_signal_spread_and_decay(
         num_distance_bins = len(distance_bins)
     
     logging.info(f"Using {num_distance_bins} distance bins")
-    logging.info(f"Robust random sampling: max {max_measure_pixels} pixels per bin")
-    logging.info(f"Using 10 sampling runs (seeds {random_seed} to {random_seed+9}), selecting value closest to mean")
+    
+    # Check if sampling is enabled
+    use_sampling = max_measure_pixels > 0
+    if use_sampling:
+        logging.info(f"Robust random sampling: max {max_measure_pixels} pixels per bin")
+        logging.info(f"Using 10 sampling runs (seeds {random_seed} to {random_seed+9}), selecting value closest to mean")
+    else:
+        logging.info(f"Random sampling DISABLED (max_measure_pixels={max_measure_pixels}): using ALL pixels per bin")
     
     # Create heatmap data with robust random sampling
     # Sample with 10 different seeds and use the value closest to mean
@@ -840,8 +864,9 @@ def quantify_signal_spread_and_decay(
     logging.info(f"Skipping T=0, analyzing timepoints T=1 to T={T-1}")
     T_quantify = T - 1  # Number of timepoints to quantify (excluding T0)
     
-    n_sampling_runs = 10  # Number of different random seeds to try
-    logging.info(f"Using robust sampling: {n_sampling_runs} runs per bin, selecting value closest to mean")
+    n_sampling_runs = 10  # Number of different random seeds to try (only if sampling enabled)
+    if use_sampling:
+        logging.info(f"Using robust sampling: {n_sampling_runs} runs per bin, selecting value closest to mean")
     
     heatmap_data = np.zeros((num_distance_bins, T_quantify))
     
@@ -856,27 +881,31 @@ def quantify_signal_spread_and_decay(
                 # Get intensities of all pixels in this bin
                 intensities = img_t[bin_mask]
                 
-                # Randomly sample with multiple seeds
-                n_pixels_to_sample = min(max_measure_pixels, len(intensities))
-                
-                # If we have very few pixels, just use all of them
-                if len(intensities) <= max_measure_pixels:
-                    heatmap_data[i, t-1] = np.sum(intensities)
+                if use_sampling:
+                    # Randomly sample with multiple seeds
+                    n_pixels_to_sample = min(max_measure_pixels, len(intensities))
+                    
+                    # If we have very few pixels, just use all of them
+                    if len(intensities) <= max_measure_pixels:
+                        heatmap_data[i, t-1] = np.sum(intensities)
+                    else:
+                        # Sample with 10 different seeds
+                        sampled_sums = []
+                        for seed_offset in range(n_sampling_runs):
+                            rng = np.random.RandomState(random_seed + seed_offset)
+                            sampled_indices = rng.choice(len(intensities), size=n_pixels_to_sample, replace=False)
+                            sampled_intensities = intensities[sampled_indices]
+                            sampled_sums.append(np.sum(sampled_intensities))
+                        
+                        # Calculate mean of all samples
+                        mean_sum = np.mean(sampled_sums)
+                        
+                        # Find the sample closest to the mean
+                        closest_idx = np.argmin(np.abs(np.array(sampled_sums) - mean_sum))
+                        heatmap_data[i, t-1] = sampled_sums[closest_idx]
                 else:
-                    # Sample with 10 different seeds
-                    sampled_sums = []
-                    for seed_offset in range(n_sampling_runs):
-                        rng = np.random.RandomState(random_seed + seed_offset)
-                        sampled_indices = rng.choice(len(intensities), size=n_pixels_to_sample, replace=False)
-                        sampled_intensities = intensities[sampled_indices]
-                        sampled_sums.append(np.sum(sampled_intensities))
-                    
-                    # Calculate mean of all samples
-                    mean_sum = np.mean(sampled_sums)
-                    
-                    # Find the sample closest to the mean
-                    closest_idx = np.argmin(np.abs(np.array(sampled_sums) - mean_sum))
-                    heatmap_data[i, t-1] = sampled_sums[closest_idx]
+                    # Use all pixels (no sampling)
+                    heatmap_data[i, t-1] = np.sum(intensities)
             else:
                 heatmap_data[i, t-1] = 0
     
@@ -1322,6 +1351,7 @@ def quantify_signal_spread_and_decay(
             'Experimental_Group': [experimental_group] * len(timepoints_arr),
             'Filename': [Path(image_path).stem] * len(timepoints_arr),
             'Timepoint': timepoints_arr,
+            'QC_Status': ['passed'] * len(timepoints_arr),  # Only QC-passed files are processed
             'Center_Distance': distance_peak,
             'Spread_Lower': distance_spread_lower,
             'Spread_Upper': distance_spread_upper,
@@ -1337,6 +1367,7 @@ def quantify_signal_spread_and_decay(
         decay_df = pd.DataFrame({
             'Experimental_Group': [experimental_group],
             'Filename': [Path(image_path).stem],
+            'QC_Status': ['passed'],  # Only QC-passed files are processed
             'Signal_Duration_Timepoints': [signal_duration],
             'Time_To_50_Percent': [time_to_50_percent],
             'Time_To_Disappearance': [time_to_disappearance],
@@ -1400,196 +1431,117 @@ def process_single_file(
     args: argparse.Namespace
 ) -> Tuple[str, bool, Optional[str]]:
     """
-    Process a single file pair (image and distance matrix).
+    Process a single file for quantification (used in parallel processing).
     
     This function is designed to be called in parallel for multiple files.
+    Always runs quantification analysis on the image-distance pair.
     
     Args:
         basename: Base filename key
-        complete_pairs: Dictionary mapping basenames to file paths
+        complete_pairs: Dictionary mapping basenames to file paths (uses 'input' and 'distance' keys)
         args: Command-line arguments namespace
     
     Returns:
         Tuple of (basename, success, error_message)
     """
-    img_path = complete_pairs[basename]['image']
+    img_path = complete_pairs[basename]['input']
     dist_path = complete_pairs[basename]['distance']
     
     if args.output_folder:
-        output_name = f"{Path(img_path).stem}_distance_time_heatmap.png"
-        heatmap_output = os.path.join(args.output_folder, output_name)
+        quant_output_name = f"{Path(img_path).stem}_quantification.png"
+        quant_output = os.path.join(args.output_folder, quant_output_name)
     else:
-        heatmap_output = None
+        quant_output = None
     
     try:
-        # Determine if we should show plots based on flags
-        show_raw = args.force_show or args.force_show_raw
-        show_quant = args.force_show or args.force_show_quantification
-        
-        # If quantify is enabled, skip displaying raw heatmap (but still save if output_folder is set)
-        if args.quantify:
-            # Only create heatmap if output folder is specified (save but don't show unless force_show_raw)
-            if args.output_folder:
-                plot_distance_time_heatmap(
-                    img_path,
-                    dist_path,
-                    output_path=heatmap_output,
-                    channel=args.channel,
-                    colormap=args.colormap,
-                    normalize_to_t0=args.normalize_to_t0,
-                    force_show=show_raw,
-                    remove_first_n_bins=args.remove_first_n_bins,
-                    max_measure_pixels=args.max_measure_pixels
-                )
-            
-            # Run quantification
-            if args.output_folder:
-                quant_output_name = f"{Path(img_path).stem}_quantification.png"
-                quant_output = os.path.join(args.output_folder, quant_output_name)
-            else:
-                quant_output = None
-            
-            logging.info(f"Running quantification for {Path(img_path).name}")
-            quantify_signal_spread_and_decay(
-                img_path,
-                dist_path,
-                output_path=quant_output,
-                channel=args.channel,
-                colormap=args.colormap,
-                remove_first_n_bins=args.remove_first_n_bins,
-                smooth_sigma_distance=args.smooth_sigma_distance,
-                max_measure_pixels=args.max_measure_pixels,
-                force_show=show_quant,
-                mask_alpha=args.mask_alpha,
-                region_grow_threshold=args.region_grow_threshold
-            )
-        else:
-            # Normal heatmap mode (not quantifying)
-            plot_distance_time_heatmap(
-                img_path,
-                dist_path,
-                output_path=heatmap_output,
-                channel=args.channel,
-                colormap=args.colormap,
-                normalize_to_t0=args.normalize_to_t0,
-                force_show=show_raw,
-                remove_first_n_bins=args.remove_first_n_bins,
-                max_measure_pixels=args.max_measure_pixels
-            )
+        # In parallel mode, we always save and never show
+        logging.info(f"Quantifying {Path(img_path).name}")
+        quantify_signal_spread_and_decay(
+            img_path,
+            dist_path,
+            output_path=quant_output,
+            channel=args.channel,
+            colormap=args.colormap,
+            remove_first_n_bins=args.remove_first_n_bins,
+            smooth_sigma_distance=args.smooth_sigma_distance,
+            max_measure_pixels=args.max_measure_pixels,
+            force_show=False,  # Never show in parallel mode
+            mask_alpha=args.mask_alpha,
+            region_grow_threshold=args.region_grow_threshold
+        )
         
         return (basename, True, None)
     
     except Exception as e:
-        error_msg = f"Error processing {Path(img_path).name}: {e}"
-        logging.error(error_msg)
+        error_msg = str(e)
+        logging.error(f"Error processing {basename}: {error_msg}")
+        return (basename, False, error_msg)
         return (basename, False, str(e))
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Visualize distance matrices with colored overlays and intensity heatmaps',
+        description='Quantify signal spread (distance) and decay (time) from distance matrices. Always performs quantification analysis.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Create distance-time heatmaps for 3 evenly-spaced examples (default)
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif"
+  # Basic quantification with QC filtering
+  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification
   
-  # Save outputs instead of displaying
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --output-folder ./plots
+  # Display plots interactively even when saving
+  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key track_completeness --output-folder ./quantification --force-show
   
-  # Save outputs AND display interactively
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --output-folder ./plots --force-show
+  # Process all files in parallel (DEFAULT)
+  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification --mode all
   
-  # Show first 5 files
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --mode first5
+  # Process specific groups (e.g., 2 samples per experimental group)
+  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification --mode group2
   
-  # Create heatmaps normalized to T0 (first timepoint) to show relative changes
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --normalize-to-t0
+  # Recursive search with folder structure collapsing
+  python quantify_distance_heatmap.py --input-search-pattern "./data/**/*.tif" --distance-search-pattern "./distances/**/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification
   
-  # Show random 10 heatmaps
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --mode random10
+  # Customize smoothing and segmentation thresholds
+  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --smooth-sigma-distance 2.0 --region-grow-threshold 0.75 --output-folder ./quantification
   
-  # Process all files
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --mode all
-  
-  # Use different colormap
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --colormap plasma
-  
-  # Remove first 10 distance bins (closest to reference)
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --remove-first-n-bins 10
-  
-  # Show specific channel in heatmaps
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --channel 1
-  
-  # Run Gaussian-based quantification (peak tracking and FWHM analysis)
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification
-  
-  # Show both raw and quantification plots even when saving
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification --force-show
-  
-  # Show only quantification plot (not raw heatmap) when saving
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification --force-show-quantification
-  
-  # Show only raw heatmap (not quantification) when saving
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification --force-show-raw
-  
-  # Quantify with custom distance smoothing (timepoints remain independent)
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --smooth-sigma-distance 2.0 --output-folder ./quantification
-  
-  # Process all files with quantification in parallel (DEFAULT when saving to folder)
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification --mode all
-  
-  # Disable parallel processing (use sequential mode)
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification --mode all --no-parallel
-  
-  # Limit parallel processing to 4 cores
-  python plot_distance.py --input-search-pattern "./images/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --quantify --output-folder ./quantification --mode all --n-jobs 4
+  # Sequential processing (disable parallel)
+  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification --no-parallel
         """
     )
     
     parser.add_argument('--input-search-pattern', type=str, required=True,
-                       help='Glob pattern for input images (REQUIRED)')
+                       help='Glob pattern for input images. Use "**" for recursive search (e.g., "./data/**/*.tif")')
     parser.add_argument('--distance-search-pattern', type=str, required=True,
-                       help='Glob pattern for distance matrix images (REQUIRED)')
+                       help='Glob pattern for distance matrix images. Use "**" for recursive search (e.g., "./distances/**/*_geodesic.tif")')
+    parser.add_argument('--qc-key', type=str, required=True,
+                       help='QC key to use for filtering (e.g., "nuc_segmentation", "track_completeness"). Images with failed status will be excluded.')
     parser.add_argument('--output-folder', type=str, default=None,
-                       help='Folder to save plots. If not specified, displays interactively.')
-    parser.add_argument('--mode', type=str, default='group1',
-                       help='File selection mode for heatmaps: "all" = all files, "examples[N]" = first, middle, last N files (default: 3), '
-                            '"first[N]" = first N files (default: 3), "random[N]" = N random files (default: 3), '
-                            '"group[N]" = N samples per experimental group (default: group1)')
-    parser.add_argument('--normalize-to-t0', action='store_true',
-                       help='Use T0 (first timepoint) as zero baseline - subtract T0 from all timepoints to show changes (T0 = 0)')
+                       help='Folder to save plots and quantification results. If not specified, displays interactively.')
+    parser.add_argument('--mode', type=str, default='all',
+                       help='File selection mode: "all" = all files, "examples[N]" = first, middle, last N files, '
+                            '"first[N]" = first N files, "random[N]" = N random files, '
+                            '"group[N]" = N samples per experimental group (default: all)')
     parser.add_argument('--force-show', action='store_true',
-                       help='Display plots interactively even when saving to output folder (applies to both raw and quantification)')
-    parser.add_argument('--force-show-raw', action='store_true',
-                       help='Display raw heatmap interactively even when saving to output folder')
-    parser.add_argument('--force-show-quantification', action='store_true',
-                       help='Display quantification plot interactively even when saving to output folder')
-    parser.add_argument('--search-subfolders', action='store_true',
-                       help='Enable recursive search for files')
+                       help='Display plots interactively even when saving to output folder')
     parser.add_argument('--channel', type=int, default=0,
-                       help='Which channel to display for heatmaps (default: 0)')
+                       help='Which channel to use for quantification (default: 0)')
     parser.add_argument('--colormap', type=str, default='viridis',
                        help='Matplotlib colormap for heatmaps (default: viridis)')
     parser.add_argument('--remove-first-n-bins', type=int, default=5,
-                       help='Remove first N distance bins (closest to reference) from visualization (default: 5)')
-    parser.add_argument('--quantify', action='store_true',
-                       help='Run Gaussian-based quantification analysis (peak tracking and FWHM). When enabled, raw heatmaps are saved but not displayed.')
+                       help='Remove first N distance bins (closest to reference) from analysis (default: 5)')
     parser.add_argument('--smooth-sigma-distance', type=float, default=1.5,
-                       help='Gaussian smoothing sigma for distance dimension ONLY in quantification. '
+                       help='Gaussian smoothing sigma for distance dimension ONLY. '
                             'Each timepoint is processed independently (no temporal smoothing). (default: 1.5)')
     parser.add_argument('--max-measure-pixels', type=int, default=20,
-                       help='Maximum number of pixels to randomly sample per distance bin for measurement (default: 20). '
-                            'Makes measurement less sensitive to pixel count variations.')
+                       help='Maximum number of pixels to randomly sample per distance bin (default: 20). '
+                            'Makes measurement less sensitive to pixel count variations. Use -1 for all pixels.')
     parser.add_argument('--mask-alpha', type=float, default=0.5,
-                       help='Alpha transparency for mask overlay on quantification heatmap (0=transparent, 1=opaque) (default: 0.5)')
+                       help='Alpha transparency for mask overlay on heatmap (0=transparent, 1=opaque) (default: 0.5)')
     parser.add_argument('--region-grow-threshold', type=float, default=0.5,
                        help='Threshold for region growing segmentation (0.0-1.0). Grows region from peak by including '
                             'neighbors >= threshold × running maximum intensity. Higher = more restrictive (e.g., 0.75), '
                             'lower = more permissive (e.g., 0.25). (default: 0.5)')
     parser.add_argument('--no-parallel', action='store_true',
-                       help='Disable parallel processing. By default, files are processed in parallel when saving to output folder '
-                            '(not displaying plots) for faster batch processing.')
+                       help='Disable parallel processing. By default, files are processed in parallel when saving to output folder.')
     parser.add_argument('--n-jobs', type=int, default=None,
                        help='Number of parallel jobs to run. Default: use all available CPU cores. Ignored if --no-parallel is set.')
     
@@ -1601,31 +1553,83 @@ Examples:
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     
+    logging.info("="*80)
+    logging.info("Distance Matrix Quantification with QC Filtering")
+    logging.info("="*80)
+    
+    # Determine if recursive search is requested
+    search_subfolders = '**' in args.input_search_pattern or '**' in args.distance_search_pattern
+    
     # Both patterns are required - build search patterns dict
     patterns = {
-        'image': args.input_search_pattern,
+        'input': args.input_search_pattern,
         'distance': args.distance_search_pattern
     }
     
+    logging.info(f"Searching for files with patterns:")
+    logging.info(f"  Input:    {args.input_search_pattern}")
+    logging.info(f"  Distance: {args.distance_search_pattern}")
+    logging.info(f"  QC Key:   {args.qc_key}")
+    
     # Get grouped files - this is our primary file discovery
-    grouped_files = rp.get_grouped_files_to_process(patterns, args.search_subfolders)
+    try:
+        grouped_files = rp.get_grouped_files_to_process(patterns, search_subfolders)
+    except Exception as e:
+        logging.error(f"Error finding files: {e}")
+        return 1
     
     if not grouped_files:
-        raise FileNotFoundError(f"No files found matching patterns: {patterns}")
+        logging.error(f"No files found matching patterns")
+        return 1
     
-    logging.info(f"Found {len(grouped_files)} grouped file set(s)")
+    logging.info(f"Found {len(grouped_files)} file pairs")
     
     # Filter to only complete pairs (both image and distance present)
     complete_pairs = {
         basename: files 
         for basename, files in grouped_files.items() 
-        if 'image' in files and 'distance' in files
+        if 'input' in files and 'distance' in files
     }
     
     if not complete_pairs:
-        raise ValueError("No complete image-distance pairs found!")
+        logging.error("No complete image-distance pairs found!")
+        return 1
     
-    logging.info(f"Found {len(complete_pairs)} complete image-distance pair(s)")
+    files_with_both = len(complete_pairs)
+    files_missing = len(grouped_files) - files_with_both
+    logging.info(f"  {files_with_both} with both input and distance, {files_missing} incomplete")
+    
+    # ============================================================================
+    # QC FILTERING - CRITICAL STEP
+    # ============================================================================
+    # Filter out files that failed QC checks BEFORE any processing or plotting.
+    # This ensures that failed QC files are NEVER used in quantification or plots.
+    # All TSV outputs will have QC_Status='passed' since only passed files proceed.
+    # ============================================================================
+    
+    # Import QC filtering function from plot_segmentation_contours
+    from plot_segmentation_contours import filter_by_qc_status
+    
+    # Filter by QC status (exclude failed) - need to adapt keys to match
+    # Convert 'input' key to what filter expects
+    qc_grouped_files = {
+        basename: {'input': files['input'], 'mask': files.get('distance')}
+        for basename, files in complete_pairs.items()
+    }
+    
+    filtered_files = filter_by_qc_status(qc_grouped_files, args.qc_key)
+    
+    if not filtered_files:
+        logging.error(f"No files remaining after QC filtering")
+        return 1
+    
+    # Convert back to distance key naming
+    complete_pairs = {
+        basename: {'input': files['input'], 'distance': files['mask']}
+        for basename, files in filtered_files.items()
+    }
+    
+    logging.info(f"After QC filtering: {len(complete_pairs)} pairs")
     
     # Parse mode for file selection
     mode = str(args.mode).lower()  # Convert to string in case YAML passes boolean
@@ -1666,19 +1670,18 @@ Examples:
             return random.sample(basenames_list, count)
         return basenames_list
     
-    # Create heatmaps
+    # Select basenames to process
     basenames = sorted(complete_pairs.keys())
     
     # If group mode, select N samples per experimental group
     if mode_type == 'group':
         from collections import defaultdict
-        import random
         
         # Group basenames by experimental group
         groups = defaultdict(list)
         for basename in basenames:
-            # Extract group from the first available file path
-            img_path = complete_pairs[basename].get('image') or complete_pairs[basename].get('distance')
+            # Extract group from the input file path
+            img_path = complete_pairs[basename]['input']
             group = extract_experimental_group(img_path)
             groups[group].append(basename)
         
@@ -1712,7 +1715,7 @@ Examples:
         # Standard selection modes
         selected_basenames = select_basenames(basenames, mode_type, mode_count)
     
-    logging.info(f"Creating {len(selected_basenames)} distance-time heatmap(s) (mode: {args.mode})")
+    logging.info(f"Quantifying {len(selected_basenames)} file pair(s) (mode: {args.mode})")
     
     # Determine if we should use parallel processing
     # Parallel is DEFAULT when: saving to folder AND not displaying plots
@@ -1720,7 +1723,7 @@ Examples:
     use_parallel = (
         not args.no_parallel and 
         args.output_folder and 
-        not (args.force_show or args.force_show_raw or args.force_show_quantification)
+        not args.force_show
     )
     
     if use_parallel:
@@ -1754,7 +1757,7 @@ Examples:
         # Sequential processing
         if not args.output_folder:
             logging.info(f"Processing {len(selected_basenames)} files sequentially (no output folder, displaying plots)")
-        elif args.force_show or args.force_show_raw or args.force_show_quantification:
+        elif args.force_show:
             logging.info(f"Processing {len(selected_basenames)} files sequentially (displaying plots)")
         elif args.no_parallel:
             logging.info(f"Processing {len(selected_basenames)} files sequentially (--no-parallel flag set)")
@@ -1762,76 +1765,39 @@ Examples:
             logging.info(f"Processing {len(selected_basenames)} files sequentially")
         
         for basename in selected_basenames:
-            img_path = complete_pairs[basename]['image']
+            img_path = complete_pairs[basename]['input']
             dist_path = complete_pairs[basename]['distance']
             
             if args.output_folder:
-                output_name = f"{Path(img_path).stem}_distance_time_heatmap.png"
-                heatmap_output = os.path.join(args.output_folder, output_name)
+                quant_output_name = f"{Path(img_path).stem}_quantification.png"
+                quant_output = os.path.join(args.output_folder, quant_output_name)
             else:
-                heatmap_output = None
+                quant_output = None
             
             try:
-                # Determine if we should show plots based on flags
-                show_raw = args.force_show or args.force_show_raw
-                show_quant = args.force_show or args.force_show_quantification
-                
-                # If quantify is enabled, skip displaying raw heatmap (but still save if output_folder is set)
-                if args.quantify:
-                    # Only create heatmap if output folder is specified (save but don't show unless force_show_raw)
-                    if args.output_folder:
-                        plot_distance_time_heatmap(
-                            img_path,
-                            dist_path,
-                            output_path=heatmap_output,
-                            channel=args.channel,
-                            colormap=args.colormap,
-                            normalize_to_t0=args.normalize_to_t0,
-                            force_show=show_raw,
-                            remove_first_n_bins=args.remove_first_n_bins,
-                            max_measure_pixels=args.max_measure_pixels
-                        )
-                    
-                    # Run quantification
-                    if args.output_folder:
-                        quant_output_name = f"{Path(img_path).stem}_quantification.png"
-                        quant_output = os.path.join(args.output_folder, quant_output_name)
-                    else:
-                        quant_output = None
-                    
-                    logging.info(f"Running Gaussian quantification for {Path(img_path).name}")
-                    quantify_signal_spread_and_decay(
-                        img_path,
-                        dist_path,
-                        output_path=quant_output,
-                        channel=args.channel,
-                        colormap=args.colormap,
-                        remove_first_n_bins=args.remove_first_n_bins,
-                        smooth_sigma_distance=args.smooth_sigma_distance,
-                        max_measure_pixels=args.max_measure_pixels,
-                        force_show=show_quant,
-                        mask_alpha=args.mask_alpha,
-                        region_grow_threshold=args.region_grow_threshold
-                    )
-                else:
-                    # Normal heatmap mode (not quantifying)
-                    plot_distance_time_heatmap(
-                        img_path,
-                        dist_path,
-                        output_path=heatmap_output,
-                        channel=args.channel,
-                        colormap=args.colormap,
-                        normalize_to_t0=args.normalize_to_t0,
-                        force_show=show_raw,
-                        remove_first_n_bins=args.remove_first_n_bins,
-                        max_measure_pixels=args.max_measure_pixels
-                    )
+                logging.info(f"Quantifying {Path(img_path).name}")
+                quantify_signal_spread_and_decay(
+                    img_path,
+                    dist_path,
+                    output_path=quant_output,
+                    channel=args.channel,
+                    colormap=args.colormap,
+                    remove_first_n_bins=args.remove_first_n_bins,
+                    smooth_sigma_distance=args.smooth_sigma_distance,
+                    max_measure_pixels=args.max_measure_pixels,
+                    force_show=args.force_show,
+                    mask_alpha=args.mask_alpha,
+                    region_grow_threshold=args.region_grow_threshold
+                )
             except Exception as e:
                 logging.error(f"Error processing {Path(img_path).name}: {e}")
                 continue
     
+    logging.info("="*80)
     logging.info("Processing complete!")
+    logging.info("="*80)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
