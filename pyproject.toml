@@ -147,6 +147,27 @@ segmentation = [
 	"bioio-tifffile",
 	"bioio-nd2",
 ]
+run_ilastik = [
+	"numpy",
+	"scipy",
+	"scikit-image",
+	"matplotlib",
+	"opencv-python",
+	"roifile",
+	"trackpy",
+
+	"h5py",
+	"tqdm",
+	"joblib",
+	"pyyaml",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"nd2reader",
+
+]
 
 # Development dependencies
 dev = [

@@ -14,7 +14,8 @@ from bioio import BioImage
 
 # Local helpers
 # Use standard import since bioimage_pipeline_utils is in same directory
-import bioimage_pipeline_utils as rp  
+import bioimage_pipeline_utils as rp
+import extract_metadata  
 
 
 def get_physical_pixel_sizes_safe(image: BioImage, src_path: str, out_path: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
@@ -46,7 +47,7 @@ def get_physical_pixel_sizes_safe(image: BioImage, src_path: str, out_path: str)
 
 def load_or_derive_metadata(src_path: str, out_path: str) -> dict:
     """
-    Load metadata from a YAML sidecar if present, else derive minimal metadata.
+    Load metadata from a YAML sidecar if present, else extract from image.
 
     Args:
         src_path: Path to the source image file.
@@ -65,8 +66,14 @@ def load_or_derive_metadata(src_path: str, out_path: str) -> dict:
                 return loaded
         except Exception as e:
             logger.warning(f"Failed reading existing metadata yaml: {e}")
-    # Fallback: derive minimal metadata
-    return {"Source": os.path.basename(src_path)}
+    
+    # Extract metadata using the extract_metadata module
+    try:
+        metadata = extract_metadata.get_all_metadata(src_path, output_file=None)
+        return metadata
+    except Exception as e:
+        logger.warning(f"Failed extracting metadata: {e}")
+        return {"Source": os.path.basename(src_path)}
 
 
 def _project(image: BioImage, proj_method: Optional[str]) -> np.ndarray:
@@ -131,139 +138,40 @@ def _project(image: BioImage, proj_method: Optional[str]) -> np.ndarray:
     return proj
 
 
-def _apply_drift_correction(
-    img_tczyx: np.ndarray,
-    drift_channel: int,
-    method: str,
-    logger: Optional[Any] = None,
-) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[str], Optional[str]]:
-    """
-    Apply drift correction to a TCZYX image array using the specified method.
-
-    Args:
-        img_tczyx: Input image as a numpy array (TCZYX).
-        drift_channel: Channel index to use for drift correction (-1 to skip).
-        method: Drift correction method ('cpu', 'gpu', 'cupy', 'auto').
-        logger: Logger instance (optional).
-
-    Returns:
-        Tuple of (corrected array, shifts array, method used, error report).
-    """
-    if logger is None:
-        logger = logging.getLogger(__name__)
-    if drift_channel <= -1:
-        logger.info("Drift correction skipped: drift_correct_channel is set to -1.")
-        return img_tczyx, None, None, None
-
-    error_report = None
-    try:
-        from drift_correction import (
-            drift_correct_xy_parallel as dc_cpu,
-            drift_correct_xy_pygpureg as dc_gpu,
-            drift_correct_xy_cupy as dc_cupy,
-        )
-    except Exception as e:
-        msg = f"drift_correction module not available; skipping drift correction: {e}"
-        logger.error(msg)
-        error_report = msg
-        return img_tczyx, None, None, error_report
-
-    m = (method or "gpu").lower()
-    try:
-        if m == "cpu":
-            out, shifts = dc_cpu(img_tczyx, drift_channel, logger=logger)
-            return out, shifts, "cpu", None
-        if m == "cupy":
-            out, shifts, _ = dc_cupy(img_tczyx, drift_correct_channel=drift_channel, logger=logger)
-            return out, shifts, "cupy", None
-        if m == "gpu":
-            out, shifts, _ = dc_gpu(img_tczyx, drift_correct_channel=drift_channel, logger=logger)
-            return out, shifts, "gpu", None
-        if m == "auto":
-            # Try CuPy → GPU → CPU
-            try:
-                out, shifts, _ = dc_cupy(img_tczyx, drift_correct_channel=drift_channel, logger=logger)
-                return out, shifts, "cupy", None
-            except Exception as e:
-                error_report = f"CuPy drift correction failed: {e}"
-                logger.warning(error_report)
-            try:
-                out, shifts, _ = dc_gpu(img_tczyx, drift_correct_channel=drift_channel, logger=logger)
-                return out, shifts, "gpu", None
-            except Exception as e:
-                error_report = f"GPU drift correction failed: {e}"
-                logger.warning(error_report)
-            try:
-                out, shifts = dc_cpu(img_tczyx, drift_channel, logger=logger)
-                return out, shifts, "cpu", None
-            except Exception as e:
-                error_report = f"CPU drift correction failed: {e}"
-                logger.warning(error_report)
-            return img_tczyx, None, None, error_report
-        error_report = f"Unknown drift method '{method}', skipping drift correction."
-        logger.error(error_report)
-        return img_tczyx, None, None, error_report
-    except Exception as e:
-        error_report = f"Drift correction failed: {e}"
-        logger.error(error_report)
-        return img_tczyx, None, None, error_report
-
-
 def _save_outputs(
     image_tczyx: np.ndarray,
-    shifts: Optional[np.ndarray],
     pps,
     out_tif_path: str,
-    out_shifts_path: str,
     metadata: dict,
     proj_method: Optional[str],
-    drift_channel: int,
     out_md_path: str,
-    drift_method: Optional[str],
-    error_report: Optional[str] = None,
     logger: Optional[Any] = None,
 ) -> None:
     """
-    Save output image, drift correction shifts, error reports, and metadata sidecar.
+    Save output image and metadata sidecar.
 
     Args:
         image_tczyx: Output image array (TCZYX).
-        shifts: Drift correction shifts array (optional).
         pps: Physical pixel sizes.
         out_tif_path: Output OME-TIFF path.
-        out_shifts_path: Output shifts .npy path.
         metadata: Metadata dictionary to update and save.
         proj_method: Projection method used.
-        drift_channel: Channel used for drift correction.
         out_md_path: Output metadata YAML path.
-        drift_method: Drift correction method used.
-        error_report: Error report string (optional).
         logger: Logger instance (optional).
     """
     if logger is None:
         logger = logging.getLogger(__name__)
     rp.save_tczyx_image(image_tczyx, out_tif_path, dim_order="TCZYX", physical_pixel_sizes=pps)
 
-    if shifts is not None:
-        try:
-            np.save(out_shifts_path, shifts)
-        except Exception as e:
-            logger.warning(f"Failed writing shifts .npy: {e}")
-
-    # Save error report if present
-    if error_report:
-        try:
-            with open(os.path.splitext(out_tif_path)[0] + "_drift_error.txt", "w", encoding="utf-8") as f:
-                f.write(error_report + "\n")
-        except Exception as e:
-            logger.warning(f"Failed writing drift error report: {e}")
-
-    # Update metadata sidecar
+    # Add "Image metadata" wrapper if not already present
+    if "Image metadata" not in metadata and any(key in metadata for key in ["Image dimensions", "Physical dimensions", "Channels"]):
+        # Wrap the extracted metadata under "Image metadata"
+        image_meta_keys = ["Image dimensions", "Physical dimensions", "Channels", "ROIs"]
+        image_metadata = {k: metadata.pop(k) for k in image_meta_keys if k in metadata}
+        metadata["Image metadata"] = image_metadata
+    
+    # Update metadata sidecar with conversion info
     convert_info: dict[str, Any] = {"Projection": {"Method": proj_method}}
-    if shifts is not None:
-        convert_info["Drift correction"] = {"Channel": drift_channel, "Method": drift_method}
-    if error_report:
-        convert_info["Drift correction error"] = error_report
     metadata["Convert to tif"] = convert_info
     try:
         import yaml
@@ -277,25 +185,20 @@ def process_file(
     img: BioImage,
     input_file_path: str,
     output_tif_file_path: str,
-    drift_correct_channel: int = -1,
     projection_method: Optional[str] = None,
-    drift_method: str = "gpu",
 ) -> None:
     """
-    Process a single image: project, drift-correct, and save outputs and metadata.
+    Process a single image: project and save outputs and metadata.
 
     Args:
         img: Input BioImage object.
         input_file_path: Path to input image file.
         output_tif_file_path: Path to output OME-TIFF file.
-        drift_correct_channel: Channel index for drift correction (-1 to skip).
         projection_method: Z-projection method (optional).
-        drift_method: Drift correction method ('cpu', 'gpu', 'cupy', 'auto').
     """
     # SAFEGUARDS: avoid overwriting inputs or metadata
     input_metadata_file_path: str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
     output_metadata_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
-    output_shifts_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_shifts.npy"
 
     if os.path.abspath(input_file_path) == os.path.abspath(output_tif_file_path):
         logger.error("Output equals input; aborting to prevent overwrite")
@@ -315,10 +218,9 @@ def process_file(
     metadata = load_or_derive_metadata(input_file_path, output_tif_file_path)
 
     arr = _project(img, projection_method)
-    out, shifts, used_method, error_report = _apply_drift_correction(arr, drift_correct_channel, drift_method, logger=logger)
 
-    _save_outputs(out, shifts, pps, output_tif_file_path, output_shifts_file_path, metadata,
-                  projection_method, drift_correct_channel, output_metadata_file_path, used_method, error_report, logger=logger)
+    _save_outputs(arr, pps, output_tif_file_path, metadata,
+                  projection_method, output_metadata_file_path, logger=logger)
 
 
 def process_pattern(args: argparse.Namespace) -> None:
@@ -371,19 +273,14 @@ def process_pattern(args: argparse.Namespace) -> None:
             img=img,
             input_file_path=src,
             output_tif_file_path=out_path,
-            drift_correct_channel=args.drift_correct_channel,
             projection_method=args.projection_method,
-            drift_method=args.drift_correct_method,
         )
 
 
 def main() -> None:
 
     parser = argparse.ArgumentParser(
-        description=(
-            "Convert images to OME-TIFF, optionally Z-project and drift-correct. "
-            "Use --drift-correct-channel to enable correction and --drift-correct-method {cpu,gpu,cupy,auto}."
-        )
+        description="Convert images to OME-TIFF with optional Z-projection."
     )
     parser.add_argument(
         "--input-search-pattern",
@@ -407,10 +304,6 @@ def main() -> None:
                         choices=[None, "max", "sum", "mean", "median", "min", "std"],
                         help="Z projection method over Z axis if Z>1")
     parser.add_argument("--multipoint-files", action="store_true", help="(not implemented) multiple scenes to separate files")
-
-    parser.add_argument("--drift-correct-channel", type=int, default=-1)
-    parser.add_argument("--drift-correct-method", type=str, default="cupy",
-                        choices=["cpu", "gpu", "cupy", "auto"])
 
     parser.add_argument("--no-parallel", action="store_true", help="unused; kept for CLI compatibility")
 
