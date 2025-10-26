@@ -343,6 +343,71 @@ func getVersion() string {
 	return getGitVersion()
 }
 
+// launchPipelineDesigner launches the pipeline designer GUI application
+// If yamlPath is provided, it will be opened in the designer
+// If yamlPath is empty, the user will be prompted to choose a save location
+func launchPipelineDesigner(mainProgramDir string, yamlPath string) {
+	// Look for the pipeline designer executable
+	designerPaths := []string{
+		filepath.Join(mainProgramDir, "pipeline-designer", "build", "bin", "pipeline-designer.exe"),
+		filepath.Join(mainProgramDir, "pipeline-designer", "pipeline-designer.exe"),
+		filepath.Join(mainProgramDir, "build", "bin", "pipeline-designer.exe"),
+		filepath.Join(mainProgramDir, "pipeline-designer.exe"),
+	}
+
+	var designerExe string
+	for _, path := range designerPaths {
+		if isFile(path) {
+			designerExe = path
+			break
+		}
+	}
+
+	if designerExe == "" {
+		fmt.Println("Error: Pipeline Designer executable not found.")
+		fmt.Println("Expected location: pipeline-designer/build/bin/pipeline-designer.exe")
+		fmt.Println("\nTo build the designer, run:")
+		fmt.Println("  cd pipeline-designer")
+		fmt.Println("  .\\build.ps1")
+		log.Fatal("Pipeline Designer not found")
+	}
+
+	fmt.Printf("Launching Pipeline Designer: %s\n", designerExe)
+
+	// Prepare command arguments
+	var cmdArgs []string
+	if yamlPath != "" {
+		// If a YAML file was provided, pass it as an argument
+		absYamlPath, err := filepath.Abs(yamlPath)
+		if err == nil {
+			cmdArgs = []string{absYamlPath}
+			fmt.Printf("Opening YAML file: %s\n", absYamlPath)
+		}
+	} else {
+		// No YAML file specified - designer will prompt for save location
+		fmt.Println("Starting designer - you will be prompted to choose where to save your pipeline")
+	}
+
+	// Launch the designer
+	cmd := exec.Command(designerExe, cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Start()
+	if err != nil {
+		log.Fatalf("Error launching Pipeline Designer: %v", err)
+	}
+
+	fmt.Println("Pipeline Designer launched successfully")
+	fmt.Println("You can close this window or press Ctrl+C to exit")
+
+	// Wait for the designer to exit
+	err = cmd.Wait()
+	if err != nil {
+		log.Printf("Pipeline Designer exited with error: %v", err)
+	}
+}
+
 // computeSegmentHash creates a deterministic hash of a segment's content
 // Includes: name, type, message, environment, and all commands
 // This hash is used to detect if a segment has been modified
@@ -817,6 +882,7 @@ func main() {
 	// Initialize a variable to hold the path to the YAML configuration file
 	var yamlPath string
 	forceReprocessing := false // Initialize the force reprocessing flag
+	designMode := false        // Initialize the design mode flag
 
 	// Check if a path is passed as a command-line argument
 	for _, arg := range os.Args[1:] {
@@ -825,6 +891,7 @@ func main() {
 			fmt.Println("  your_program [options] <path_to_yaml>")
 			fmt.Println("")
 			fmt.Println("Options:")
+			fmt.Println("  -d, --design              Launch the visual pipeline designer GUI.")
 			fmt.Println("  -f, --force_reprocessing  Process segments even if they have been previously processed.")
 			fmt.Println("  -h, --help                Show help information.")
 			fmt.Println("")
@@ -846,6 +913,8 @@ func main() {
 			fmt.Println("run:")
 			fmt.Println("- name: Collapse folder structure and save as .tif\n  environment: convert_to_tif\n  commands:\n    - python\n    - ./standard_code/python/convert_to_tif.py\n    - --input-file-or-folder: ./input\n    - --extension: .ims\n    - --projection-method: max\n    - --search-subfolders\n    - --collapse-delimiter: __\n- name: Enable force mode mid-pipeline\n  type: force\n  message: 'Reprocessing all subsequent steps.'\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
 			os.Exit(0)
+		} else if arg == "--design" || arg == "-d" {
+			designMode = true
 		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
 		} else {
@@ -856,6 +925,12 @@ func main() {
 				log.Fatalf("The specified YAML path is not a valid file: %v", yamlPath)
 			}
 		}
+	}
+
+	// Handle design mode
+	if designMode {
+		launchPipelineDesigner(mainProgramDir, yamlPath)
+		return
 	}
 
 	// TODO Check if the yaml file is inside the main program directory

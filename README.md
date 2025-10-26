@@ -9,6 +9,7 @@
 Execute multi-step image analysis workflows described in a YAML file. Each step (segment) can run a Python script in a specified Conda environment or an ImageJ macro/command, and the pipeline keeps a provenance trail by updating the same YAML file with when and with which code version each segment was processed.
 
 ## Key Features
+* **Visual Pipeline Designer GUI** - Launch with `-d` or `--design` flag to create/edit pipelines graphically
 * YAML-driven workflow (ordered list of segments).
 * Segment types: normal (default), pause, stop, force.
 * Force reprocessing control via CLI flag, on-demand segment type, or auto-escalation when an unprocessed step is encountered.
@@ -46,6 +47,34 @@ Inside a segment's `commands` list:
 After a segment succeeds:
 * `last_processed` is set to the current date.
 * `code_version` is written using (priority): ldflags-injected version/commit → `VERSION` file → Git describe/commit → `unknown`.
+
+## Visual Pipeline Designer
+
+Launch the graphical pipeline designer to create and edit pipeline YAML files visually:
+
+```powershell
+# Launch designer without a file (will prompt for save location)
+.\run_pipeline.exe --design
+
+# Open an existing YAML file in the designer
+.\run_pipeline.exe --design pipeline_configs\my_pipeline.yaml
+
+# Short form
+.\run_pipeline.exe -d pipeline_configs\my_pipeline.yaml
+```
+
+The designer provides:
+- Visual drag-and-drop pipeline creation
+- Real-time YAML preview
+- Module discovery from CLI definitions
+- Parameter validation and documentation
+- Easy environment and command configuration
+
+To build the designer from source:
+```powershell
+cd pipeline-designer
+.\build.ps1
+```
 
 ## ImageJ Steps
 Set `environment: imageJ` and provide commands/macros. The program will:

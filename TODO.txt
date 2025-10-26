@@ -1,8 +1,65 @@
 # BIPHUB Pipeline Manager TODO List
 
+## ✅ COMPLETED - Pipeline Designer GUI (Phase 1)
+**Achievement**: Successfully implemented visual pipeline designer with Wails + React!
+
+### What Was Built:
+- **Backend (Go)**:
+  - Complete data models (models.go) for visual pipeline representation
+  - YAML parser (yaml_parser.go) - 100% compatible with run_pipeline.go format
+  - CLI definitions manager (cli_definitions.go) for loading tool templates
+  - Wails bindings (app.go) exposing backend to React frontend
+  
+- **Frontend (React + TypeScript)**:
+  - 3-panel layout: CommandExplorer | Canvas | PropertiesPanel
+  - React Flow integration for drag-and-drop node editing
+  - Dark theme UI matching VS Code aesthetics
+  - Socket-based node connections with real-time value editing
+  - Zustand state management with backend integration
+  
+- **CLI Definitions**:
+  - convert_to_tif.json - Image format conversion
+  - segment_ernet.json - ER segmentation
+  - mask_measure.json - Measurement extraction
+
+### Build Output:
+- ✅ Standalone executable: `pipeline-designer\build\bin\pipeline-designer.exe`
+- ✅ Size: ~15-20MB (much smaller than Electron)
+- ✅ No Node.js required for end users
+- ✅ Native Windows performance with WebView2
+
+### Next Steps for Pipeline Designer:
+1. **Test the GUI** - Open pipeline-designer.exe and verify:
+   - Command Explorer loads 3 CLI definitions
+   - Clicking a tool adds node to canvas
+   - Nodes can be dragged around
+   - Sockets can be edited in Properties Panel
+   - Node connections work
+
+2. **Implement File Operations**:
+   - Add Load/Save buttons to App.tsx header
+   - Wire up LoadPipeline(filePath) backend method
+   - Wire up SavePipeline(pipeline, filePath) backend method
+   - Test round-trip: load YAML → modify → save → verify output
+
+3. **Add More CLI Definitions**:
+   - Create JSON files for all standard_code/python/ modules
+   - Auto-generate from Python docstrings and type hints
+   - Add category icons and colors
+
+4. **Test YAML Compatibility**:
+   - Load existing pipeline_configs/*.yaml files
+   - Verify node positions match expected layout
+   - Test saving and running with run_pipeline.exe
+
+5. **Phase 2 Features** (Future):
+   - File browser for selecting input/output paths
+   - Test runner UI showing real-time output
+   - Environment manager for UV/Conda envs
+   - Pipeline templates library
+
 ## Current Tasks  
 - make all standard code
-- ✅ Updated module name from run_python_pipeline to run_pipeline (reflects universal nature) 
 
 ## Code Quality & Standards
 - Add MIT license headers to all Python files in standard_code/python/

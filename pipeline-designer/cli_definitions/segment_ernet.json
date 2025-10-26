@@ -1,0 +1,57 @@
+{
+  "id": "segment_ernet",
+  "name": "Segment with ERnet",
+  "category": "Segmentation",
+  "icon": "🔬",
+  "color": "#c586c0",
+  "description": "Segment ER structures using ERnet deep learning model",
+  "environment": "conda:segment_ernet",
+  "executable": "python",
+  "script": "external/ERnet-v2/Inference/inference.py",
+  "helpCommand": "python external/ERnet-v2/Inference/inference.py --help",
+  "arguments": [
+    {
+      "flag": "--input-folder",
+      "type": "path",
+      "socketSide": "input",
+      "isRequired": true,
+      "defaultValue": "./input/images",
+      "description": "Folder containing input images",
+      "validation": "must_exist",
+      "userOverride": false
+    },
+    {
+      "flag": "--output-folder",
+      "type": "path",
+      "socketSide": "output",
+      "isRequired": true,
+      "defaultValue": "./output/masks",
+      "description": "Output folder for segmentation masks",
+      "validation": "create_if_missing",
+      "userOverride": false
+    },
+    {
+      "flag": "--model-path",
+      "type": "path",
+      "socketSide": "input",
+      "isRequired": true,
+      "defaultValue": "./weights/ernet_model.pth",
+      "description": "Path to trained ERnet model weights",
+      "validation": "must_exist",
+      "userOverride": false
+    },
+    {
+      "flag": "--threshold",
+      "type": "float",
+      "socketSide": "input",
+      "isRequired": false,
+      "defaultValue": "0.5",
+      "description": "Segmentation threshold (0.0-1.0)",
+      "validation": "range:0.0-1.0",
+      "userOverride": false
+    }
+  ],
+  "version": "1.0.0",
+  "author": "BIPHUB",
+  "lastParsed": "2025-01-25T10:30:00Z"
+}
