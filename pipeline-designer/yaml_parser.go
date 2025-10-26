@@ -34,22 +34,53 @@ func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
 		},
 	}
 
+	// Create map of node IDs from designer metadata
+	nodePositions := make(map[string]Point)
+	nodeSizes := make(map[string]Size)
+	if yamlPipeline.DesignerMetadata != nil {
+		for _, nodeMeta := range yamlPipeline.DesignerMetadata.Nodes {
+			nodePositions[nodeMeta.ID] = nodeMeta.Position
+			nodeSizes[nodeMeta.ID] = nodeMeta.Size
+		}
+	}
+
 	// Convert each YAML step to a visual node
 	for i, step := range yamlPipeline.Run {
+		nodeID := step.NodeID
+		if nodeID == "" {
+			nodeID = uuid.New().String()
+		}
+
+		// Get position and size from metadata, or use default
+		position := Point{X: 100, Y: float64(i * 250)}
+		if pos, ok := nodePositions[nodeID]; ok {
+			position = pos
+		}
+
+		size := Size{Width: 300, Height: 150}
+		if sz, ok := nodeSizes[nodeID]; ok {
+			size = sz
+		}
+
 		node := CLINode{
-			ID:            uuid.New().String(),
+			ID:            nodeID,
 			Name:          step.Name,
 			Environment:   step.Environment,
 			Script:        step.Script,
-			Position:      Point{X: 100, Y: float64(i * 200)}, // Stack vertically
-			Size:          Size{Width: 300, Height: 150},
+			Position:      position,
+			Size:          size,
 			InputSockets:  make([]Socket, 0),
 			OutputSockets: make([]Socket, 0),
 			Category:      inferCategory(step.Name),
 			TestStatus:    TestNotRun,
 		}
 
-		// Convert args to sockets
+		// Parse commands into sockets
+		if step.Commands != nil {
+			parseCommandsToSockets(&node, step.Commands)
+		}
+
+		// Also handle legacy args format
 		for flag, value := range step.Args {
 			socket := Socket{
 				ID:           uuid.New().String(),
@@ -70,6 +101,21 @@ func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
 		pipeline.Nodes = append(pipeline.Nodes, node)
 	}
 
+	// Restore connections from metadata
+	if yamlPipeline.DesignerMetadata != nil {
+		for _, connMeta := range yamlPipeline.DesignerMetadata.Connections {
+			connection := SocketConnection{
+				ID:           connMeta.ID,
+				FromNodeID:   connMeta.FromNodeID,
+				ToNodeID:     connMeta.ToNodeID,
+				FromSocketID: connMeta.FromSocketID,
+				ToSocketID:   connMeta.ToSocketID,
+				IsValid:      true,
+			}
+			pipeline.Connections = append(pipeline.Connections, connection)
+		}
+	}
+
 	return pipeline, nil
 }
 
@@ -78,43 +124,43 @@ func SaveYAMLPipeline(pipeline *Pipeline, filePath string) error {
 	yamlPipeline := YAMLPipeline{
 		PipelineName: pipeline.Metadata.Name,
 		Run:          make([]YAMLStep, 0),
+		DesignerMetadata: &DesignerMetadata{
+			Nodes:       make([]VisualNodeMetadata, 0),
+			Connections: make([]VisualConnectionMetadata, 0),
+		},
 	}
 
-	// Convert each node to a YAML step
+	// Save visual node metadata
 	for _, node := range pipeline.Nodes {
+		nodeMeta := VisualNodeMetadata{
+			ID:       node.ID,
+			Position: node.Position,
+			Size:     node.Size,
+		}
+		yamlPipeline.DesignerMetadata.Nodes = append(yamlPipeline.DesignerMetadata.Nodes, nodeMeta)
+
+		// Convert node to YAML step
 		step := YAMLStep{
 			Name:        node.Name,
 			Environment: node.Environment,
 			Script:      node.Script,
-			Args:        make(map[string]string),
-		}
-
-		// Convert sockets to args
-		for _, socket := range node.InputSockets {
-			value := socket.Value
-			// If socket is connected, resolve the value from the connected socket
-			if socket.ConnectedTo != nil {
-				resolvedValue, err := resolveSocketValue(*socket.ConnectedTo, pipeline)
-				if err == nil {
-					value = resolvedValue
-				}
-			}
-			step.Args[socket.ArgumentFlag] = value
-		}
-
-		for _, socket := range node.OutputSockets {
-			value := socket.Value
-			// If socket is connected, use the connected value
-			if socket.ConnectedTo != nil {
-				resolvedValue, err := resolveSocketValue(*socket.ConnectedTo, pipeline)
-				if err == nil {
-					value = resolvedValue
-				}
-			}
-			step.Args[socket.ArgumentFlag] = value
+			NodeID:      node.ID,
+			Commands:    convertSocketsToCommands(node, pipeline),
 		}
 
 		yamlPipeline.Run = append(yamlPipeline.Run, step)
+	}
+
+	// Save connections metadata
+	for _, conn := range pipeline.Connections {
+		connMeta := VisualConnectionMetadata{
+			ID:           conn.ID,
+			FromNodeID:   conn.FromNodeID,
+			ToNodeID:     conn.ToNodeID,
+			FromSocketID: conn.FromSocketID,
+			ToSocketID:   conn.ToSocketID,
+		}
+		yamlPipeline.DesignerMetadata.Connections = append(yamlPipeline.DesignerMetadata.Connections, connMeta)
 	}
 
 	// Marshal to YAML
@@ -129,6 +175,93 @@ func SaveYAMLPipeline(pipeline *Pipeline, filePath string) error {
 	}
 
 	return nil
+}
+
+// parseCommandsToSockets converts YAML commands array to input/output sockets
+func parseCommandsToSockets(node *CLINode, commands interface{}) {
+	switch cmds := commands.(type) {
+	case []interface{}:
+		for _, cmd := range cmds {
+			switch v := cmd.(type) {
+			case string:
+				// Plain string command (like "python" or script path)
+				if v == "python" || v == "imagej" {
+					// Skip interpreter commands
+					continue
+				}
+				// Script path - store in node.Script
+				node.Script = v
+			case map[string]interface{}:
+				// Flag-value pairs
+				for flag, value := range v {
+					strValue := fmt.Sprintf("%v", value)
+					socket := Socket{
+						ID:           uuid.New().String(),
+						NodeID:       node.ID,
+						ArgumentFlag: flag,
+						Value:        strValue,
+						Type:         inferArgumentType(flag, strValue),
+						SocketSide:   inferSocketSide(flag),
+					}
+
+					if socket.SocketSide == SocketInput {
+						node.InputSockets = append(node.InputSockets, socket)
+					} else {
+						node.OutputSockets = append(node.OutputSockets, socket)
+					}
+				}
+			}
+		}
+	}
+}
+
+// convertSocketsToCommands converts node sockets back to YAML commands format
+func convertSocketsToCommands(node CLINode, pipeline *Pipeline) []interface{} {
+	commands := make([]interface{}, 0)
+
+	// Add python interpreter if needed
+	if node.Environment != "" && node.Environment != "imageJ" {
+		commands = append(commands, "python")
+	}
+
+	// Add script path
+	if node.Script != "" {
+		commands = append(commands, node.Script)
+	}
+
+	// Add input socket arguments
+	for _, socket := range node.InputSockets {
+		value := socket.Value
+
+		// Check if this socket is connected
+		for _, conn := range pipeline.Connections {
+			if conn.ToSocketID == socket.ID {
+				// Find the source socket value
+				for _, sourceNode := range pipeline.Nodes {
+					for _, sourceSocket := range sourceNode.OutputSockets {
+						if sourceSocket.ID == conn.FromSocketID {
+							value = sourceSocket.Value
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// Add as map entry
+		argMap := make(map[string]interface{})
+		argMap[socket.ArgumentFlag] = value
+		commands = append(commands, argMap)
+	}
+
+	// Add output socket arguments
+	for _, socket := range node.OutputSockets {
+		argMap := make(map[string]interface{})
+		argMap[socket.ArgumentFlag] = socket.Value
+		commands = append(commands, argMap)
+	}
+
+	return commands
 }
 
 // resolveSocketValue finds the value of a connected socket

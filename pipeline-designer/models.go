@@ -142,16 +142,47 @@ type Pipeline struct {
 }
 
 // YAMLStep represents a step in the YAML pipeline format (for compatibility with run_pipeline.go)
+// YAMLStep represents a single step in the pipeline
 type YAMLStep struct {
-	Name        string            `yaml:"name"`
-	Environment string            `yaml:"environment,omitempty"`
-	Command     string            `yaml:"command,omitempty"`
-	Script      string            `yaml:"script,omitempty"`
-	Args        map[string]string `yaml:"args,omitempty"`
+	Name          string            `yaml:"name"`
+	Type          string            `yaml:"type,omitempty"`
+	Message       string            `yaml:"message,omitempty"`
+	Environment   string            `yaml:"environment,omitempty"`
+	Commands      interface{}       `yaml:"commands,omitempty"` // Can be []interface{} with strings and maps
+	Command       string            `yaml:"command,omitempty"`
+	Script        string            `yaml:"script,omitempty"`
+	Args          map[string]string `yaml:"args,omitempty"`
+	NodeID        string            `yaml:"_node_id,omitempty"` // Link to visual node
+	LastProcessed string            `yaml:"last_processed,omitempty"`
+	CodeVersion   string            `yaml:"code_version,omitempty"`
+	RunDuration   string            `yaml:"run_duration,omitempty"`
+}
+
+// VisualNodeMetadata stores visual layout information for a node
+type VisualNodeMetadata struct {
+	ID       string `yaml:"id"`
+	Position Point  `yaml:"position"`
+	Size     Size   `yaml:"size"`
+}
+
+// VisualConnectionMetadata stores visual connection information
+type VisualConnectionMetadata struct {
+	ID           string `yaml:"id"`
+	FromNodeID   string `yaml:"from_node_id"`
+	ToNodeID     string `yaml:"to_node_id"`
+	FromSocketID string `yaml:"from_socket_id"`
+	ToSocketID   string `yaml:"to_socket_id"`
+}
+
+// DesignerMetadata stores all visual designer information
+type DesignerMetadata struct {
+	Nodes       []VisualNodeMetadata       `yaml:"nodes"`
+	Connections []VisualConnectionMetadata `yaml:"connections"`
 }
 
 // YAMLPipeline represents the YAML pipeline format
 type YAMLPipeline struct {
-	PipelineName string     `yaml:"pipeline_name"`
-	Run          []YAMLStep `yaml:"run"`
+	PipelineName     string            `yaml:"pipeline_name,omitempty"`
+	DesignerMetadata *DesignerMetadata `yaml:"_designer_metadata,omitempty"`
+	Run              []YAMLStep        `yaml:"run"`
 }

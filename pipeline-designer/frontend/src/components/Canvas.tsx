@@ -22,9 +22,17 @@ const nodeTypes = {
 };
 
 const Canvas: React.FC = () => {
-  const { nodes: storeNodes, edges: storeEdges, setNodes, setEdges, setSelectedNode } = usePipelineStore();
+  const { 
+    nodes: storeNodes, 
+    edges: storeEdges, 
+    setNodes, 
+    setEdges, 
+    setSelectedNode, 
+    updateNodeSocket
+  } = usePipelineStore();
   const [nodes, setLocalNodes, onNodesChange] = useNodesState(storeNodes);
   const [edges, setLocalEdges, onEdgesChange] = useEdgesState(storeEdges);
+  const [showMiniMap, setShowMiniMap] = React.useState(false); // Minimap off by default
 
   // Sync store changes to local state (only when store changes externally)
   React.useEffect(() => {
@@ -49,8 +57,38 @@ const Canvas: React.FC = () => {
       if (shouldUpdateStore) {
         // Update store after drag ends
         setLocalNodes((nds) => {
-          setNodes(nds);
-          return nds;
+          // Check for overlaps and adjust positions if needed
+          const adjustedNodes = nds.map((node, index) => {
+            const overlapping = nds.find((other, otherIndex) => {
+              if (index === otherIndex) return false;
+              
+              const nodeWidth = 300;
+              const nodeHeight = 150;
+              const padding = 20;
+              
+              // Check if nodes overlap
+              return (
+                Math.abs(node.position.x - other.position.x) < nodeWidth + padding &&
+                Math.abs(node.position.y - other.position.y) < nodeHeight + padding
+              );
+            });
+            
+            // If overlapping, shift the node to the right
+            if (overlapping) {
+              return {
+                ...node,
+                position: {
+                  x: overlapping.position.x + 350,
+                  y: node.position.y
+                }
+              };
+            }
+            
+            return node;
+          });
+          
+          setNodes(adjustedNodes);
+          return adjustedNodes;
         });
       }
     },
@@ -76,10 +114,23 @@ const Canvas: React.FC = () => {
       setLocalEdges((eds) => {
         const newEdges = addEdge(params, eds);
         setEdges(newEdges);
+        
+        // Sync value from output socket to input socket
+        const sourceNode = nodes.find(n => n.id === params.source);
+        if (sourceNode && params.sourceHandle) {
+          const outputSocket = sourceNode.data.outputSockets?.find(s => s.id === params.sourceHandle);
+          if (outputSocket && outputSocket.value && params.target && params.targetHandle) {
+            // Update the target socket with the source socket's value
+            setTimeout(() => {
+              updateNodeSocket(params.target!, params.targetHandle!, outputSocket.value);
+            }, 0);
+          }
+        }
+        
         return newEdges;
       });
     },
-    [setLocalEdges, setEdges]
+    [setLocalEdges, setEdges, nodes, updateNodeSocket]
   );
 
   // Handle node selection
@@ -118,9 +169,36 @@ const Canvas: React.FC = () => {
         snapToGrid={true}
         snapGrid={[15, 15]}
       >
-        <Controls />
-        <MiniMap />
+        <Controls 
+          showInteractive={true}
+          position="top-left"
+        />
+        {showMiniMap && <MiniMap />}
         <Background color="#555" gap={16} />
+        
+        {/* Minimap Toggle Button */}
+        <div style={{
+          position: 'absolute',
+          bottom: '10px',
+          right: '10px',
+          zIndex: 5,
+        }}>
+          <button
+            onClick={() => setShowMiniMap(!showMiniMap)}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: '#2d2d30',
+              border: '1px solid #3e3e42',
+              borderRadius: '4px',
+              color: '#cccccc',
+              cursor: 'pointer',
+              fontSize: '12px',
+            }}
+            title={showMiniMap ? 'Hide Minimap' : 'Show Minimap'}
+          >
+            {showMiniMap ? '🗺️ Hide Map' : '🗺️ Show Map'}
+          </button>
+        </div>
       </ReactFlow>
     </div>
   );

@@ -83,7 +83,24 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   addNodeFromDefinition: async (definitionId, x, y) => {
     try {
       console.log('Adding node from definition:', definitionId, 'at', x, y);
-      const newNode = await CreateNodeFromDefinition(definitionId, x, y);
+      
+      // Calculate position - place to the right of the last node
+      const state = get();
+      let finalX = x;
+      let finalY = y;
+      
+      if (state.nodes.length > 0) {
+        // Find the rightmost node
+        const rightmostNode = state.nodes.reduce((max, node) => 
+          node.position.x > max.position.x ? node : max
+        , state.nodes[0]);
+        
+        // Position new node to the right with spacing
+        finalX = rightmostNode.position.x + 350; // 300 width + 50 spacing
+        finalY = rightmostNode.position.y;
+      }
+      
+      const newNode = await CreateNodeFromDefinition(definitionId, finalX, finalY);
       console.log('Created node:', newNode);
       if (newNode) {
         // Convert to React Flow node format
@@ -139,15 +156,41 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         return node;
       });
 
-      // Also update selectedNode if it's the one being modified
-      const updatedNode = updatedNodes.find(n => n.id === nodeId);
-      const newSelectedNode = updatedNode && state.selectedNode?.id === nodeId 
-        ? updatedNode.data 
-        : state.selectedNode;
+      // Find connections where this socket is the source (output socket)
+      const connectionsFromSocket = state.edges.filter(
+        edge => edge.source === nodeId && edge.sourceHandle === socketId
+      );
+
+      // Propagate value to connected input sockets
+      if (connectionsFromSocket.length > 0) {
+        connectionsFromSocket.forEach(connection => {
+          const targetNodeIndex = updatedNodes.findIndex(n => n.id === connection.target);
+          if (targetNodeIndex !== -1) {
+            const targetNode = updatedNodes[targetNodeIndex];
+            const updatedData = { ...targetNode.data };
+            
+            if (updatedData.inputSockets) {
+              updatedData.inputSockets = updatedData.inputSockets.map((socket) =>
+                socket.id === connection.targetHandle ? { ...socket, value, connectedTo: socketId } : socket
+              );
+            }
+            
+            updatedNodes[targetNodeIndex] = { ...targetNode, data: updatedData };
+          }
+        });
+      }
+
+      // Also update selectedNode if it's the one being modified or connected to
+      let newSelectedNode = state.selectedNode;
+      const selectedNodeUpdated = updatedNodes.find(n => n.id === state.selectedNode?.id);
+      if (selectedNodeUpdated) {
+        newSelectedNode = selectedNodeUpdated.data;
+      }
 
       return { 
         nodes: updatedNodes,
-        selectedNode: newSelectedNode
+        selectedNode: newSelectedNode,
+        hasUnsavedChanges: true
       };
     });
   },
