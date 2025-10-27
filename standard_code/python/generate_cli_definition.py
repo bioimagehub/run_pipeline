@@ -88,9 +88,13 @@ class CLIDefinitionGenerator:
                 return str(parent)
         return str(Path.cwd())
     
-    def parse_help_output(self, script_path: str) -> Dict:
+    def parse_help_output(self, script_path: str, environment: str = None) -> Dict:
         """
         Parse argparse help output from a Python script.
+        
+        Args:
+            script_path: Path to the Python script
+            environment: Optional UV environment to run in (e.g., "uv@3.11:convert_to_tif")
         
         Returns:
             Dict with parsed argument information
@@ -98,12 +102,28 @@ class CLIDefinitionGenerator:
         logger.info(f"Parsing help output from: {script_path}")
         
         try:
+            # Construct command based on environment
+            if environment and environment.startswith('uv@'):
+                # Parse UV environment format: uv@3.11:convert_to_tif
+                parts = environment.split(':')
+                if len(parts) == 2:
+                    env_name = parts[1]
+                    # Use uv run with the specified environment
+                    cmd = ['uv', 'run', '--with', env_name, 'python', script_path, '--help']
+                    logger.info(f"Running with UV environment: {env_name}")
+                else:
+                    # Fallback to regular python if format is wrong
+                    cmd = ['python', script_path, '--help']
+            else:
+                # No environment specified, use current python
+                cmd = ['python', script_path, '--help']
+            
             # Try to run the script with --help
             result = subprocess.run(
-                ['python', script_path, '--help'],
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=30  # Increased timeout for UV environment setup
             )
             
             if result.returncode != 0:
@@ -126,41 +146,94 @@ class CLIDefinitionGenerator:
         # Split into lines and find argument definitions
         lines = help_text.split('\n')
         current_arg = None
+        in_options_section = False
         
         for line in lines:
-            # Match argument flags like --input-folder, -i
-            flag_match = re.match(r'\s+(--[\w-]+|-\w)\s+(.+)?', line)
-            if flag_match:
+            # Detect when we enter the options/arguments section
+            if line.strip().lower() in ['options:', 'optional arguments:', 'positional arguments:']:
+                in_options_section = True
+                continue
+            
+            # Stop if we hit a new section (like examples, environment variables, etc.)
+            if in_options_section and line and not line[0].isspace() and ':' in line:
+                # New section header detected
+                break
+            
+            # Match argument flags - improved regex to handle modern argparse format
+            # Matches: "  --flag VALUE" or "  --flag" or "  -f, --flag VALUE"
+            # Key insight: metavar (VALUE/PATTERN) comes RIGHT after flag with 1-2 spaces max
+            # Descriptions come after MANY spaces (typically 13+ spaces for alignment)
+            flag_match = re.match(r'\s+(-\w|--[\w-]+)(?:,?\s+(--[\w-]+))?\s{0,2}([A-Z_]+)?\s*(.*)?', line)
+            
+            if flag_match and in_options_section:
+                # Save previous argument
                 if current_arg:
-                    arguments.append(current_arg)
+                    # Skip help flag
+                    if current_arg['flag'] not in ['-h', '--help']:
+                        arguments.append(current_arg)
                 
-                flag = flag_match.group(1)
-                rest = flag_match.group(2) or ''
+                short_flag = flag_match.group(1)
+                long_flag = flag_match.group(2)
+                metavar = flag_match.group(3) or ''  # The VALUE/PATTERN part
+                rest = flag_match.group(4) or ''
                 
-                # Parse type and default
+                # Clean up description - remove leading metavar if it appears
+                if metavar and rest.strip().startswith(metavar):
+                    rest = rest.strip()[len(metavar):].strip()
+                
+                # Prefer long flag if available
+                flag = long_flag if long_flag else short_flag
+                
+                # Skip help flags
+                if flag in ['-h', '--help']:
+                    current_arg = None
+                    continue
+                
+                # Parse type and default from description
                 arg_type = 'string'
                 default = ''
                 required = False
                 
-                if 'required' in line.lower():
+                # Check the whole line for required/default indicators
+                full_line_lower = line.lower()
+                if 'required' in full_line_lower:
                     required = True
-                if 'default:' in rest:
-                    default_match = re.search(r'default:\s*(\S+)', rest)
-                    if default_match:
-                        default = default_match.group(1)
                 
-                # Infer type from flag name
-                if 'folder' in flag or 'dir' in flag or 'path' in flag:
-                    arg_type = 'path'
-                elif 'pattern' in flag:
-                    arg_type = 'glob_pattern'
-                elif 'file' in flag:
-                    arg_type = 'path'
-                elif 'bool' in rest.lower() or 'action=' in line:
+                # Look for default value in description
+                default_match = re.search(r'\(default:\s*([^)]+)\)', rest, re.IGNORECASE)
+                if default_match:
+                    default = default_match.group(1).strip()
+                
+                # Infer type from flag name and metavar
+                flag_lower = flag.lower()
+                
+                # Check for action flags (store_true, store_false)
+                is_action_flag = (not metavar and 
+                                 ('deprecated' in rest.lower() or 
+                                  'enable' in rest.lower() or 
+                                  'disable' in rest.lower() or
+                                  flag.startswith('--no-') or
+                                  'action' in rest.lower()))
+                
+                if is_action_flag:
                     arg_type = 'bool'
-                elif 'int' in rest.lower():
+                elif 'folder' in flag_lower or 'dir' in flag_lower:
+                    arg_type = 'path'
+                elif 'pattern' in flag_lower:
+                    arg_type = 'glob_pattern'
+                elif 'path' in flag_lower:
+                    arg_type = 'path'
+                elif 'extension' in flag_lower:  # File extensions are strings, not paths
+                    arg_type = 'string'
+                elif 'file' in flag_lower and 'files' not in flag_lower and metavar:
+                    arg_type = 'path'
+                elif '{' in rest and '}' in rest:  # Choices like {None,max,sum}
+                    arg_type = 'string'  # Dropdown/choice type
+                elif not metavar:  # No value expected - it's a boolean flag
+                    arg_type = 'bool'
+                elif 'INT' in metavar or 'int' in rest.lower():
                     arg_type = 'int'
-                elif 'float' in rest.lower():
+                elif 'FLOAT' in metavar or 'float' in rest.lower():
                     arg_type = 'float'
                 
                 current_arg = {
@@ -170,11 +243,18 @@ class CLIDefinitionGenerator:
                     'default': default,
                     'description': rest.strip()
                 }
-            elif current_arg and line.strip():
-                # Continuation of description
-                current_arg['description'] += ' ' + line.strip()
+            elif current_arg and line.strip() and in_options_section:
+                # Continuation of description (indented line)
+                if line.startswith('  ') and not line.strip().startswith('-'):
+                    # Clean up the continuation line
+                    continuation = line.strip()
+                    if current_arg['description']:
+                        current_arg['description'] += ' ' + continuation
+                    else:
+                        current_arg['description'] = continuation
         
-        if current_arg:
+        # Don't forget the last argument
+        if current_arg and current_arg['flag'] not in ['-h', '--help']:
             arguments.append(current_arg)
         
         return {'arguments': arguments}
@@ -236,12 +316,32 @@ class CLIDefinitionGenerator:
             
             return {
                 'name': step.get('name', ''),
-                'environment': step.get('environment', ''),
+                'environment': self._convert_to_uv_env(step.get('environment', '')),
                 'script': script_cmd,
                 'arguments': arguments
             }
         
         return None
+    
+    def _convert_to_uv_env(self, env_name: str) -> str:
+        """
+        Convert conda environment name to UV format.
+        
+        Args:
+            env_name: Conda environment name (e.g., "segment_threshold")
+            
+        Returns:
+            UV format environment string (e.g., "uv@3.11:segment_threshold")
+        """
+        if not env_name:
+            return ''
+        
+        # If already in UV format, return as-is
+        if env_name.startswith('uv@'):
+            return env_name
+        
+        # Convert conda env name to UV format with Python 3.11
+        return f'uv@3.11:{env_name}'
     
     def _infer_type_from_value(self, value) -> str:
         """Infer argument type from its value."""
@@ -723,54 +823,58 @@ class CLIDefinitionGenerator:
         definition['color'] = self.CATEGORY_COLORS.get(category, '#858585')
         definition['icon'] = self.CATEGORY_ICONS.get(category, '🔧')
         
-        # Load from YAML if provided
-        yaml_arg_flags = set()  # Track which arguments came from YAML
+        # SECONDARY SOURCE: Load YAML only for metadata and better default values
+        environment = None  # Environment to use for running --help
+        yaml_values = {}  # Store YAML values for later use as better defaults
+        
         if from_yaml:
             yaml_data = self.load_from_yaml_config(from_yaml, script_path.name)
             if yaml_data:
-                logger.info("Loaded definition from YAML config")
+                logger.info("Loaded metadata and default values from YAML config")
+                # Extract metadata
                 if 'name' in yaml_data:
                     definition['name'] = yaml_data['name']
                 if 'environment' in yaml_data:
                     definition['environment'] = yaml_data['environment']
+                    environment = yaml_data['environment']  # Use this for running --help
+                
+                # Store YAML argument values for later use (only as better defaults)
                 if 'arguments' in yaml_data:
-                    # Convert YAML format to JSON format
                     for arg in yaml_data['arguments']:
                         flag = arg['flag']
-                        yaml_arg_flags.add(flag)  # Remember this flag
-                        definition['arguments'].append({
-                            'flag': flag,
-                            'type': arg.get('type', 'string'),
-                            'socketSide': arg.get('socket_side', 'input'),
-                            'isRequired': False,
-                            'defaultValue': arg.get('value', ''),
-                            'description': '',
-                            'validation': '',
-                            'userOverride': False
-                        })
+                        yaml_values[flag] = arg.get('value', '')
+                    logger.info(f"Extracted {len(yaml_values)} default values from YAML for fallback use")
         
-        # Always parse help output to find missing optional arguments
-        help_data = self.parse_help_output(str(script_path))
+        # PRIMARY SOURCE: Parse help output - this is the source of truth
+        # Use environment from YAML if available
+        help_data = self.parse_help_output(str(script_path), environment=environment)
+        
+        # Build argument list FROM HELP OUTPUT ONLY
         if help_data.get('arguments'):
-            # Only add arguments that weren't in the YAML
-            new_args = [arg for arg in help_data['arguments'] if arg['flag'] not in yaml_arg_flags]
-            if new_args:
-                logger.info(f"Parsed {len(new_args)} additional arguments from help (not in YAML)")
-                for arg in new_args:
-                    definition['arguments'].append({
-                        'flag': arg['flag'],
-                        'type': arg.get('type', 'string'),
-                        'socketSide': 'output' if 'output' in arg['flag'] else 'input',
-                        'isRequired': arg.get('required', False),
-                        'defaultValue': arg.get('default', ''),
-                        'description': arg.get('description', ''),
-                        'validation': self._infer_validation(arg),
-                        'userOverride': False
-                    })
-            elif yaml_arg_flags:
-                logger.info(f"All arguments from YAML matched help output")
-        elif not definition['arguments']:
-            logger.warning("No arguments found in YAML or help output")
+            logger.info(f"Parsed {len(help_data['arguments'])} arguments from help output (primary source)")
+            for arg in help_data['arguments']:
+                flag = arg['flag']
+                
+                # Use help default if available, otherwise try YAML value as fallback
+                default_value = arg.get('default', '')
+                if not default_value and flag in yaml_values:
+                    default_value = yaml_values[flag]
+                    logger.debug(f"Using YAML value as better default for {flag}: {default_value}")
+                
+                definition['arguments'].append({
+                    'flag': flag,
+                    'type': arg.get('type', 'string'),
+                    'socketSide': 'output' if 'output' in flag else 'input',
+                    'isRequired': arg.get('required', False),
+                    'defaultValue': default_value,
+                    'description': arg.get('description', ''),
+                    'validation': self._infer_validation(arg),
+                    'userOverride': False
+                })
+        else:
+            logger.warning("No arguments found in help output - cannot generate definition")
+            if yaml_values:
+                logger.warning(f"YAML had {len(yaml_values)} arguments, but they were IGNORED (help output is source of truth)")
         
         # Note: We skip test run during generation to avoid command-line prompts
         # Output files will be auto-discovered when the node is first run in the GUI

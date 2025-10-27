@@ -4,14 +4,14 @@
     "icon": "\ud83c\udfa8",
     "color": "#569cd6",
     "description": "CLI tool: drift_correction",
-    "environment": "uv@3.11:drift_correction",
+    "environment": "uv@3.11:drift-correct",
     "executable": "python",
     "script": "standard_code/python/drift_correction.py",
     "helpCommand": "python standard_code/python/drift_correction.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:07:07.150752",
+    "lastParsed": "2025-10-27T16:37:15.274174",
     "outputFilesDefined": false,
     "category": "Image Processing"
 }

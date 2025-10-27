@@ -8,7 +8,7 @@ import { GetStartupFilePath } from '../wailsjs/go/main/App';
 import './styles/globals.css';
 
 function App() {
-  const { loadDefinitions, addNodeFromDefinition, nodes, saveCurrentPipeline, saveAsPipeline, openPipeline, currentFilePath, promptForSaveLocation, loadPipeline, setCurrentFilePath, deleteSelectedNode } = usePipelineStore();
+  const { loadDefinitions, addNodeFromDefinition, nodes, saveCurrentPipeline, saveAsPipeline, openPipeline, currentFilePath, promptForSaveLocation, loadPipeline, setCurrentFilePath, deleteSelectedNode, runNode } = usePipelineStore();
   const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
@@ -65,6 +65,19 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [saveCurrentPipeline, saveAsPipeline, openPipeline, deleteSelectedNode]);
+
+  // Handle custom runNode event
+  useEffect(() => {
+    const handleRunNode = (e: Event) => {
+      const customEvent = e as CustomEvent<{ nodeId: string }>;
+      if (customEvent.detail?.nodeId) {
+        runNode(customEvent.detail.nodeId);
+      }
+    };
+
+    window.addEventListener('runNode', handleRunNode);
+    return () => window.removeEventListener('runNode', handleRunNode);
+  }, [runNode]);
 
   return (
     <div className="app-container">

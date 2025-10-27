@@ -1,0 +1,38 @@
+{
+    "id": "extract_metadata",
+    "name": "Extract metadata YAML next to image",
+    "icon": "\ud83d\udd27",
+    "color": "#858585",
+    "description": "CLI tool: extract_metadata",
+    "environment": "uv@3.11:default",
+    "executable": "python",
+    "script": "standard_code/python/extract_metadata.py",
+    "helpCommand": "python standard_code/python/extract_metadata.py --help",
+    "arguments": [
+        {
+            "flag": "--input-file",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./pipeline_configs/input_1/small_TCYX_01.ome.tif",
+            "description": "Path to the input BioImage file",
+            "validation": "must_exist",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-file",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Path to save the metadata YAML file",
+            "validation": "create_if_missing",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:11:41.224087",
+    "outputFilesDefined": false,
+    "category": "Utilities"
+}

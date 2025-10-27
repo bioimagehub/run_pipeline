@@ -9,6 +9,7 @@ export namespace main {
 	    description: string;
 	    validation: string;
 	    userOverride: boolean;
+	    skipEmit?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ArgumentDefinition(source);
@@ -24,6 +25,7 @@ export namespace main {
 	        this.description = source["description"];
 	        this.validation = source["validation"];
 	        this.userOverride = source["userOverride"];
+	        this.skipEmit = source["skipEmit"];
 	    }
 	}
 	export class CLIDefinition {
@@ -94,6 +96,7 @@ export namespace main {
 	    defaultValue: string;
 	    description: string;
 	    validation: string;
+	    skipEmit?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Socket(source);
@@ -112,6 +115,7 @@ export namespace main {
 	        this.defaultValue = source["defaultValue"];
 	        this.description = source["description"];
 	        this.validation = source["validation"];
+	        this.skipEmit = source["skipEmit"];
 	    }
 	}
 	export class Size {

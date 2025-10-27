@@ -276,6 +276,29 @@ def process_pattern(args: argparse.Namespace) -> None:
             projection_method=args.projection_method,
         )
 
+    # After processing, emit standardized glob patterns for downstream steps
+    # Normalize to forward slashes for cross-platform globbing
+    dest_norm = dest.replace("\\", "/")
+    tif_glob = f"{dest_norm}/**/*.tif"
+    md_glob = f"{dest_norm}/**/*_metadata.yaml"
+
+    # Print patterns to stdout for pipeline consumption
+    print(f"OUTPUT_GLOB_TIFF: {tif_glob}")
+    print(f"OUTPUT_GLOB_METADATA: {md_glob}")
+
+    # Also persist patterns to a sidecar file for tooling to read if desired
+    try:
+        import json
+        patterns = {
+            "tiff": tif_glob,
+            "metadata": md_glob,
+            "next_input_search_pattern": tif_glob,
+        }
+        with open(os.path.join(dest, "_output_patterns.json"), "w", encoding="utf-8") as f:
+            json.dump(patterns, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to write _output_patterns.json: {e}")
+
 
 def main() -> None:
 
@@ -361,6 +384,10 @@ def main() -> None:
             out_path = os.path.splitext(collapsed)[0] + args.output_file_name_extension + ".tif"
             out_path = os.path.join(dest, out_path)
             print(f"[DRY RUN] Would convert: {src} -> {out_path}")
+        # Also show the glob patterns that downstream steps can use
+        dest_norm = dest.replace("\\", "/")
+        print(f"[DRY RUN] OUTPUT_GLOB_TIFF: {dest_norm}/**/*.tif")
+        print(f"[DRY RUN] OUTPUT_GLOB_METADATA: {dest_norm}/**/*_metadata.yaml")
         return
 
     process_pattern(args)

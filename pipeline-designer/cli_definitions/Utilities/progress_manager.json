@@ -1,0 +1,17 @@
+{
+    "id": "progress_manager",
+    "name": "Progress Manager",
+    "icon": "\ud83d\udd27",
+    "color": "#858585",
+    "description": "CLI tool: progress_manager",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/progress_manager.py",
+    "helpCommand": "python standard_code/python/progress_manager.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:34.842285",
+    "outputFilesDefined": false,
+    "category": "Utilities"
+}

@@ -4,14 +4,14 @@
     "icon": "\ud83d\udd2c",
     "color": "#c586c0",
     "description": "CLI tool: track_indexed_mask",
-    "environment": "uv@3.11:track_indexed_mask",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/track_indexed_mask.py",
     "helpCommand": "python standard_code/python/track_indexed_mask.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:07:12.675285",
+    "lastParsed": "2025-10-27T16:38:37.708213",
     "outputFilesDefined": false,
     "category": "Segmentation"
 }

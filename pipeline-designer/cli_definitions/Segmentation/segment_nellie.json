@@ -1,0 +1,138 @@
+{
+    "id": "segment_nellie",
+    "name": "Segment with Nellie on ER-FA",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: segment_nellie",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/segment_nellie.py",
+    "helpCommand": "python standard_code/python/segment_nellie.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./input_C2Z38_ER-FA_tif/*.tif",
+            "description": "Glob pattern for input images, e.g. \"folder/*.tif\" or \"folder/somefile*.tif\". Use a single file path for one image. (default: None)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-dir",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "./nellie_output",
+            "description": "Where to place outputs (default: None)",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--ch",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "Channel index to process (default: 0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--t-start",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "Start time index (file mode) (default: 0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--t-end",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "None",
+            "description": "End time index inclusive (file mode) (default: None)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--remove-edges",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "False",
+            "description": "Enable edge removal in preprocessing (default: False)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--otsu-thresh-intensity",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Use Otsu threshold for intensity (default: False)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--threshold",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Manual intensity threshold (default: None)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--cleanup-intermediates",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Remove intermediate non-CSV files (default: False)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing (default: parallel enabled) (default: False)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--quiet",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Suppress normal progress/info output (sets log level WARNING) (default: False)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--log-level",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Explicit logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Overrides default if not quiet. (default: None)",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:40.209612",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

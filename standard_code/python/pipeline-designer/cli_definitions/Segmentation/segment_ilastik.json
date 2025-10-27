@@ -1,0 +1,17 @@
+{
+    "id": "segment_ilastik",
+    "name": "Ilastik nucleus segmentation",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: segment_ilastik",
+    "environment": "uv@3.11:run_ilastik",
+    "executable": "python",
+    "script": "standard_code/python/segment_ilastik.py",
+    "helpCommand": "python standard_code/python/segment_ilastik.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:19:02.588518",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

@@ -1,13 +1,14 @@
 run:
 - name: Merge channels into Cellpose input
-	environment: convert_to_tif
-	commands:
-	- python
-	- ./standard_code/python/merge_channels.py
-	- --input-folder: ./input_tif
-	- --output-folder: ./cellpose_input
-	- --merge-channels: '[[0,1,2],3]'
-	# Optional:
-	# - --output-format: tif
-	# - --output-dim-order: TCZYX
-	# - --output-scale: 1
+  environment: convert_to_tif
+  commands:
+  - python
+  - ./standard_code/python/merge_channels.py
+  - --input-search-pattern: ./input_tif/*.tif
+  - --output-folder: ./cellpose_input
+  - --merge-channels: '[[0,1,2],3]'
+  # Optional:
+  # - --output-format: tif
+  # - --output-dim-order: TCZYX
+  # - --output-scale: 1
+  # - --no-parallel

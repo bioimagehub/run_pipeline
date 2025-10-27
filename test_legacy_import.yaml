@@ -1,0 +1,30 @@
+pipeline_name: "Legacy Test Pipeline"
+description: "Testing legacy YAML import without _designer_metadata"
+
+run:
+  - name: Convert to tif and collapse folder structure
+    environment: uv@3.11:convert-to-tif
+    commands:
+      - python
+      - ./standard_code/python/convert_to_tif.py
+      - --input-search-pattern
+      - '%YAML%/input/**/*.nd2'
+      - --destination
+      - '%YAML%/output/tif'
+      - --collapse-structure
+      - --z-projection
+      - max
+
+  - name: Merge channels
+    environment: uv@3.11:default
+    commands:
+      - python
+      - ./standard_code/python/merge_channels.py
+      - --input-search-pattern
+      - '%YAML%/output/tif/**/*.tif'
+      - --destination
+      - '%YAML%/output/merged'
+      - --channels-to-sum
+      - '0,1'
+      - --output-format
+      - tiff

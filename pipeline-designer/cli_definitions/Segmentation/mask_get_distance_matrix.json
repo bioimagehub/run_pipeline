@@ -1,0 +1,48 @@
+{
+    "id": "mask_get_distance_matrix",
+    "name": "Mask Get Distance Matrix",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_get_distance_matrix",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/mask_get_distance_matrix.py",
+    "helpCommand": "python standard_code/python/mask_get_distance_matrix.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search (only if pattern doesn't already include '**')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Path to the output folder.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:00.849866",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

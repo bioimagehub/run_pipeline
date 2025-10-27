@@ -1,66 +1,118 @@
 {
-    "id":  "convert_to_tif",
-    "name":  "Convert to TIF",
-    "icon":  "🔄",
-    "color":  "#569cd6",
-    "description":  "Convert image files to TIF format with optional compression",
-    "environment":  "uv@3.11:convert-to-tif",
-    "executable":  "python",
-    "script":  "standard_code/python/convert_to_tif.py",
-    "helpCommand":  "python standard_code/python/convert_to_tif.py --help",
-    "arguments":  [
-                      {
-                          "flag":  "--input-search-pattern",
-                          "type":  "glob_pattern",
-                          "socketSide":  "input",
-                          "isRequired":  true,
-                          "defaultValue":  "%YAML%/input/*.nd2",
-                          "description":  "Glob pattern for input files to convert (can also accept file_list from File Selector) use /**/*.tif to search subfolders",
-                          "validation":  "must_exist",
-                          "userOverride":  false
-                      },
-                      {
-                          "flag":  "--collapse-delimiter",
-                          "type":  "str",
-                          "socketSide":  "input",
-                          "isRequired":  false,
-                          "defaultValue":  "__",
-                          "description":  "Delimiter for collapsing subfolder structure in output filenames when using \u0027**\u0027 (default: __). Example: \u0027folder1/folder2/image.tif\u0027 becomes \u0027folder1__folder2__image.tif\u0027",
-                          "validation":  "",
-                          "userOverride":  false
-                      },
-                      {
-                          "flag":  "--compression",
-                          "type":  "int",
-                          "socketSide":  "input",
-                          "isRequired":  false,
-                          "defaultValue":  "0",
-                          "description":  "Compression level (0-9)",
-                          "validation":  "range:0-9",
-                          "userOverride":  false
-                      },
-                      {
-                          "flag":  "--output-tif-files",
-                          "type":  "path",
-                          "socketSide":  "output",
-                          "isRequired":  true,
-                          "defaultValue":  "%YAML%/input_tif/*.tif",
-                          "description":  "Output folder for converted TIF files",
-                          "validation":  "create_if_missing",
-                          "userOverride":  false
-                      },
-                      {
-                          "flag":  "--output-yaml-files",
-                          "type":  "path",
-                          "socketSide":  "output",
-                          "isRequired":  true,
-                          "defaultValue":  "%YAML%/input_tif/*_metadata.yaml",
-                          "description":  "Output folder for converted YAML files",
-                          "validation":  "create_if_missing",
-                          "userOverride":  false
-                      }
-                  ],
-    "version":  "1.0.0",
-    "author":  "BIPHUB",
-    "lastParsed":  "2025-01-25T10:30:00Z"
+    "id": "convert_to_tif",
+    "name": "Convert to tif",
+    "icon": "\ud83c\udfa8",
+    "color": "#569cd6",
+    "description": "CLI tool: convert_to_tif",
+    "environment": "uv@3.11:convert-to-tif",
+    "executable": "python",
+    "script": "standard_code/python/convert_to_tif.py",
+    "helpCommand": "python standard_code/python/convert_to_tif.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./input/*.ims",
+            "description": "Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "(Deprecated) Recursive search is now automatic when '**' is in the pattern",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--collapse-delimiter",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "__",
+            "description": "Delimiter for collapsing subfolder structure in output filenames when using '**' (default: __). Example: 'folder1/folder2/image.tif' becomes 'folder1__folder2__image.tif'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--projection-method",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "max",
+            "description": "{None,max,sum,mean,median,min,std} Z projection method over Z axis if Z>1",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--multipoint-files",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "(not implemented) multiple scenes to separate files",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "unused; kept for CLI compatibility",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-file-name-extension",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "_max",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--dry-run",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Print planned actions but do not write any files.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--version",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Print version and exit.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:11:25.226767",
+    "outputFilesDefined": false,
+    "category": "Image Processing"
 }

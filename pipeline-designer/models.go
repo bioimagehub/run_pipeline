@@ -50,6 +50,7 @@ type Socket struct {
 	DefaultValue string       `json:"defaultValue"`
 	Description  string       `json:"description"`
 	Validation   string       `json:"validation"`
+	SkipEmit     bool         `json:"skipEmit,omitempty"` // If true, do not emit into YAML commands
 }
 
 // SocketConnection represents a connection between two sockets
@@ -106,6 +107,7 @@ type ArgumentDefinition struct {
 	Description  string       `json:"description"`
 	Validation   string       `json:"validation"`
 	UserOverride bool         `json:"userOverride"`
+	SkipEmit     bool         `json:"skipEmit,omitempty"` // If true, create visual socket but do not emit
 }
 
 // CLIDefinition represents a reusable CLI tool template

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -428,4 +429,82 @@ func (a *App) GetPathTokens() []PathToken {
 	}
 
 	return tokens
+}
+
+// RunSingleNode creates a temporary YAML file with a single node and executes it
+func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) {
+	appLogger.Printf("Running single node: %s (ID: %s)\n", node.Name, node.ID)
+
+	// Get the directory of the current YAML file
+	var yamlDir string
+	if yamlFilePath != "" {
+		yamlDir = filepath.Dir(yamlFilePath)
+	} else {
+		// Fallback to pipeline_configs directory
+		exePath, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("failed to get executable path: %w", err)
+		}
+		projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(exePath))))
+		yamlDir = filepath.Join(projectRoot, "pipeline_configs")
+	}
+
+	// Create temporary YAML file path
+	tmpYamlPath := filepath.Join(yamlDir, "tmp_yaml_config.yaml")
+
+	// Convert node to YAML step
+	step := ConvertNodeToYAMLStep(node)
+
+	// Create minimal YAML pipeline with just this step
+	yamlPipeline := &YAMLPipeline{
+		PipelineName: fmt.Sprintf("Test: %s", node.Name),
+		Run:          []YAMLStep{*step},
+	}
+
+	// Write temporary YAML file
+	if err := WriteYAMLPipeline(yamlPipeline, tmpYamlPath); err != nil {
+		return "", fmt.Errorf("failed to write temporary YAML: %w", err)
+	}
+
+	appLogger.Printf("Created temporary YAML at: %s\n", tmpYamlPath)
+
+	// Find run_pipeline.exe
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(exePath))))
+	runPipelinePath := filepath.Join(projectRoot, "run_pipeline.exe")
+
+	// Check if run_pipeline.exe exists
+	if _, err := os.Stat(runPipelinePath); os.IsNotExist(err) {
+		os.Remove(tmpYamlPath) // Clean up temp file
+		return "", fmt.Errorf("run_pipeline.exe not found at: %s", runPipelinePath)
+	}
+
+	appLogger.Printf("Executing: %s %s\n", runPipelinePath, tmpYamlPath)
+
+	// Execute run_pipeline.exe with the temporary YAML
+	cmd := exec.Command(runPipelinePath, tmpYamlPath)
+	cmd.Dir = projectRoot
+
+	// Capture output
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Clean up temporary file
+	removeErr := os.Remove(tmpYamlPath)
+	if removeErr != nil {
+		appLogger.Printf("[WARN] Failed to remove temporary YAML: %v\n", removeErr)
+	} else {
+		appLogger.Printf("Cleaned up temporary YAML file\n")
+	}
+
+	if err != nil {
+		appLogger.Printf("[ERROR] Execution failed: %v\nOutput: %s\n", err, outputStr)
+		return outputStr, fmt.Errorf("execution failed: %w", err)
+	}
+
+	appLogger.Printf("Execution completed successfully\n")
+	return outputStr, nil
 }

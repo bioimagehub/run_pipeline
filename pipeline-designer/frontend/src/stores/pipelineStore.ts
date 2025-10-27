@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Node, Edge } from 'reactflow';
-import { LoadPipeline, SavePipeline, GetCLIDefinitions, CreateNodeFromDefinition, OpenFileDialog, SaveFileDialog, CreateEmptyPipeline, LogFrontend } from '../../wailsjs/go/main/App';
+import { LoadPipeline, SavePipeline, GetCLIDefinitions, CreateNodeFromDefinition, OpenFileDialog, SaveFileDialog, CreateEmptyPipeline, LogFrontend, RunSingleNode } from '../../wailsjs/go/main/App';
 import { models } from '../types';
 
 // Use Wails generated types
@@ -50,6 +50,7 @@ interface PipelineState {
   setCurrentFilePath: (path: string | null) => void;
   markAsModified: () => void;
   deleteSelectedNode: () => void;
+  runNode: (nodeId: string) => Promise<void>;
 }
 
 export const usePipelineStore = create<PipelineState>((set, get) => ({
@@ -457,5 +458,56 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         historyIndex: newHistory.length - 1,
       };
     });
+  },
+
+  runNode: async (nodeId: string) => {
+    const state = get();
+    const node = state.nodes.find(n => n.id === nodeId);
+    
+    if (!node) {
+      console.error('Node not found:', nodeId);
+      return;
+    }
+
+    try {
+      // Convert React Flow node to backend CLINode format
+      const { main } = await import('../../wailsjs/go/models');
+      
+      const cliNode = main.CLINode.createFrom({
+        id: node.id,
+        definitionId: node.data.definitionId,
+        name: node.data.name,
+        position: { x: node.position.x, y: node.position.y },
+        size: { width: 300, height: 150 },
+        environment: node.data.environment,
+        executable: '',
+        script: node.data.script,
+        inputSockets: node.data.inputSockets,
+        outputSockets: node.data.outputSockets,
+        icon: node.data.icon,
+        color: node.data.color,
+        isSelected: false,
+        isCollapsed: false,
+        category: node.data.category,
+        testStatus: 'not_run',
+        lastTestFile: '',
+        lastTestOutput: '',
+        lastTestTime: '',
+        testError: '',
+      });
+
+      console.log('Running node:', node.data.name);
+      LogFrontend(`Running node: ${node.data.name}`).catch(console.error);
+
+      // Call backend to run the node
+      const output = await RunSingleNode(cliNode, state.currentFilePath || '');
+      
+      console.log('Node execution output:', output);
+      alert(`Node "${node.data.name}" executed successfully!\n\nOutput:\n${output.substring(0, 500)}${output.length > 500 ? '...' : ''}`);
+    } catch (error) {
+      console.error('Failed to run node:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      alert(`Failed to run node "${node.data.name}":\n\n${errorMsg}`);
+    }
   },
 }));

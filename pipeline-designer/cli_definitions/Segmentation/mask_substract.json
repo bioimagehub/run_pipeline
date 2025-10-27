@@ -1,0 +1,98 @@
+{
+    "id": "mask_substract",
+    "name": "Substract Nucleus from whole cell _mask.cp",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_substract",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/mask_substract.py",
+    "helpCommand": "python standard_code/python/mask_substract.py --help",
+    "arguments": [
+        {
+            "flag": "--mask1-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./cellpose_cyt/*_cp_masks.tif",
+            "description": "1_SEARCH_PATTERN Glob pattern for mask1 images, e.g. \"folder/*_mask1.tif\"",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask2-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./cellpose_nuc/*_cp_masks.tif",
+            "description": "2_SEARCH_PATTERN Glob pattern for mask2 images, e.g. \"folder/*_mask2.tif\"",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "./output_summary",
+            "description": "Path to the output folder where processed images will be saved",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-suffix",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "_cyt.tif",
+            "description": "Suffix for the mask1 output file (default: _subtracted.tif)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-suffix2",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "_nuc.tif",
+            "description": "2 Suffix for the mask2 output file if strict one-to-one overlap is set (default: _filtered.tif)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--enforce-one-to-one-overlap",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enforce strict one-to-one pairing between mask1 and mask2 objects (labels in mask2 will match paired mask1).",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search (only relevant if pattern does not already include \"**\")",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Do not use parallel processing",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:23.058793",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

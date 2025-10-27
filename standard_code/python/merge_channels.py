@@ -187,3 +187,20 @@ if __name__ == "__main__":
     # Process the folder
     process_folder(args, use_parallel = not args.no_parallel)
 
+    # Emit standardized output glob patterns for downstream consumption
+    dest_norm = args.output_folder.replace("\\", "/")
+    if args.output_format == "tif":
+        print(f"OUTPUT_GLOB_TIFF: {dest_norm}/**/*.tif")
+        print(f"OUTPUT_GLOB_METADATA: {dest_norm}/**/*_metadata.yaml")
+        patterns = {"tiff": f"{dest_norm}/**/*.tif", "metadata": f"{dest_norm}/**/*_metadata.yaml", "next_input_search_pattern": f"{dest_norm}/**/*.tif"}
+    else:
+        print(f"OUTPUT_GLOB_NPY: {dest_norm}/**/*.npy")
+        print(f"OUTPUT_GLOB_METADATA: {dest_norm}/**/*_metadata.yaml")
+        patterns = {"npy": f"{dest_norm}/**/*.npy", "metadata": f"{dest_norm}/**/*_metadata.yaml", "next_input_search_pattern": f"{dest_norm}/**/*.npy"}
+    try:
+        import json
+        with open(os.path.join(args.output_folder, "_output_patterns.json"), "w", encoding="utf-8") as f:
+            json.dump(patterns, f, indent=2)
+    except Exception:
+        pass
+

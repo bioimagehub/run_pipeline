@@ -1,0 +1,88 @@
+{
+    "id": "mask_get_distance_to_point",
+    "name": "Mask Get Distance To Point",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_get_distance_to_point",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/mask_get_distance_to_point.py",
+    "helpCommand": "python standard_code/python/mask_get_distance_to_point.py --help",
+    "arguments": [
+        {
+            "flag": "--mask-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob for masks, e.g. './output_masks/*_segmentation.tif'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--yaml-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob for YAMLs, e.g. './output_masks/*_segmentation_metadata.yaml'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search (only if pattern doesn't already include '**')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--distance-method",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "{euclidean,cityblock,chessboard,geodesic} Distance computation method.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--bin-size",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Bin size for distance values. E.g., bin_size=5 maps distances 1-5 to 1, 6-10 to 2, etc.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Destination folder for output distance maps.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Do not use parallel processing",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:06.583369",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

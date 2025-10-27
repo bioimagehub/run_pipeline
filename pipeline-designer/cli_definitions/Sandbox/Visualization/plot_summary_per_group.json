@@ -4,14 +4,14 @@
     "icon": "\ud83d\udcc9",
     "color": "#f48771",
     "description": "CLI tool: plot_summary_per_group",
-    "environment": "uv@3.11:plot_summary_per_group",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/plot_summary_per_group.py",
     "helpCommand": "python standard_code/python/plot_summary_per_group.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:51:40.071586",
+    "lastParsed": "2025-10-27T16:38:25.440481",
     "outputFilesDefined": false,
     "category": "Visualization"
 }

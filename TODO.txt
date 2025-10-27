@@ -28,6 +28,42 @@
 - ✅ No Node.js required for end users
 - ✅ Native Windows performance with WebView2
 
+## ✅ COMPLETED - Legacy YAML Import (2024-12)
+**Achievement**: Designer can now import old pipeline YAML files without _designer_metadata!
+
+### What Was Built:
+- **legacy_importer.go**: Core import logic with strict validation
+  - `ImportLegacyYAML()`: Main entry point for legacy conversion
+  - `extractScriptPath()`: Extracts .py script paths from command arrays
+  - `findCLIDefinitionByScript()`: Matches scripts to CLI JSON definitions
+  - `populateSocketsFromYAMLArgs()`: Maps YAML args to node sockets
+  - `PrintLegacyImportReport()`: Loud error reporting for validation failures
+  
+- **Modified yaml_parser.go**: Detects legacy YAMLs and routes to importer
+  - Checks for missing `_designer_metadata` field
+  - Finds cli_definitions path using os.Executable() pattern
+  - Prints detailed import report with warnings/errors
+  
+- **Validation Features**:
+  - ❌ NO SILENT ERRORS - Reports all unmatched arguments from YAML
+  - ❌ NO MISSING ARGS - Reports all required arguments missing in YAML
+  - ✅ Success counter shows how many steps imported cleanly
+  - ✅ Automatic node layout: 450px horizontal spacing, left-to-right
+  
+- **Test File**: test_legacy_import.yaml
+  - Example legacy pipeline with convert_to_tif + merge_channels
+  - No _designer_metadata field
+  - Should import with 2 nodes at (100, 200) and (550, 200)
+
+### Testing Instructions:
+1. Build Designer: `cd pipeline-designer ; go build`
+2. Open Designer executable
+3. Click "Load Pipeline"
+4. Select `e:\Oyvind\OF_git\run_pipeline\test_legacy_import.yaml`
+5. Check console output for import report
+6. Verify 2 nodes appear on canvas in left-to-right layout
+7. Check Properties Panel shows all socket values populated correctly
+
 ### Next Steps for Pipeline Designer:
 1. **Test the GUI** - Open pipeline-designer.exe and verify:
    - Command Explorer loads 3 CLI definitions

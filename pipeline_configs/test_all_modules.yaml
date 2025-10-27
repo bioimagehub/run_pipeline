@@ -1,11 +1,10 @@
 run:
-- name: Convert T10C2_Phaffin-M4K to tif with drift correction
+- name: Convert T10C2_Phaffin-M4K to tif
   environment: convert_to_tif
   commands:
   - python
   - ./standard_code/python/convert_to_tif.py
   - --input-search-pattern: ./input_T10C2_Phaffin-M4K
-  - --drift-correct-channel: 0
   - --collapse-delimiter: __
 - name: Convert C4 cyt/nuc folder to tif (no projection)
   environment: convert_to_tif
@@ -19,7 +18,7 @@ run:
   commands:
   - python
   - ./standard_code/python/merge_channels.py
-  - --input-folder: ./input_C4_cyt1_cyt2_cyt3_nuc_tif
+  - --input-search-pattern: ./input_C4_cyt1_cyt2_cyt3_nuc_tif/*.tif
   - --output-folder: ./cellpose_input/merged
   - --merge-channels: '[[0,1,2],[3]]'
 - name: Run Cellpose on cytoplasm (chan=0, chan2=1)

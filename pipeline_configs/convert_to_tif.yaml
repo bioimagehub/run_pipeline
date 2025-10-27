@@ -6,7 +6,6 @@ run:
   - ./standard_code/python/convert_to_tif.py
   - --input-search-pattern: ./input/*.ims
   - --collapse-delimiter: __
-  - --drift-correct-channel: -1
   - --projection-method: max
   - --output-file-name-extension: _max
   last_processed: "2025-09-11"

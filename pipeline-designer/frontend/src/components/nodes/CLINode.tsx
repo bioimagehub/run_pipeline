@@ -70,25 +70,46 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
         <span className="node-icon">{data.icon}</span>
         <span className="node-name">{data.name}</span>
         {selected && (
-          <button
-            className="nodrag"
-            style={{
-              marginLeft: 'auto',
-              background: '#222',
-              color: '#f48771',
-              border: 'none',
-              borderRadius: '3px',
-              padding: '2px 8px',
-              cursor: 'pointer',
-              fontSize: '12px',
-            }}
-            title="Delete Node"
-            onClick={(e) => {
-              e.stopPropagation();
-              // Delete selected node via store
-              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
-            }}
-          >🗑️ Delete</button>
+          <>
+            <button
+              className="nodrag"
+              style={{
+                marginLeft: 'auto',
+                background: '#1a7f37',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '3px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                marginRight: '4px',
+              }}
+              title="Run This Node"
+              onClick={(e) => {
+                e.stopPropagation();
+                // Trigger run event
+                window.dispatchEvent(new CustomEvent('runNode', { detail: { nodeId: id } }));
+              }}
+            >▶️ Run</button>
+            <button
+              className="nodrag"
+              style={{
+                background: '#222',
+                color: '#f48771',
+                border: 'none',
+                borderRadius: '3px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontSize: '12px',
+              }}
+              title="Delete Node"
+              onClick={(e) => {
+                e.stopPropagation();
+                // Delete selected node via store
+                window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
+              }}
+            >🗑️ Delete</button>
+          </>
         )}
       </div>
 

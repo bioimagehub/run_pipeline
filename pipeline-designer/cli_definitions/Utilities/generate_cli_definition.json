@@ -1,0 +1,78 @@
+{
+    "id": "generate_cli_definition",
+    "name": "Generate Cli Definition",
+    "icon": "\ud83d\udd27",
+    "color": "#858585",
+    "description": "CLI tool: generate_cli_definition",
+    "environment": "uv@3.11:default",
+    "executable": "python",
+    "script": "standard_code/python/generate_cli_definition.py",
+    "helpCommand": "python standard_code/python/generate_cli_definition.py --help",
+    "arguments": [
+        {
+            "flag": "--script",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Path to Python script to generate definition for",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--from-yaml",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Load initial definition from YAML config",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--scan-missing",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Scan for scripts without CLI definitions",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-interactive",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Skip interactive refinement",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-dir",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Output directory for JSON files",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--repo-root",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Repository root directory",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:00.518769",
+    "outputFilesDefined": false,
+    "category": "Utilities"
+}

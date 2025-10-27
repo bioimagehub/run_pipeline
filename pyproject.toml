@@ -37,13 +37,23 @@ torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 
- [dependency-groups]
+[dependency-groups]
+# Default dependencies shared across all environments
+default = [
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
+]
+
 convert-to-tif = [
 	"numpy",
 	"matplotlib",
-	"tqdm",
-	"joblib",
-	"nd2reader",
 	"scyjava",
 	"jpype1==1.5.0",
 	"dask[array]",
@@ -51,19 +61,12 @@ convert-to-tif = [
 	"imaris-ims-file-reader",
 	"pystackreg",
 	"cupy-cuda12x",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
 	"pyGPUreg",
 ]
+
 drift-correct = [
 	"numpy",
 	"matplotlib",
-	"tqdm",
-	"joblib",
-	"nd2reader",
 	"scyjava",
 	"jpype1==1.5.0",
 	"dask[array]",
@@ -71,11 +74,6 @@ drift-correct = [
 	"imaris-ims-file-reader",
 	"pystackreg",
 	"cupy-cuda12x",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
 	"pyGPUreg",
 	"imreg_dft",
 	"scikit-image>=0.19.0",
@@ -89,7 +87,6 @@ segment-ernet = [
 	"torchvision==0.19.0+cu124",
 	"torchaudio==2.4.0+cu124",
 	"python-dotenv",
-	"tqdm",
 	"numpy>=1.24,<2.0",
 	"numba",
 	"scipy",
@@ -103,49 +100,15 @@ segment-ernet = [
 	"timm",
 	"einops",
 	"sknw==0.12",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
 ]
-mask_measure = [
-	"numpy",
-	"pandas",
-	"scikit-image",
-	"tqdm",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
-]
-plot = [
-	"numpy",
-	"matplotlib",
-	"pandas",
-	"seaborn",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
-	"scipy",
-	"scikit-image",
-	"scipy",
-]
+
 segmentation = [
 	"numpy",
+	"matplotlib",
 	"scipy",
 	"scikit-image",
 	"pandas",
 	"trackpy",
-	"tqdm",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
 ]
 run_ilastik = [
 	"numpy",
@@ -155,18 +118,7 @@ run_ilastik = [
 	"opencv-python",
 	"roifile",
 	"trackpy",
-
 	"h5py",
-	"tqdm",
-	"joblib",
-	"pyyaml",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
-	"nd2reader",
-
 ]
 
 # Development dependencies

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -277,10 +278,9 @@ func updateCLIDefinitions(sourceFolder string, logger *log.Logger) error {
 			args = append(args, "--from-yaml", yamlPath)
 		}
 
-		// Run the generator
-		cmd := exec.Command("python", args...)
-		cmd.Dir = repoRoot
-		output, err := cmd.CombinedOutput()
+		// Run the generator with UV environment fallback
+		logger.Printf("  Running generator with UV environment fallback...\n")
+		output, err := runPythonWithUV(args, repoRoot, logger)
 
 		if err != nil {
 			logger.Printf("  ERROR: %v\n", err)
@@ -305,4 +305,114 @@ func updateCLIDefinitions(sourceFolder string, logger *log.Logger) error {
 	fmt.Fprintf(os.Stderr, "========================================\n")
 
 	return nil
+}
+
+// getDependencyGroups reads the pyproject.toml and extracts dependency group names
+func getDependencyGroups(repoRoot string, logger *log.Logger) []string {
+	pyprojectPath := filepath.Join(repoRoot, "pyproject.toml")
+
+	data, err := os.ReadFile(pyprojectPath)
+	if err != nil {
+		logger.Printf("Warning: Could not read pyproject.toml: %v\n", err)
+		return nil
+	}
+
+	// Simple parser: look for lines like "group-name = [" under [dependency-groups]
+	lines := strings.Split(string(data), "\n")
+	var groups []string
+	inDependencyGroups := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check if we're entering the dependency-groups section
+		if strings.HasPrefix(trimmed, "[dependency-groups]") {
+			inDependencyGroups = true
+			continue
+		}
+
+		// Check if we're leaving the section (new section starts)
+		if inDependencyGroups && strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[dependency-groups]") {
+			break
+		}
+
+		// Extract group names
+		if inDependencyGroups && strings.Contains(trimmed, "=") {
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) == 2 {
+				groupName := strings.TrimSpace(parts[0])
+				// Skip comments and empty lines
+				if groupName != "" && !strings.HasPrefix(groupName, "#") {
+					groups = append(groups, groupName)
+				}
+			}
+		}
+	}
+
+	// Reorder to prioritize 'default' first
+	var orderedGroups []string
+	for _, g := range groups {
+		if g == "default" {
+			orderedGroups = append([]string{g}, orderedGroups...)
+		} else if g != "dev" { // Skip dev group
+			orderedGroups = append(orderedGroups, g)
+		}
+	}
+
+	logger.Printf("Found %d dependency groups: %v\n", len(orderedGroups), orderedGroups)
+	return orderedGroups
+}
+
+// runPythonWithUV tries to run a Python command using UV with fallback environments
+func runPythonWithUV(args []string, repoRoot string, logger *log.Logger) ([]byte, error) {
+	// Get available dependency groups from pyproject.toml
+	groups := getDependencyGroups(repoRoot, logger)
+
+	if len(groups) == 0 {
+		logger.Println("No dependency groups found, falling back to plain python")
+		cmd := exec.Command("python", args...)
+		cmd.Dir = repoRoot
+		return cmd.CombinedOutput()
+	}
+
+	// Try each environment in order
+	for i, group := range groups {
+		logger.Printf("Attempt %d: Trying UV environment with group '%s'\n", i+1, group)
+		fmt.Fprintf(os.Stderr, "  Trying environment: %s\n", group)
+
+		// Build UV command: uv run --group <group> python <args...>
+		uvArgs := []string{"run", "--group", group, "python"}
+		uvArgs = append(uvArgs, args...)
+
+		cmd := exec.Command("uv", uvArgs...)
+		cmd.Dir = repoRoot
+		output, err := cmd.CombinedOutput()
+
+		if err == nil {
+			logger.Printf("✓ Success with group '%s'\n", group)
+			fmt.Fprintf(os.Stderr, "  ✓ Success with environment: %s\n", group)
+			return output, nil
+		}
+
+		// Check if it's a dependency error or actual script error
+		outputStr := string(output)
+		if strings.Contains(outputStr, "ModuleNotFoundError") ||
+			strings.Contains(outputStr, "ImportError") ||
+			strings.Contains(outputStr, "No module named") {
+			logger.Printf("  ✗ Missing dependencies in group '%s', trying next...\n", group)
+			fmt.Fprintf(os.Stderr, "  ✗ Missing dependencies in %s, trying next...\n", group)
+			continue
+		}
+
+		// If it's not a dependency error, this is the real error
+		logger.Printf("  Script error (not dependency issue): %v\n", err)
+		return output, err
+	}
+
+	// All environments failed
+	logger.Println("All UV environments failed, trying plain python as last resort")
+	fmt.Fprintln(os.Stderr, "  All UV environments failed, trying plain python...")
+	cmd := exec.Command("python", args...)
+	cmd.Dir = repoRoot
+	return cmd.CombinedOutput()
 }

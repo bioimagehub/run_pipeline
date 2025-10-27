@@ -4,14 +4,14 @@
     "icon": "\ud83c\udfa8",
     "color": "#569cd6",
     "description": "CLI tool: tophat_filter",
-    "environment": "uv@3.11:tophat_filter",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/tophat_filter.py",
     "helpCommand": "python standard_code/python/tophat_filter.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:51:38.633219",
+    "lastParsed": "2025-10-27T16:38:11.010036",
     "outputFilesDefined": false,
     "category": "Image Processing"
 }

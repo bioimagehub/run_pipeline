@@ -4,14 +4,14 @@
     "icon": "\ud83d\udd2c",
     "color": "#c586c0",
     "description": "CLI tool: segment_threshold",
-    "environment": "uv@3.11:segment_threshold",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/segment_threshold.py",
     "helpCommand": "python standard_code/python/segment_threshold.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:07:12.402237",
+    "lastParsed": "2025-10-27T16:38:35.676059",
     "outputFilesDefined": false,
     "category": "Segmentation"
 }

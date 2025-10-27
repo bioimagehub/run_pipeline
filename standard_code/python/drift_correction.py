@@ -139,7 +139,6 @@ def process_files(args):
         exit(1)
     
     logger.info(f"Found {len(input_files)} file(s) to process")
-    
     # Determine base_folder for path collapsing
     # If pattern contains '**', use the part before '**' as base
     # Otherwise, use the parent directory of the pattern
@@ -160,6 +159,22 @@ def process_files(args):
     output_folder = Path(args.output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output folder: {output_folder}")
+    # Emit standardized output glob patterns for downstream steps
+    dest_norm = str(output_folder).replace("\\", "/")
+    tif_glob = f"{dest_norm}/**/*{args.output_suffix}.tif"
+    tmats_glob = f"{dest_norm}/**/*{args.output_suffix}_tmats.npy"
+    print(f"OUTPUT_GLOB_TIFF: {tif_glob}")
+    if not args.no_save_tmats:
+        print(f"OUTPUT_GLOB_TMATS: {tmats_glob}")
+    try:
+        import json
+        patterns = {"tiff": tif_glob, "next_input_search_pattern": tif_glob}
+        if not args.no_save_tmats:
+            patterns["tmats"] = tmats_glob
+        with open(os.path.join(str(output_folder), "_output_patterns.json"), "w", encoding="utf-8") as f:
+            json.dump(patterns, f, indent=2)
+    except Exception:
+        pass
     
     # Define custom output path function to use the suffix from args
     def create_output_path(input_path: str, base_folder: str, output_folder: str, collapse_delimiter: str) -> str:

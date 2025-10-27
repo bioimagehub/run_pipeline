@@ -1,0 +1,88 @@
+{
+    "id": "find_maxima",
+    "name": "Find local maxima and save CSVs",
+    "icon": "\ud83d\udd27",
+    "color": "#858585",
+    "description": "CLI tool: find_maxima",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/find_maxima.py",
+    "helpCommand": "python standard_code/python/find_maxima.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./input_tif/*.tif",
+            "description": "Glob pattern for input images, e.g. \"folder/*.tif\" or \"folder/somefile*.tif\". Use a single file path for one image.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "./output_summary",
+            "description": "Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the input.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--min-distance",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "10",
+            "description": "Minimum number of pixels separating peaks. Comma- separated list, one per channel, or single value for all (default: 10)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--threshold-abs",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "2*median,-1,2*median,-1",
+            "description": "Minimum intensity of peaks. Comma-separated list, one per channel, or expressions: mean, median, 2*mean, 2*median, -1 (skip channel).",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-search-patterns",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "[MASK_SEARCH_PATTERNS ...] List of glob patterns for mask images, e.g. \"folder/*_nuc.tif folder/*_cyt.tif\". For each maxima, the value at XY in each mask will be stored in a column <masklabel>_label.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search (only relevant if pattern does not already include \"**\")",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing (default: parallel enabled)",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:11:55.322614",
+    "outputFilesDefined": false,
+    "category": "Utilities"
+}

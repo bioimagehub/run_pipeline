@@ -4,14 +4,14 @@
     "icon": "\ud83d\udcca",
     "color": "#4ec9b0",
     "description": "CLI tool: quantify_distance_heatmap",
-    "environment": "uv@3.11:quantify_distance_heatmap",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/quantify_distance_heatmap.py",
     "helpCommand": "python standard_code/python/quantify_distance_heatmap.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:51:41.195864",
+    "lastParsed": "2025-10-27T16:38:33.315026",
     "outputFilesDefined": false,
     "category": "Measurement"
 }

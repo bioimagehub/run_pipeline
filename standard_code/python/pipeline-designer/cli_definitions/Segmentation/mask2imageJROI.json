@@ -1,0 +1,17 @@
+{
+    "id": "mask2imageJROI",
+    "name": "Convert masks to ImageJ ROI zip files",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask2imageJROI",
+    "environment": "uv@3.11:mask2imagejroi",
+    "executable": "python",
+    "script": "standard_code/python/mask2imageJROI.py",
+    "helpCommand": "python standard_code/python/mask2imageJROI.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:18:52.121012",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

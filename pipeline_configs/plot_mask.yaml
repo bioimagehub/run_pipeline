@@ -3,11 +3,15 @@ run:
     environment: uv:plot
     commands:
       - python
-      - ./standard_code/python/plot_mask.py
+      - ./standard_code/python/plots/plot_segmentation_contours.py
       - --input-search-pattern: ./input_tif/*.tif
       - --mask-search-pattern: ./output_masks/*_segmentation.tif
-      - --output-folder: ./visualizations
+      - --qc-key: plot_segmentation
+      - --output: ./visualizations
       - --alpha: 0.5
-      - --channel: 0
-      # Uncomment to show specific Z slice instead of MIP:
-      # - --z-slice: 5
+      # Optional arguments:
+      # - --mode: all  # Options: all, overlay, contours
+      # - --linewidth: 2.0
+      # - --colormap: tab10
+      # - --force-show  # Show all timepoints/channels
+      # - --search-subfolders

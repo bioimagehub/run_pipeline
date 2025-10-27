@@ -4,14 +4,14 @@
     "icon": "\ud83c\udfa8",
     "color": "#569cd6",
     "description": "CLI tool: median_filter",
-    "environment": "uv@3.11:median_filter",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/median_filter.py",
     "helpCommand": "python standard_code/python/median_filter.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:51:37.798447",
+    "lastParsed": "2025-10-27T16:38:08.777773",
     "outputFilesDefined": false,
     "category": "Image Processing"
 }

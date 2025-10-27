@@ -1,5 +1,48 @@
 pipeline_name: Pipeline
 _designer_metadata:
-    nodes: []
-    connections: []
-run: []
+    nodes:
+        - id: d51016b9-eaf6-496e-a948-c2459fef5894
+          position:
+            x: 195
+            "y": 330
+          size:
+            width: 300
+            height: 150
+        - id: 509c9d7e-64cd-48bc-9351-3659e8b6a3d6
+          position:
+            x: 660
+            "y": 330
+          size:
+            width: 300
+            height: 150
+    connections:
+        - id: reactflow__edge-d51016b9-eaf6-496e-a948-c2459fef5894e9ad235e-1f49-43bd-8b89-7cf7a4a69a22-509c9d7e-64cd-48bc-9351-3659e8b6a3d6a5050f60-5a21-4cc5-a62b-e3669274e6f3
+          from_node_id: d51016b9-eaf6-496e-a948-c2459fef5894
+          to_node_id: 509c9d7e-64cd-48bc-9351-3659e8b6a3d6
+          from_socket_id: e9ad235e-1f49-43bd-8b89-7cf7a4a69a22
+          to_socket_id: a5050f60-5a21-4cc5-a62b-e3669274e6f3
+run:
+    - name: Convert to tif
+      environment: convert_to_tif
+      commands:
+        - python
+        - standard_code/python/convert_to_tif.py
+        - --input-search-pattern: ./input/*.ims
+        - --search-subfolders: ""
+        - --collapse-delimiter: __
+        - --projection-method: max
+        - --multipoint-files: ""
+        - --no-parallel: ""
+        - --dry-run: ""
+        - --version: ""
+        - --output-file-name-extension: _max
+        - --output-folder: ""
+      script: standard_code/python/convert_to_tif.py
+      _node_id: d51016b9-eaf6-496e-a948-c2459fef5894
+    - name: Gaussian Filter
+      environment: uv@3.11:gaussian_filter
+      commands:
+        - python
+        - standard_code/python/gaussian_filter.py
+      script: standard_code/python/gaussian_filter.py
+      _node_id: 509c9d7e-64cd-48bc-9351-3659e8b6a3d6

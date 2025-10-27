@@ -204,6 +204,7 @@ func CreateNodeFromDefinition(definition *CLIDefinition, position Point) *CLINod
 			DefaultValue: argDef.DefaultValue,
 			Description:  argDef.Description,
 			Validation:   argDef.Validation,
+			SkipEmit:     argDef.SkipEmit,
 		}
 
 		if socket.SocketSide == SocketInput {

@@ -313,4 +313,15 @@ def process_folder_unified(
     failed = len(results) - successful
     logger.info(f"Processing complete: {successful} successful, {failed} failed")
     
+    # Emit a generic output glob pattern for downstream steps (catch-all)
+    try:
+        dest_norm = output_folder.replace("\\", "/")
+        any_glob = f"{dest_norm}/**/*"
+        print(f"OUTPUT_GLOB_ANY: {any_glob}")
+        import json
+        with open(os.path.join(output_folder, "_output_patterns.json"), "w", encoding="utf-8") as f:
+            json.dump({"any": any_glob, "next_input_search_pattern": any_glob}, f, indent=2)
+    except Exception:
+        pass
+
     return results

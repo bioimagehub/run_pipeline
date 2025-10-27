@@ -4,14 +4,14 @@
     "icon": "\ud83c\udfa8",
     "color": "#569cd6",
     "description": "CLI tool: gaussian_filter",
-    "environment": "uv@3.11:gaussian_filter",
+    "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/gaussian_filter.py",
     "helpCommand": "python standard_code/python/gaussian_filter.py --help",
     "arguments": [],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T14:51:35.902283",
+    "lastParsed": "2025-10-27T16:38:05.440726",
     "outputFilesDefined": false,
     "category": "Image Processing"
 }

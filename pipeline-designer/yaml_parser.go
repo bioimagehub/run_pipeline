@@ -24,7 +24,40 @@ func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// Convert to visual Pipeline
+	// Check if this is a legacy YAML (no _designer_metadata)
+	if yamlPipeline.DesignerMetadata == nil {
+		appLogger.Println("[YAML_LOAD] Legacy YAML detected (no _designer_metadata). Using legacy importer...")
+
+		// Find cli_definitions directory
+		exePath, _ := os.Executable()
+		exeDir := filepath.Dir(exePath)
+		definitionsPath := filepath.Join(exeDir, "cli_definitions")
+
+		// Load all CLI definitions
+		definitionsManager := NewCLIDefinitionsManager(definitionsPath)
+		if err := definitionsManager.LoadAllDefinitions(); err != nil {
+			return nil, fmt.Errorf("failed to load CLI definitions for legacy import: %w", err)
+		}
+
+		// Use legacy importer
+		pipeline, report, err := ImportLegacyYAML(&yamlPipeline, definitionsManager)
+		if err != nil {
+			return nil, fmt.Errorf("legacy import failed: %w", err)
+		}
+
+		// Print detailed report
+		PrintLegacyImportReport(report)
+
+		// Fail if there are critical errors
+		if len(report.Errors) > 0 {
+			appLogger.Println("[YAML_LOAD] ⚠ Legacy import completed with errors. Please review the report above.")
+			appLogger.Println("[YAML_LOAD] The pipeline has been loaded, but you should verify all nodes and connections.")
+		}
+
+		return pipeline, nil
+	}
+
+	// Convert to visual Pipeline (modern YAML with designer metadata)
 	pipeline := &Pipeline{
 		Nodes:       make([]CLINode, 0),
 		Connections: make([]SocketConnection, 0),
@@ -97,6 +130,12 @@ func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
 				node.OutputSockets = append(node.OutputSockets, socket)
 			}
 		}
+
+		// Inject default visual-only link sockets (ignored when generating YAML)
+		linkIn := Socket{ID: uuid.New().String(), NodeID: node.ID, ArgumentFlag: "__link_in__", Type: TypeString, SocketSide: SocketInput, Value: "", IsRequired: false, DefaultValue: "", Description: "Visual link-only handle (ignored in YAML/command)", Validation: "", SkipEmit: true}
+		linkOut := Socket{ID: uuid.New().String(), NodeID: node.ID, ArgumentFlag: "__link_out__", Type: TypeString, SocketSide: SocketOutput, Value: "", IsRequired: false, DefaultValue: "", Description: "Visual link-only handle (ignored in YAML/command)", Validation: "", SkipEmit: true}
+		node.InputSockets = append(node.InputSockets, linkIn)
+		node.OutputSockets = append(node.OutputSockets, linkOut)
 
 		pipeline.Nodes = append(pipeline.Nodes, node)
 	}
@@ -231,6 +270,9 @@ func convertSocketsToCommands(node CLINode, pipeline *Pipeline) []interface{} {
 
 	// Add input socket arguments
 	for _, socket := range node.InputSockets {
+		if socket.SkipEmit {
+			continue
+		}
 		value := socket.Value
 
 		// Check if this socket is connected
@@ -256,6 +298,9 @@ func convertSocketsToCommands(node CLINode, pipeline *Pipeline) []interface{} {
 
 	// Add output socket arguments
 	for _, socket := range node.OutputSockets {
+		if socket.SkipEmit {
+			continue
+		}
 		argMap := make(map[string]interface{})
 		argMap[socket.ArgumentFlag] = socket.Value
 		commands = append(commands, argMap)
@@ -352,4 +397,62 @@ func inferSocketSide(flag string) SocketSide {
 // contains checks if a string contains a substring (case-insensitive helper)
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && s[:len(substr)] == substr || s[len(s)-len(substr):] == substr)
+}
+
+// ConvertNodeToYAMLStep converts a single node to a YAML step (without connections)
+func ConvertNodeToYAMLStep(node *CLINode) *YAMLStep {
+	commands := make([]interface{}, 0)
+
+	// Add python interpreter if needed
+	if node.Environment != "" && node.Environment != "imageJ" {
+		commands = append(commands, "python")
+	}
+
+	// Add script path
+	if node.Script != "" {
+		commands = append(commands, node.Script)
+	}
+
+	// Add input socket arguments
+	for _, socket := range node.InputSockets {
+		if !socket.SkipEmit && socket.Value != "" {
+			argMap := make(map[string]interface{})
+			argMap[socket.ArgumentFlag] = socket.Value
+			commands = append(commands, argMap)
+		}
+	}
+
+	// Add output socket arguments
+	for _, socket := range node.OutputSockets {
+		if !socket.SkipEmit && socket.Value != "" {
+			argMap := make(map[string]interface{})
+			argMap[socket.ArgumentFlag] = socket.Value
+			commands = append(commands, argMap)
+		}
+	}
+
+	step := &YAMLStep{
+		Name:        node.Name,
+		Environment: node.Environment,
+		Script:      node.Script,
+		Commands:    commands,
+	}
+
+	return step
+}
+
+// WriteYAMLPipeline writes a YAML pipeline to a file
+func WriteYAMLPipeline(yamlPipeline *YAMLPipeline, filePath string) error {
+	// Marshal to YAML
+	data, err := yaml.Marshal(yamlPipeline)
+	if err != nil {
+		return fmt.Errorf("failed to marshal YAML: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write YAML file: %w", err)
+	}
+
+	return nil
 }
