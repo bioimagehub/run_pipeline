@@ -1,0 +1,17 @@
+{
+    "id": "plot_segmentation_contours",
+    "name": "Plot Segmentation Contours",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: plot_segmentation_contours",
+    "environment": "uv@3.11:plot_segmentation_contours",
+    "executable": "python",
+    "script": "standard_code/python/plot_segmentation_contours.py",
+    "helpCommand": "python standard_code/python/plot_segmentation_contours.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:51:39.669070",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

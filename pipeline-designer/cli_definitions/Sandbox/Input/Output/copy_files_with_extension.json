@@ -1,0 +1,17 @@
+{
+    "id": "copy_files_with_extension",
+    "name": "Copy Files With Extension",
+    "icon": "\ud83d\udcc1",
+    "color": "#4ec9b0",
+    "description": "CLI tool: copy_files_with_extension",
+    "environment": "uv@3.11:copy_files_with_extension",
+    "executable": "python",
+    "script": "standard_code/python/copy_files_with_extension.py",
+    "helpCommand": "python standard_code/python/copy_files_with_extension.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:06.520039",
+    "outputFilesDefined": false,
+    "category": "Input/Output"
+}

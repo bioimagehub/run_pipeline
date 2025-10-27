@@ -35,14 +35,14 @@ const Canvas: React.FC = () => {
   const [edges, setLocalEdges, onEdgesChange] = useEdgesState(storeEdges);
   const [showMiniMap, setShowMiniMap] = React.useState(false); // Minimap off by default
 
-  // Sync store changes to local state (only when store changes externally)
+  // Sync store changes to local state
   React.useEffect(() => {
     setLocalNodes(storeNodes);
-  }, [storeNodes.length]); // Only sync when nodes are added/removed
+  }, [storeNodes]); // Sync whenever store nodes change (not just length)
 
   React.useEffect(() => {
     setLocalEdges(storeEdges);
-  }, [storeEdges.length]); // Only sync when edges are added/removed
+  }, [storeEdges]); // Sync whenever store edges change (not just length)
 
   // Handle node changes (dragging, selecting, etc.)
   const handleNodesChange = useCallback(
@@ -173,6 +173,9 @@ const Canvas: React.FC = () => {
         maxZoom={4}
         snapToGrid={true}
         snapGrid={[15, 15]}
+        nodesDraggable={true}
+        nodesConnectable={true}
+        elementsSelectable={true}
       >
         <Controls 
           showInteractive={true}

@@ -1,0 +1,17 @@
+{
+    "id": "mean_filter",
+    "name": "Mean Filter",
+    "icon": "\ud83c\udfa8",
+    "color": "#569cd6",
+    "description": "CLI tool: mean_filter",
+    "environment": "uv@3.11:mean_filter",
+    "executable": "python",
+    "script": "standard_code/python/mean_filter.py",
+    "helpCommand": "python standard_code/python/mean_filter.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:51:37.366388",
+    "outputFilesDefined": false,
+    "category": "Image Processing"
+}

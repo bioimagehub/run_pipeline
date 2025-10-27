@@ -1,0 +1,67 @@
+{
+    "id": "convert_to_tif",
+    "name": "Convert to tif and collapse folder structure",
+    "icon": "\ud83c\udfa8",
+    "color": "#569cd6",
+    "description": "CLI tool: convert_to_tif",
+    "environment": "convert_to_tif",
+    "executable": "python",
+    "script": "standard_code/python/convert_to_tif.py",
+    "helpCommand": "python standard_code/python/convert_to_tif.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./input/*.ims",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--collapse-delimiter",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "__",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--drift-correct-channel",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "-1",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--projection-method",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "max",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-file-name-extension",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "_max",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T12:36:44.061526",
+    "category": "Image Processing"
+}

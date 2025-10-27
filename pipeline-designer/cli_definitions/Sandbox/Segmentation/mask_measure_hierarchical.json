@@ -1,0 +1,17 @@
+{
+    "id": "mask_measure_hierarchical",
+    "name": "Mask Measure Hierarchical",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_measure_hierarchical",
+    "environment": "uv@3.11:mask_measure_hierarchical",
+    "executable": "python",
+    "script": "standard_code/python/mask_measure_hierarchical.py",
+    "helpCommand": "python standard_code/python/mask_measure_hierarchical.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:09.830902",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

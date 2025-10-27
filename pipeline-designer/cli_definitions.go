@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +24,7 @@ func NewCLIDefinitionsManager(definitionsPath string) *CLIDefinitionsManager {
 	}
 }
 
-// LoadAllDefinitions loads all CLI definitions from the definitions directory
+// LoadAllDefinitions loads all CLI definitions from the definitions directory (recursively)
 func (m *CLIDefinitionsManager) LoadAllDefinitions() error {
 	// Ensure directory exists
 	if _, err := os.Stat(m.definitionsPath); os.IsNotExist(err) {
@@ -35,28 +34,59 @@ func (m *CLIDefinitionsManager) LoadAllDefinitions() error {
 		return nil // Empty directory
 	}
 
-	// Read all JSON files in the directory
-	files, err := ioutil.ReadDir(m.definitionsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read definitions directory: %w", err)
-	}
-
-	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
-			continue
+	// Walk through all subdirectories recursively
+	err := filepath.Walk(m.definitionsPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
 
-		filePath := filepath.Join(m.definitionsPath, file.Name())
-		definition, err := m.LoadDefinition(filePath)
+		// Skip directories and non-JSON files
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".json") {
+			return nil
+		}
+
+		// Derive category from folder structure
+		relPath, err := filepath.Rel(m.definitionsPath, path)
 		if err != nil {
-			fmt.Printf("Warning: failed to load definition %s: %v\n", file.Name(), err)
-			continue
+			appLogger.Printf("[ERROR] Failed to get relative path for %s: %v\n", path, err)
+			return nil
+		}
+
+		category := deriveCategoryFromPath(relPath)
+
+		if debugMode {
+			appLogger.Printf("[DEBUG] Loading definition file: %s (category: %s)\n", info.Name(), category)
+		}
+
+		definition, err := m.LoadDefinitionWithCategory(path, category)
+		if err != nil {
+			appLogger.Printf("[ERROR] Failed to load definition %s: %v\n", info.Name(), err)
+			return nil
 		}
 
 		m.definitions[definition.ID] = definition
+		if debugMode {
+			appLogger.Printf("[DEBUG] Successfully loaded definition: %s (ID: %s)\n", definition.Name, definition.ID)
+		}
+		return nil
+	})
+
+	return err
+}
+
+// deriveCategoryFromPath converts a file path to a category string
+// Example: "Image Processing/Filtering/gaussian_filter.json" -> "Image Processing > Filtering"
+func deriveCategoryFromPath(relPath string) string {
+	dir := filepath.Dir(relPath)
+
+	// If file is in root directory, use "Uncategorized"
+	if dir == "." {
+		return "Uncategorized"
 	}
 
-	return nil
+	// Replace path separators with " > " for hierarchical display
+	category := strings.ReplaceAll(dir, string(filepath.Separator), " > ")
+	return category
 }
 
 // LoadDefinition loads a single CLI definition from a JSON file
@@ -72,6 +102,19 @@ func (m *CLIDefinitionsManager) LoadDefinition(filePath string) (*CLIDefinition,
 	}
 
 	return &definition, nil
+}
+
+// LoadDefinitionWithCategory loads a CLI definition and sets its category
+func (m *CLIDefinitionsManager) LoadDefinitionWithCategory(filePath string, category string) (*CLIDefinition, error) {
+	definition, err := m.LoadDefinition(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Override category with folder-based category
+	definition.Category = category
+
+	return definition, nil
 }
 
 // SaveDefinition saves a CLI definition to a JSON file

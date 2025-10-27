@@ -40,8 +40,7 @@ export namespace main {
 	    arguments: ArgumentDefinition[];
 	    version: string;
 	    author: string;
-	    // Go type: time
-	    lastParsed: any;
+	    lastParsed?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CLIDefinition(source);
@@ -62,7 +61,7 @@ export namespace main {
 	        this.arguments = this.convertValues(source["arguments"], ArgumentDefinition);
 	        this.version = source["version"];
 	        this.author = source["author"];
-	        this.lastParsed = this.convertValues(source["lastParsed"], null);
+	        this.lastParsed = source["lastParsed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -225,6 +224,22 @@ export namespace main {
 	        this.files = source["files"];
 	        this.count = source["count"];
 	        this.error = source["error"];
+	    }
+	}
+	export class PathToken {
+	    token: string;
+	    description: string;
+	    resolvedPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PathToken(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.description = source["description"];
+	        this.resolvedPath = source["resolvedPath"];
 	    }
 	}
 	export class PipelineMetadata {

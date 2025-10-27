@@ -1,0 +1,17 @@
+{
+    "id": "laplacian_filter",
+    "name": "Laplacian Filter",
+    "icon": "\ud83c\udfa8",
+    "color": "#569cd6",
+    "description": "CLI tool: laplacian_filter",
+    "environment": "uv@3.11:laplacian_filter",
+    "executable": "python",
+    "script": "standard_code/python/laplacian_filter.py",
+    "helpCommand": "python standard_code/python/laplacian_filter.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:51:36.724437",
+    "outputFilesDefined": false,
+    "category": "Image Processing"
+}

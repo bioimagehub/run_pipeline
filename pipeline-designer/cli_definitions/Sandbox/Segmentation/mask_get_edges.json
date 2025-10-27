@@ -1,0 +1,17 @@
+{
+    "id": "mask_get_edges",
+    "name": "Mask Get Edges",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_get_edges",
+    "environment": "uv@3.11:mask_get_edges",
+    "executable": "python",
+    "script": "standard_code/python/mask_get_edges.py",
+    "helpCommand": "python standard_code/python/mask_get_edges.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:09.503912",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

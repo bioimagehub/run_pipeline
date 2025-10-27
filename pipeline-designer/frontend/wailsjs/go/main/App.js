@@ -18,12 +18,20 @@ export function GetCLIDefinitionsByCategory(arg1) {
   return window['go']['main']['App']['GetCLIDefinitionsByCategory'](arg1);
 }
 
+export function GetEnvVariables() {
+  return window['go']['main']['App']['GetEnvVariables']();
+}
+
 export function GetFileListPreview(arg1, arg2) {
   return window['go']['main']['App']['GetFileListPreview'](arg1, arg2);
 }
 
 export function GetFilesFromPattern(arg1, arg2) {
   return window['go']['main']['App']['GetFilesFromPattern'](arg1, arg2);
+}
+
+export function GetPathTokens() {
+  return window['go']['main']['App']['GetPathTokens']();
 }
 
 export function GetStartupFilePath() {

@@ -1,0 +1,46 @@
+{
+    "id":  "file_selector",
+    "name":  "File Selector",
+    "icon":  "📁",
+    "color":  "#4ec9b0",
+    "description":  "Select files using glob patterns (uses get_files_to_process2)",
+    "environment":  "uv@3.11:convert-to-tif",
+    "executable":  "python",
+    "script":  "standard_code/python/bioimage_pipeline_utils.py",
+    "helpCommand":  "",
+    "arguments":  [
+                      {
+                          "flag":  "--search-pattern",
+                          "type":  "glob_pattern",
+                          "socketSide":  "input",
+                          "isRequired":  true,
+                          "defaultValue":  "./input/*.tif",
+                          "description":  "Glob pattern for files (e.g., \u0027./input/*.tif\u0027)",
+                          "validation":  "",
+                          "userOverride":  false
+                      },
+                      {
+                          "flag":  "--search-subfolders",
+                          "type":  "bool",
+                          "socketSide":  "input",
+                          "isRequired":  false,
+                          "defaultValue":  "false",
+                          "description":  "Search in subfolders recursively",
+                          "validation":  "",
+                          "userOverride":  false
+                      },
+                      {
+                          "flag":  "--file-list",
+                          "type":  "file_list",
+                          "socketSide":  "output",
+                          "isRequired":  false,
+                          "defaultValue":  "",
+                          "description":  "List of matched files (output)",
+                          "validation":  "",
+                          "userOverride":  false
+                      }
+                  ],
+    "version":  "1.0.0",
+    "author":  "BIPHUB",
+    "lastParsed":  ""
+}

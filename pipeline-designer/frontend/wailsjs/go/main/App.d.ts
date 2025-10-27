@@ -10,9 +10,13 @@ export function GetCLIDefinitions():Promise<Array<main.CLIDefinition>>;
 
 export function GetCLIDefinitionsByCategory(arg1:string):Promise<Array<main.CLIDefinition>>;
 
+export function GetEnvVariables():Promise<Record<string, string>>;
+
 export function GetFileListPreview(arg1:string,arg2:boolean):Promise<string>;
 
 export function GetFilesFromPattern(arg1:string,arg2:boolean):Promise<main.FileListResult>;
+
+export function GetPathTokens():Promise<Array<main.PathToken>>;
 
 export function GetStartupFilePath():Promise<string>;
 

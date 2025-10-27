@@ -1,0 +1,17 @@
+{
+    "id": "qc_tracking",
+    "name": "Qc Tracking",
+    "icon": "\ud83d\udcc8",
+    "color": "#ce9178",
+    "description": "CLI tool: qc_tracking",
+    "environment": "uv@3.11:qc_tracking",
+    "executable": "python",
+    "script": "standard_code/python/qc_tracking.py",
+    "helpCommand": "python standard_code/python/qc_tracking.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:51:40.826897",
+    "outputFilesDefined": false,
+    "category": "Tracking"
+}

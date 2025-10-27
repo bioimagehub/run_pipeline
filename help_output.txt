@@ -1,0 +1,47 @@
+﻿pipeline-designer.exe : ========================================
+At line:1 char:1
++ & "e:\Oyvind\OF_git\run_pipeline\pipeline-designer\build\bin\pipeline ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (========================================:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Pipeline Designer Starting...
+========================================
+
+Pipeline Designer - Visual Pipeline Builder for BIPHUB
+
+USAGE:
+  pipeline-designer.exe [OPTIONS] [YAML_FILE]
+
+OPTIONS:
+  -h, --help              Show this help message
+  --update <folder>       Scan folder for Python scripts and generate CLI definitions
+                          Example: --update standard_code
+
+ARGUMENTS:
+  YAML_FILE               Optional: Path to a YAML pipeline file to open on startup
+
+ENVIRONMENT VARIABLES:
+  DEBUG=1                 Enable debug logging (creates detailed logs)
+  PIPELINE_DEBUG=1        Alternative debug mode variable
+
+EXAMPLES:
+  # Start GUI normally
+  pipeline-designer.exe
+
+  # Open a specific pipeline file
+  pipeline-designer.exe my_pipeline.yaml
+
+  # Generate CLI definitions from Python scripts
+  pipeline-designer.exe --update standard_code
+
+  # Run with debug logging enabled
+  $env:DEBUG="1" ; pipeline-designer.exe
+
+CLI DEFINITIONS LOCATION:
+  Definitions are loaded from 'cli_definitions/' folder next to the executable.
+  Generated definitions are saved to 'cli_definitions/Sandbox/' for review.
+
+LOG FILE:
+  Logs are written to: pipeline-designer.log (in the same directory as .exe)
+

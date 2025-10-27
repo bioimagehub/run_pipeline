@@ -123,7 +123,7 @@ type CLIDefinition struct {
 	Arguments   []ArgumentDefinition `json:"arguments"`
 	Version     string               `json:"version"`
 	Author      string               `json:"author"`
-	LastParsed  time.Time            `json:"lastParsed"`
+	LastParsed  string               `json:"lastParsed,omitempty"` // String to avoid time parsing issues
 }
 
 // PipelineMetadata contains metadata about a pipeline
@@ -187,4 +187,11 @@ type YAMLPipeline struct {
 	PipelineName     string            `yaml:"pipeline_name,omitempty"`
 	DesignerMetadata *DesignerMetadata `yaml:"_designer_metadata,omitempty"`
 	Run              []YAMLStep        `yaml:"run"`
+}
+
+// PathToken represents a special path token that can be used in YAML files
+type PathToken struct {
+	Token        string `json:"token"`
+	Description  string `json:"description"`
+	ResolvedPath string `json:"resolvedPath"`
 }

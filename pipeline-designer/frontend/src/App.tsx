@@ -44,15 +44,6 @@ function App() {
     initializeApp();
   }, []);
 
-  useEffect(() => {
-    // Add File Selector node by default if no nodes exist and app is initialized
-    if (isInitialized && nodes.length === 0) {
-      setTimeout(() => {
-        addNodeFromDefinition('file_selector', 200, 200);
-      }, 500); // Wait for definitions to load
-    }
-  }, [nodes.length, isInitialized]);
-
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

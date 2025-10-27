@@ -1,0 +1,17 @@
+{
+    "id": "fill_mask_gaps",
+    "name": "Fill Mask Gaps",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: fill_mask_gaps",
+    "environment": "uv@3.11:fill_mask_gaps",
+    "executable": "python",
+    "script": "standard_code/python/fill_mask_gaps.py",
+    "helpCommand": "python standard_code/python/fill_mask_gaps.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:07.780096",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

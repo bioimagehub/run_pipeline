@@ -1,0 +1,28 @@
+{
+    "id": "extract_metadata",
+    "name": "Extract metadata YAML next to image",
+    "icon": "\ud83d\udd27",
+    "color": "#858585",
+    "description": "CLI tool: extract_metadata",
+    "environment": "extract_metadata",
+    "executable": "python",
+    "script": "standard_code/python/extract_metadata.py",
+    "helpCommand": "python standard_code/python/extract_metadata.py --help",
+    "arguments": [
+        {
+            "flag": "--input-file",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./pipeline_configs/input_1/small_TCYX_01.ome.tif",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:07.472960",
+    "outputFilesDefined": false,
+    "category": "Utilities"
+}

@@ -18,7 +18,12 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Copying CLI definitions..." -ForegroundColor Cyan
 
-# Copy CLI definitions to build directory
+# Remove old cli_definitions to avoid nesting issues
+if (Test-Path "build\bin\cli_definitions") {
+    Remove-Item -Path "build\bin\cli_definitions" -Recurse -Force
+}
+
+# Copy CLI definitions folder structure recursively to build directory
 Copy-Item -Path "cli_definitions" -Destination "build\bin\cli_definitions" -Recurse -Force
 
 Write-Host "" -ForegroundColor Green

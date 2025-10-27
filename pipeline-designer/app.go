@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -73,14 +75,24 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// Initialize CLI definitions manager
-	// Try multiple locations for cli_definitions folder
+	// Get executable directory first - this is the most reliable location
+	exePath, err := os.Executable()
+	if err != nil {
+		appLogger.Printf("[ERROR] Failed to get executable path: %v\n", err)
+		exePath = "."
+	}
+	exeDir := filepath.Dir(exePath)
+
+	// Try multiple locations for cli_definitions folder, prioritizing executable directory
 	possiblePaths := []string{
-		filepath.Join(".", "cli_definitions"),                 // Next to executable
+		filepath.Join(exeDir, "cli_definitions"),              // Next to executable (PRIORITY)
+		filepath.Join(".", "cli_definitions"),                 // Current working directory
 		filepath.Join("..", "cli_definitions"),                // One level up
 		filepath.Join("pipeline-designer", "cli_definitions"), // In project folder
 	}
 
 	if debugMode {
+		appLogger.Printf("[DEBUG] Executable directory: %s\n", exeDir)
 		appLogger.Printf("[DEBUG] Searching for cli_definitions in %d locations\n", len(possiblePaths))
 	}
 
@@ -90,14 +102,26 @@ func (a *App) startup(ctx context.Context) {
 		if debugMode {
 			appLogger.Printf("[DEBUG] Checking path %d: %s\n", i+1, absPath)
 		}
-		if _, err := filepath.Glob(filepath.Join(absPath, "*.json")); err == nil {
-			// Check if directory exists and has JSON files
-			if files, err := filepath.Glob(filepath.Join(absPath, "*.json")); err == nil && len(files) > 0 {
+		// Check if directory exists
+		if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+			// Check if it has JSON files (in root or subdirectories)
+			hasDefinitions := false
+			filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".json") {
+					hasDefinitions = true
+					return filepath.SkipAll // Stop walking once we find one JSON file
+				}
+				return nil
+			})
+
+			if hasDefinitions {
 				definitionsPath = absPath
 				if debugMode {
-					appLogger.Printf("[DEBUG] Found definitions path with %d JSON files\n", len(files))
+					appLogger.Printf("[DEBUG] Found definitions path with JSON files: %s\n", absPath)
 				}
 				break
+			} else if debugMode {
+				appLogger.Printf("[DEBUG] Directory exists but no JSON files found\n")
 			}
 		}
 	}
@@ -293,4 +317,115 @@ func (a *App) LogFrontend(message string) {
 	if appLogger != nil {
 		appLogger.Printf("[FRONTEND] %s\n", message)
 	}
+}
+
+// GetEnvVariables reads the .env file and returns a map of custom variables
+func (a *App) GetEnvVariables() map[string]string {
+	envVars := make(map[string]string)
+
+	// Get project root directory (where run_pipeline.exe is located)
+	exePath, err := os.Executable()
+	if err != nil {
+		appLogger.Printf("[ERROR] Failed to get executable path: %v\n", err)
+		return envVars
+	}
+
+	// Navigate up from pipeline-designer/build/bin to project root
+	projectRoot := filepath.Dir(exePath)    // bin
+	projectRoot = filepath.Dir(projectRoot) // build
+	projectRoot = filepath.Dir(projectRoot) // pipeline-designer
+	projectRoot = filepath.Dir(projectRoot) // run_pipeline
+
+	// Standard variables that are always present
+	envVars["REPO"] = projectRoot
+
+	// YAML directory is typically pipeline_configs
+	yamlDir := filepath.Join(projectRoot, "pipeline_configs")
+	envVars["YAML"] = yamlDir
+
+	// Read .env file from project root
+	envPath := filepath.Join(projectRoot, ".env")
+	file, err := os.Open(envPath)
+	if err != nil {
+		// .env file doesn't exist or can't be read - return defaults only
+		appLogger.Printf("[WARN] Could not read .env file: %v\n", err)
+		return envVars
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Parse KEY=VALUE format
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			// Skip standard conda/imagej paths (not useful as path tokens)
+			if key == "CONDA_PATH" || key == "IMAGEJ_PATH" {
+				continue
+			}
+
+			envVars[key] = value
+		}
+	}
+
+	appLogger.Printf("Loaded %d environment variables from .env\n", len(envVars))
+	return envVars
+}
+
+// GetPathTokens returns a list of available path tokens with their resolved values
+func (a *App) GetPathTokens() []PathToken {
+	envVars := a.GetEnvVariables()
+
+	tokens := []PathToken{
+		{
+			Token:        "%REPO%",
+			Description:  "Project root directory",
+			ResolvedPath: envVars["REPO"],
+		},
+		{
+			Token:        "%YAML%",
+			Description:  "YAML file directory",
+			ResolvedPath: envVars["YAML"],
+		},
+	}
+
+	// Add custom environment variables (sorted for consistency)
+	var customKeys []string
+	for key := range envVars {
+		if key != "REPO" && key != "YAML" {
+			customKeys = append(customKeys, key)
+		}
+	}
+
+	// Sort custom keys alphabetically
+	for i := 0; i < len(customKeys); i++ {
+		for j := i + 1; j < len(customKeys); j++ {
+			if customKeys[i] > customKeys[j] {
+				customKeys[i], customKeys[j] = customKeys[j], customKeys[i]
+			}
+		}
+	}
+
+	for _, key := range customKeys {
+		tokens = append(tokens, PathToken{
+			Token:        "%" + key + "%",
+			Description:  "Custom environment variable",
+			ResolvedPath: envVars[key],
+		})
+	}
+
+	if debugMode {
+		appLogger.Printf("[DEBUG] GetPathTokens returning %d tokens\n", len(tokens))
+	}
+
+	return tokens
 }

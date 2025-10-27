@@ -28,6 +28,7 @@ interface CLINodeData {
 const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const [showAllArgs, setShowAllArgs] = useState(false);
   const { updateNodeSocket } = usePipelineStore();
+  const edges = usePipelineStore((s) => s.edges);
   
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
@@ -39,6 +40,11 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
       'Utilities': '#858585',
     };
     return colors[category] || '#858585';
+  };
+
+  const handleInputChange = (socketId: string, value: string) => {
+    console.log('Input changed:', { nodeId: id, socketId, value });
+    updateNodeSocket(id, socketId, value);
   };
 
   const color = getCategoryColor(data.category);
@@ -65,6 +71,7 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
         <span className="node-name">{data.name}</span>
         {selected && (
           <button
+            className="nodrag"
             style={{
               marginLeft: 'auto',
               background: '#222',
@@ -124,32 +131,49 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                       {socket.argumentFlag}
                       {socket.isRequired && <span style={{ color: '#f48771' }}>*</span>}
                     </label>
-                    <input
-                      type="text"
-                      value={socket.value || ''}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        updateNodeSocket(id, socket.id, e.target.value);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder={`Enter ${socket.argumentFlag}...`}
-                      style={{
-                        width: '100%',
-                        padding: '4px 6px',
-                        fontSize: '11px',
-                        background: '#2a2a2a',
-                        border: '1px solid #444',
-                        borderRadius: '3px',
-                        color: '#ddd',
-                        textAlign: 'left'
-                      }}
-                    />
+                    {/* If this input socket is the TARGET of any edge, lock editing here and allow the source (output) to control the value */}
+                    {(() => {
+                      const isTargetConnected = edges.some(
+                        (edge) => edge.target === id && edge.targetHandle === socket.id
+                      );
+
+                      return (
+                        <input
+                          type="text"
+                          className="nodrag nopan"
+                          value={socket.value || ''}
+                          onChange={(e) => {
+                            // Only allow changes when not target-connected
+                            if (isTargetConnected) {
+                              return;
+                            }
+                            handleInputChange(socket.id, e.target.value);
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder={`Enter ${socket.argumentFlag}...`}
+                          disabled={isTargetConnected}
+                          style={{
+                            width: '100%',
+                            padding: '4px 6px',
+                            fontSize: '11px',
+                            background: isTargetConnected ? '#222' : '#2a2a2a',
+                            border: isTargetConnected ? '1px dashed #555' : '1px solid #444',
+                            borderRadius: '3px',
+                            color: isTargetConnected ? '#888' : '#ddd',
+                            textAlign: 'left',
+                            cursor: isTargetConnected ? 'not-allowed' : 'text',
+                          }}
+                        />
+                      );
+                    })()}
                   </div>
                 ))}
                 
                 {/* Expand/Collapse Button */}
                 {shouldCollapse && hasOptionalArgs && (
                   <button
+                    className="nodrag"
                     onClick={(e) => {
                       e.stopPropagation();
                       setShowAllArgs(!showAllArgs);
@@ -227,18 +251,28 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                     }}>
                       {socket.argumentFlag}
                     </div>
-                    <div style={{
-                      padding: '4px 6px',
-                      fontSize: '11px',
-                      background: '#1a1a1a',
-                      border: '1px solid #444',
-                      borderRadius: '3px',
-                      color: '#888',
-                      textAlign: 'right',
-                      fontStyle: 'italic'
-                    }}>
-                      {socket.value || 'output'}
-                    </div>
+                    <input
+                      type="text"
+                      className="nodrag nopan"
+                      value={socket.value || ''}
+                      onChange={(e) => {
+                        handleInputChange(socket.id, e.target.value);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="output value"
+                      style={{
+                        width: '100%',
+                        padding: '4px 6px',
+                        fontSize: '11px',
+                        background: '#2a2a2a',
+                        border: '1px solid #444',
+                        borderRadius: '3px',
+                        color: '#ddd',
+                        textAlign: 'right',
+                        cursor: 'text',
+                      }}
+                    />
                   </div>
                 ))}
               </div>

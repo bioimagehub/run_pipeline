@@ -1,0 +1,66 @@
+{
+    "id":  "convert_to_tif",
+    "name":  "Convert to TIF",
+    "icon":  "🔄",
+    "color":  "#569cd6",
+    "description":  "Convert image files to TIF format with optional compression",
+    "environment":  "uv@3.11:convert-to-tif",
+    "executable":  "python",
+    "script":  "standard_code/python/convert_to_tif.py",
+    "helpCommand":  "python standard_code/python/convert_to_tif.py --help",
+    "arguments":  [
+                      {
+                          "flag":  "--input-search-pattern",
+                          "type":  "glob_pattern",
+                          "socketSide":  "input",
+                          "isRequired":  true,
+                          "defaultValue":  "%YAML%/input/*.nd2",
+                          "description":  "Glob pattern for input files to convert (can also accept file_list from File Selector) use /**/*.tif to search subfolders",
+                          "validation":  "must_exist",
+                          "userOverride":  false
+                      },
+                      {
+                          "flag":  "--collapse-delimiter",
+                          "type":  "str",
+                          "socketSide":  "input",
+                          "isRequired":  false,
+                          "defaultValue":  "__",
+                          "description":  "Delimiter for collapsing subfolder structure in output filenames when using \u0027**\u0027 (default: __). Example: \u0027folder1/folder2/image.tif\u0027 becomes \u0027folder1__folder2__image.tif\u0027",
+                          "validation":  "",
+                          "userOverride":  false
+                      },
+                      {
+                          "flag":  "--compression",
+                          "type":  "int",
+                          "socketSide":  "input",
+                          "isRequired":  false,
+                          "defaultValue":  "0",
+                          "description":  "Compression level (0-9)",
+                          "validation":  "range:0-9",
+                          "userOverride":  false
+                      },
+                      {
+                          "flag":  "--output-tif-files",
+                          "type":  "path",
+                          "socketSide":  "output",
+                          "isRequired":  true,
+                          "defaultValue":  "%YAML%/input_tif/*.tif",
+                          "description":  "Output folder for converted TIF files",
+                          "validation":  "create_if_missing",
+                          "userOverride":  false
+                      },
+                      {
+                          "flag":  "--output-yaml-files",
+                          "type":  "path",
+                          "socketSide":  "output",
+                          "isRequired":  true,
+                          "defaultValue":  "%YAML%/input_tif/*_metadata.yaml",
+                          "description":  "Output folder for converted YAML files",
+                          "validation":  "create_if_missing",
+                          "userOverride":  false
+                      }
+                  ],
+    "version":  "1.0.0",
+    "author":  "BIPHUB",
+    "lastParsed":  "2025-01-25T10:30:00Z"
+}

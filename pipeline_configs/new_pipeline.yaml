@@ -1,51 +1,5 @@
 pipeline_name: Pipeline
 _designer_metadata:
-    nodes:
-        - id: c14869ea-1d17-41e7-aa5d-6291c89a361b
-          position:
-            x: -150
-            "y": 180
-          size:
-            width: 300
-            height: 150
-        - id: d5a93303-e356-4556-9782-a65853d57fa3
-          position:
-            x: 285
-            "y": 180
-          size:
-            width: 300
-            height: 150
-    connections:
-        - id: reactflow__edge-c14869ea-1d17-41e7-aa5d-6291c89a361ba40bd3f5-6bc0-4ca3-af03-11d3879a750b-d5a93303-e356-4556-9782-a65853d57fa344d09680-3f48-4142-8684-f0d837b5c034
-          from_node_id: c14869ea-1d17-41e7-aa5d-6291c89a361b
-          to_node_id: d5a93303-e356-4556-9782-a65853d57fa3
-          from_socket_id: a40bd3f5-6bc0-4ca3-af03-11d3879a750b
-          to_socket_id: 44d09680-3f48-4142-8684-f0d837b5c034
-run:
-    - name: Convert to TIF
-      environment: uv@3.11:convert-to-tif
-      commands:
-        - python
-        - standard_code/python/convert_to_tif.py
-        - --input-search-pattern: ./input/*.ims
-        - --compression: "6"
-        - --output-folder: ./output/tifs
-      script: standard_code/python/convert_to_tif.py
-      _node_id: c14869ea-1d17-41e7-aa5d-6291c89a361b
-    - name: Filter Image
-      environment: uv@3.11:filter-image
-      commands:
-        - python
-        - standard_code/python/filter_image.py
-        - --input-pattern: ./output/tifs
-        - --filter-type: gaussian
-        - --sigma: "1.0"
-        - --size: "3"
-        - --sigma-spatial: "5.0"
-        - --sigma-intensity: "50.0"
-        - --amount: "1.0"
-        - --tophat-mode: white
-        - --axis: "-1"
-        - --output-folder: ./output/filtered
-      script: standard_code/python/filter_image.py
-      _node_id: d5a93303-e356-4556-9782-a65853d57fa3
+    nodes: []
+    connections: []
+run: []

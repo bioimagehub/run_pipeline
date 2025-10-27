@@ -1,0 +1,68 @@
+{
+    "id": "mask_substract",
+    "name": "Substract Nucleus from whole cell _mask.cp",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_substract",
+    "environment": "segment_threshold",
+    "executable": "python",
+    "script": "standard_code/python/mask_substract.py",
+    "helpCommand": "python standard_code/python/mask_substract.py --help",
+    "arguments": [
+        {
+            "flag": "--mask1-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./cellpose_cyt/*_cp_masks.tif",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask2-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./cellpose_nuc/*_cp_masks.tif",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "./output_summary",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-suffix",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "_cyt.tif",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-suffix2",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "_nuc.tif",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:10.124501",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

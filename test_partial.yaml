@@ -1,0 +1,8 @@
+run:
+- name: Test partial arguments
+  environment: test_env
+  commands:
+  - python
+  - ./standard_code/python/rename_files.py
+  - --directory: ./input
+  # Missing optional: --search-term and --replace-term

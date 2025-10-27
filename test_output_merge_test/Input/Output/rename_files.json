@@ -1,0 +1,48 @@
+{
+    "id": "rename_files",
+    "name": "Test partial arguments",
+    "icon": "\ud83d\udcc1",
+    "color": "#4ec9b0",
+    "description": "CLI tool: rename_files",
+    "environment": "test_env",
+    "executable": "python",
+    "script": "standard_code/python/rename_files.py",
+    "helpCommand": "python standard_code/python/rename_files.py --help",
+    "arguments": [
+        {
+            "flag": "--directory",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./input",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-term",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "SEARCH_TERM The term to search for in the file names",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--replace-term",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "REPLACE_TERM The term to replace the search term with in the file names",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:06:21.440853",
+    "outputFilesDefined": false,
+    "category": "Input/Output"
+}

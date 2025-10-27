@@ -1,0 +1,28 @@
+{
+    "id": "delete_folder",
+    "name": "Delete Folder",
+    "icon": "\ud83d\udcc1",
+    "color": "#4ec9b0",
+    "description": "CLI tool: delete_folder",
+    "environment": "uv@3.11:delete_folder",
+    "executable": "python",
+    "script": "standard_code/python/delete_folder.py",
+    "helpCommand": "python standard_code/python/delete_folder.py --help",
+    "arguments": [
+        {
+            "flag": "--folders",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "FOLDERS [FOLDERS ...] List of folder paths to delete",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T14:07:06.814067",
+    "outputFilesDefined": false,
+    "category": "Input/Output"
+}
