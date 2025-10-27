@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import MenuBar from './components/MenuBar';
 import Canvas from './components/Canvas';
 import CommandExplorer from './components/CommandExplorer';
-import PropertiesPanel from './components/PropertiesPanel';
+import FileBrowser from './components/FileBrowser';
 import { usePipelineStore } from './stores/pipelineStore';
 import { GetStartupFilePath } from '../wailsjs/go/main/App';
 import './styles/globals.css';
@@ -79,9 +79,9 @@ function App() {
     <div className="app-container">
       <MenuBar />
       <div className="app-content">
-        {/* Left Panel: Command Explorer (20%) */}
+        {/* Left Panel: File Browser (20%) */}
         <aside className="left-panel">
-          <CommandExplorer />
+          <FileBrowser />
         </aside>
 
         {/* Center Panel: Canvas (60%) */}
@@ -89,9 +89,9 @@ function App() {
           <Canvas />
         </main>
 
-        {/* Right Panel: Properties (20%) */}
+        {/* Right Panel: Available Nodes (20%) */}
         <aside className="right-panel">
-          <PropertiesPanel />
+          <CommandExplorer />
         </aside>
       </div>
     </div>

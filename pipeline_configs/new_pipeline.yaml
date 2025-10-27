@@ -1,3 +1,51 @@
-# Pipeline created with Pipeline Designer
+pipeline_name: Pipeline
+_designer_metadata:
+    nodes:
+        - id: 33260c66-088e-4815-abe2-e81a386e83f6
+          position:
+            x: 105
+            "y": 180
+          size:
+            width: 300
+            height: 150
+        - id: a85c0786-00c1-431b-ada3-1671c6d33b1f
+          position:
+            x: 555
+            "y": 180
+          size:
+            width: 300
+            height: 150
+    connections:
+        - id: reactflow__edge-33260c66-088e-4815-abe2-e81a386e83f6a68b1e04-df06-49c6-b8d5-bfebf8e2f896-a85c0786-00c1-431b-ada3-1671c6d33b1ff2c02e23-d779-42fc-a5e3-324ff67f7b50
+          from_node_id: 33260c66-088e-4815-abe2-e81a386e83f6
+          to_node_id: a85c0786-00c1-431b-ada3-1671c6d33b1f
+          from_socket_id: a68b1e04-df06-49c6-b8d5-bfebf8e2f896
+          to_socket_id: f2c02e23-d779-42fc-a5e3-324ff67f7b50
 run:
-  # Add your pipeline steps here
+    - name: Convert to TIF
+      environment: uv@3.11:convert-to-tif
+      commands:
+        - python
+        - standard_code/python/convert_to_tif.py
+        - --input-search-pattern: ./input/*.ims
+        - --compression: "6"
+        - --output-folder: ./output/tifs
+      script: standard_code/python/convert_to_tif.py
+      _node_id: 33260c66-088e-4815-abe2-e81a386e83f6
+    - name: Filter Image
+      environment: uv@3.11:filter-image
+      commands:
+        - python
+        - standard_code/python/filter_image.py
+        - --input-pattern: ./output/tifs
+        - --filter-type: gaussian
+        - --sigma: "1.0"
+        - --size: "3"
+        - --sigma-spatial: "5.0"
+        - --sigma-intensity: "50.0"
+        - --amount: "1.0"
+        - --tophat-mode: white
+        - --axis: "-1"
+        - --output-folder: ./output/filtered
+      script: standard_code/python/filter_image.py
+      _node_id: a85c0786-00c1-431b-ada3-1671c6d33b1f

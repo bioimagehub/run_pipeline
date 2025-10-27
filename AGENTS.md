@@ -178,6 +178,10 @@ This will help me tailor the explanation to your level."
 
 **Behavior:**
 - **Work continuously without asking for feedback or confirmation**
+- make a 10 point shallow plan for the project
+- Ask for clarifications if you need feedback 
+- Make a detailed plan for the overall task. save as a TODO_implement_xyz.md file
+- Follow that plan 
 - Execute commands, make edits, and solve problems independently
 - Use comprehensive error handling and graceful recovery
 - Document all actions taken in detailed commit-like summaries
