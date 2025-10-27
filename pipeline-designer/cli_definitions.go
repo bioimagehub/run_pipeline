@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -214,7 +215,111 @@ func CreateNodeFromDefinition(definition *CLIDefinition, position Point) *CLINod
 		}
 	}
 
+	// Resolve placeholder defaults in output sockets based on input socket defaults
+	resolveDefaultPlaceholders(node)
+
 	return node
+}
+
+// resolveDefaultPlaceholders resolves placeholder templates in output socket defaults
+// This is called ONCE when a node is created to set up proper default values
+func resolveDefaultPlaceholders(node *CLINode) {
+	// Build a map of input socket default values for quick lookup
+	inputDefaults := make(map[string]string)
+	for _, inputSocket := range node.InputSockets {
+		// Convert flag to placeholder format: --output-folder -> output_folder
+		flagName := strings.TrimPrefix(inputSocket.ArgumentFlag, "--")
+		flagName = strings.ReplaceAll(flagName, "-", "_")
+		inputDefaults[flagName] = inputSocket.DefaultValue
+	}
+
+	// Resolve placeholders in output socket defaults
+	for i := range node.OutputSockets {
+		socket := &node.OutputSockets[i]
+		if socket.DefaultValue == "" {
+			continue
+		}
+
+		// Check if default value contains placeholders
+		if !strings.Contains(socket.DefaultValue, "<") || !strings.Contains(socket.DefaultValue, ">") {
+			continue
+		}
+
+		resolved := socket.DefaultValue
+
+		// Replace all placeholders in the default value
+		for flagName, inputDefault := range inputDefaults {
+			// Handle transformations like <input_search_pattern:dirname>
+			transformPattern := fmt.Sprintf("<%s:([^>]+)>", flagName)
+			re := regexp.MustCompile(transformPattern)
+			resolved = re.ReplaceAllStringFunc(resolved, func(match string) string {
+				submatch := re.FindStringSubmatch(match)
+				if len(submatch) > 1 {
+					transform := submatch[1]
+					return applyDefaultTransform(inputDefault, transform)
+				}
+				return match
+			})
+
+			// Simple placeholder replacement: <output_folder> -> actual value
+			placeholder := fmt.Sprintf("<%s>", flagName)
+			resolved = strings.ReplaceAll(resolved, placeholder, inputDefault)
+		}
+
+		// Update the default value with the resolved version
+		socket.DefaultValue = resolved
+	}
+}
+
+// applyDefaultTransform applies transformations for default value resolution
+func applyDefaultTransform(value, transform string) string {
+	if value == "" {
+		return ""
+	}
+
+	switch transform {
+	case "dirname":
+		// Extract directory name from glob pattern
+		// e.g., "%YAML%/input/**/*.nd2" -> "%YAML%/input"
+		dir := value
+
+		// Find the position of glob patterns (*, ?, [)
+		globChars := []rune{'*', '?', '['}
+		globIndex := -1
+		for i, ch := range dir {
+			for _, globCh := range globChars {
+				if ch == globCh {
+					globIndex = i
+					break
+				}
+			}
+			if globIndex != -1 {
+				break
+			}
+		}
+
+		if globIndex != -1 {
+			// Get everything before the glob pattern
+			dir = dir[:globIndex]
+			// Remove any trailing slashes or partial path segments
+			dir = strings.TrimRight(dir, "/\\")
+		}
+
+		return dir
+
+	case "basename":
+		// Extract filename without extension
+		parts := strings.Split(value, "/")
+		filename := parts[len(parts)-1]
+		extIndex := strings.LastIndex(filename, ".")
+		if extIndex != -1 {
+			filename = filename[:extIndex]
+		}
+		return filename
+
+	default:
+		return value
+	}
 }
 
 // generateUUID generates a proper UUID

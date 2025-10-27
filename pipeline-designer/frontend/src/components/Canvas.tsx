@@ -109,6 +109,65 @@ const Canvas: React.FC = () => {
     [onEdgesChange, setEdges, setLocalEdges]
   );
 
+  // Helper function to resolve placeholders in output socket values for connections
+  const resolveOutputValue = (outputSocket: any, sourceNode: any): string => {
+    if (!outputSocket || !sourceNode) return '';
+    
+    // If socket has a custom value set by user, use that
+    if (outputSocket.value) {
+      return outputSocket.value;
+    }
+    
+    // Otherwise resolve the default value placeholders
+    let resolved = outputSocket.defaultValue || '';
+    
+    if (!resolved || !sourceNode.data || !sourceNode.data.inputSockets) {
+      return resolved;
+    }
+    
+    // Resolve placeholders using source node's input socket values
+    sourceNode.data.inputSockets.forEach((inputSocket: any) => {
+      const flagName = inputSocket.argumentFlag.replace(/^--/, '').replace(/-/g, '_');
+      const inputValue = inputSocket.value || inputSocket.defaultValue || '';
+      
+      // Handle transformations like <input_search_pattern:dirname>
+      const transformRegex = new RegExp(`<${flagName}:([^>]+)>`, 'g');
+      resolved = resolved.replace(transformRegex, (match: string, transform: string) => {
+        return applyTransform(inputValue, transform);
+      });
+      
+      // Simple placeholder replacement
+      const placeholder = `<${flagName}>`;
+      resolved = resolved.split(placeholder).join(inputValue);
+    });
+    
+    return resolved;
+  };
+
+  // Helper function to apply transformations
+  const applyTransform = (value: string, transform: string): string => {
+    if (!value) return '';
+    
+    switch (transform) {
+      case 'dirname': {
+        let dir = value;
+        const globIndex = dir.search(/[\*\?\[]/);
+        if (globIndex !== -1) {
+          dir = dir.substring(0, globIndex);
+          dir = dir.replace(/\/*$/, '');
+        }
+        return dir;
+      }
+      case 'basename': {
+        const parts = value.split('/');
+        const filename = parts[parts.length - 1];
+        return filename.replace(/\.[^.]*$/, '');
+      }
+      default:
+        return value;
+    }
+  };
+
   // Handle connection between nodes
   const onConnect = useCallback(
     (params: Connection) => {
@@ -120,10 +179,13 @@ const Canvas: React.FC = () => {
         const sourceNode = nodes.find(n => n.id === params.source);
         if (sourceNode && params.sourceHandle) {
           const outputSocket = sourceNode.data.outputSockets?.find(s => s.id === params.sourceHandle);
-          if (outputSocket && outputSocket.value && params.target && params.targetHandle) {
-            // Update the target socket with the source socket's value
+          if (outputSocket && params.target && params.targetHandle) {
+            // Resolve the output socket value (handles placeholders)
+            const resolvedValue = resolveOutputValue(outputSocket, sourceNode);
+            
+            // Update the target socket with the resolved value
             setTimeout(() => {
-              updateNodeSocket(params.target!, params.targetHandle!, outputSocket.value);
+              updateNodeSocket(params.target!, params.targetHandle!, resolvedValue);
             }, 0);
           }
         }

@@ -108,6 +108,16 @@
             "description": "Glob pattern for output TIF files. <output_folder> and <output_file_name_extension> are set by the corresponding input arguments. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
+        },
+                {
+            "flag": "Yaml files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*<output_file_name_extension>_metadata.yaml",
+            "description": "Glob pattern for output YAML files. <output_folder> and <output_file_name_extension> are set by the corresponding input arguments. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
         }
 
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -164,13 +166,16 @@ func SaveYAMLPipeline(pipeline *Pipeline, filePath string) error {
 		}
 		yamlPipeline.DesignerMetadata.Nodes = append(yamlPipeline.DesignerMetadata.Nodes, nodeMeta)
 
-		// Convert node to YAML step
+		// Convert node to YAML step with commands and expected output files
+		commands, expectedOutputFiles := convertSocketsToCommandsAndOutputs(node, pipeline)
+
 		step := YAMLStep{
-			Name:        node.Name,
-			Environment: node.Environment,
-			Script:      node.Script,
-			NodeID:      node.ID,
-			Commands:    convertSocketsToCommands(node, pipeline),
+			Name:                node.Name,
+			Environment:         node.Environment,
+			Script:              node.Script,
+			NodeID:              node.ID,
+			Commands:            commands,
+			ExpectedOutputFiles: expectedOutputFiles,
 		}
 
 		yamlPipeline.Run = append(yamlPipeline.Run, step)
@@ -240,9 +245,11 @@ func parseCommandsToSockets(node *CLINode, commands interface{}) {
 	}
 }
 
-// convertSocketsToCommands converts node sockets back to YAML commands format
-func convertSocketsToCommands(node CLINode, pipeline *Pipeline) []interface{} {
+// convertSocketsToCommandsAndOutputs converts node sockets back to YAML commands format
+// Returns commands (input sockets only) and expected output files (output sockets)
+func convertSocketsToCommandsAndOutputs(node CLINode, pipeline *Pipeline) ([]interface{}, map[string]string) {
 	commands := make([]interface{}, 0)
+	expectedOutputFiles := make(map[string]string)
 
 	// Add python interpreter if needed
 	if node.Environment != "" && node.Environment != "imageJ" {
@@ -259,21 +266,16 @@ func convertSocketsToCommands(node CLINode, pipeline *Pipeline) []interface{} {
 		if socket.SkipEmit {
 			continue
 		}
-		value := socket.Value
 
-		// Check if this socket is connected
-		for _, conn := range pipeline.Connections {
-			if conn.ToSocketID == socket.ID {
-				// Find the source socket value
-				for _, sourceNode := range pipeline.Nodes {
-					for _, sourceSocket := range sourceNode.OutputSockets {
-						if sourceSocket.ID == conn.FromSocketID {
-							value = sourceSocket.Value
-							break
-						}
-					}
-				}
-			}
+		// Use socket.Value if set, otherwise use defaultValue
+		value := socket.Value
+		if value == "" {
+			value = socket.DefaultValue
+		}
+
+		// Skip empty values (typical for bool/flag arguments like --dry-run, --version, etc.)
+		if value == "" {
+			continue
 		}
 
 		// Add as map entry
@@ -282,17 +284,121 @@ func convertSocketsToCommands(node CLINode, pipeline *Pipeline) []interface{} {
 		commands = append(commands, argMap)
 	}
 
-	// Add output socket arguments
+	// Add output socket values to expected_output_files instead of commands
 	for _, socket := range node.OutputSockets {
 		if socket.SkipEmit {
 			continue
 		}
-		argMap := make(map[string]interface{})
-		argMap[socket.ArgumentFlag] = socket.Value
-		commands = append(commands, argMap)
+
+		// Use socket.Value if set, otherwise use defaultValue (which should already be resolved)
+		value := socket.Value
+		if value == "" {
+			value = socket.DefaultValue
+		}
+
+		// Skip empty values (though output files should typically have values)
+		if value == "" {
+			continue
+		}
+
+		// Add to expected output files map
+		expectedOutputFiles[socket.ArgumentFlag] = value
 	}
 
-	return commands
+	return commands, expectedOutputFiles
+}
+
+// resolveOutputSocketPlaceholders resolves placeholders in output socket values
+// based on the node's input socket values
+func resolveOutputSocketPlaceholders(outputValue string, node CLINode) string {
+	if outputValue == "" {
+		return outputValue
+	}
+
+	resolved := outputValue
+
+	// Iterate through all input sockets to find values to substitute
+	for _, inputSocket := range node.InputSockets {
+		// Get the input socket value (prefer value, fallback to defaultValue)
+		inputValue := inputSocket.Value
+		if inputValue == "" {
+			inputValue = inputSocket.DefaultValue
+		}
+
+		// Convert flag to placeholder format: --output-folder -> <output_folder>
+		flagName := inputSocket.ArgumentFlag
+		flagName = strings.TrimPrefix(flagName, "--")
+		flagName = strings.ReplaceAll(flagName, "-", "_")
+
+		// Handle transformations like <input_search_pattern:dirname>
+		transformPattern := fmt.Sprintf("<%s:([^>]+)>", flagName)
+		re := regexp.MustCompile(transformPattern)
+		resolved = re.ReplaceAllStringFunc(resolved, func(match string) string {
+			submatch := re.FindStringSubmatch(match)
+			if len(submatch) > 1 {
+				transform := submatch[1]
+				return applyTransform(inputValue, transform)
+			}
+			return match
+		})
+
+		// Simple placeholder replacement: <output_folder> -> actual value
+		placeholder := fmt.Sprintf("<%s>", flagName)
+		resolved = strings.ReplaceAll(resolved, placeholder, inputValue)
+	}
+
+	return resolved
+}
+
+// applyTransform applies a transformation to a value
+func applyTransform(value, transform string) string {
+	if value == "" {
+		return ""
+	}
+
+	switch transform {
+	case "dirname":
+		// Extract directory name from glob pattern
+		// e.g., "%YAML%/input/**/*.nd2" -> "%YAML%/input"
+		dir := value
+
+		// Find the position of glob patterns (*, ?, [)
+		globChars := []rune{'*', '?', '['}
+		globIndex := -1
+		for i, ch := range dir {
+			for _, globCh := range globChars {
+				if ch == globCh {
+					globIndex = i
+					break
+				}
+			}
+			if globIndex != -1 {
+				break
+			}
+		}
+
+		if globIndex != -1 {
+			// Get everything before the glob pattern
+			dir = dir[:globIndex]
+			// Remove any trailing slashes or partial path segments
+			dir = strings.TrimRight(dir, "/\\")
+		}
+
+		return dir
+
+	case "basename":
+		// Extract filename without extension
+		parts := strings.Split(value, "/")
+		filename := parts[len(parts)-1]
+		extIndex := strings.LastIndex(filename, ".")
+		if extIndex != -1 {
+			filename = filename[:extIndex]
+		}
+		return filename
+
+	default:
+		return value
+	}
 }
 
 // resolveSocketValue finds the value of a connected socket

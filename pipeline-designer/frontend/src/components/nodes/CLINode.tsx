@@ -111,6 +111,43 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     return values;
   }, [data.inputSockets]);
   
+  // Pre-calculate all resolved output values (using resolved input values)
+  const resolvedOutputValues = React.useMemo(() => {
+    const values: { [socketId: string]: string } = {};
+    
+    if (!data.outputSockets) return values;
+    
+    // Output sockets resolve placeholders from input sockets
+    data.outputSockets.forEach((socket) => {
+      if (socket.defaultValue && socket.defaultValue.includes('<')) {
+        let resolved = socket.defaultValue;
+        
+        // Resolve placeholders from input sockets using their resolved values
+        data.inputSockets?.forEach((inputSocket) => {
+          const flagName = inputSocket.argumentFlag.replace(/^--/, '').replace(/-/g, '_');
+          const inputValue = resolvedInputValues[inputSocket.id] || '';
+          
+          // Handle transformations like <output_folder:dirname>
+          const transformRegex = new RegExp(`<${flagName}:([^>]+)>`, 'g');
+          resolved = resolved.replace(transformRegex, (match, transform) => {
+            return applyTransform(inputValue, transform);
+          });
+          
+          // Simple placeholder replacement
+          const placeholder = `<${flagName}>`;
+          resolved = resolved.split(placeholder).join(inputValue);
+        });
+        
+        values[socket.id] = resolved;
+      } else {
+        // No placeholder, use value or default
+        values[socket.id] = socket.value || socket.defaultValue || '';
+      }
+    });
+    
+    return values;
+  }, [data.outputSockets, resolvedInputValues]);
+
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
       'Segmentation': '#c586c0',
@@ -370,8 +407,8 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
             {data.outputSockets && data.outputSockets.length > 0 ? (
               <div>
                 {data.outputSockets.map((socket) => {
-                  // Resolve placeholders for display
-                  const displayValue = resolveOutputPlaceholders(socket.value || '');
+                  // Use pre-calculated resolved value
+                  const displayValue = resolvedOutputValues[socket.id] || socket.value || '';
                   
                   return (
                     <div key={socket.id} style={{ position: 'relative', marginBottom: '8px' }}>

@@ -148,18 +148,19 @@ type Pipeline struct {
 // YAMLStep represents a step in the YAML pipeline format (for compatibility with run_pipeline.go)
 // YAMLStep represents a single step in the pipeline
 type YAMLStep struct {
-	Name          string            `yaml:"name"`
-	Type          string            `yaml:"type,omitempty"`
-	Message       string            `yaml:"message,omitempty"`
-	Environment   string            `yaml:"environment,omitempty"`
-	Commands      interface{}       `yaml:"commands,omitempty"` // Can be []interface{} with strings and maps
-	Command       string            `yaml:"command,omitempty"`
-	Script        string            `yaml:"script,omitempty"`
-	Args          map[string]string `yaml:"args,omitempty"`
-	NodeID        string            `yaml:"_node_id,omitempty"` // Link to visual node
-	LastProcessed string            `yaml:"last_processed,omitempty"`
-	CodeVersion   string            `yaml:"code_version,omitempty"`
-	RunDuration   string            `yaml:"run_duration,omitempty"`
+	Name                string            `yaml:"name"`
+	Type                string            `yaml:"type,omitempty"`
+	Message             string            `yaml:"message,omitempty"`
+	Environment         string            `yaml:"environment,omitempty"`
+	Commands            interface{}       `yaml:"commands,omitempty"` // Can be []interface{} with strings and maps
+	Command             string            `yaml:"command,omitempty"`
+	Script              string            `yaml:"script,omitempty"`
+	Args                map[string]string `yaml:"args,omitempty"`
+	ExpectedOutputFiles map[string]string `yaml:"expected_output_files,omitempty"` // Output socket values
+	NodeID              string            `yaml:"_node_id,omitempty"`              // Link to visual node
+	LastProcessed       string            `yaml:"last_processed,omitempty"`
+	CodeVersion         string            `yaml:"code_version,omitempty"`
+	RunDuration         string            `yaml:"run_duration,omitempty"`
 }
 
 // VisualNodeMetadata stores visual layout information for a node
