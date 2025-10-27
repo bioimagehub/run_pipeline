@@ -158,7 +158,7 @@ func (a *App) LoadPipeline(filePath string) (*Pipeline, error) {
 	if debugMode {
 		appLogger.Printf("[DEBUG] LoadPipeline called with path: %s\n", filePath)
 	}
-	pipeline, err := LoadYAMLPipeline(filePath)
+	pipeline, err := LoadYAMLPipeline(filePath, a.definitionsManager)
 	if err != nil {
 		appLogger.Printf("[ERROR] Failed to load pipeline: %v\n", err)
 		return nil, err

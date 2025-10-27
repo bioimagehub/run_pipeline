@@ -1,14 +1,115 @@
 {
     "id": "segment_threshold",
     "name": "Segment Threshold",
-    "icon": "\ud83d\udd2c",
+    "icon": "🔬",
     "color": "#c586c0",
     "description": "CLI tool: segment_threshold",
     "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/segment_threshold.py",
     "helpCommand": "python standard_code/python/segment_threshold.py --help",
-    "arguments": [],
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./input/*.tif",
+            "description": "Glob pattern to search for input files (e.g. './data/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "./output/masks",
+            "description": "Output folder for processed files",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--channels",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "List of channels to process (comma-separated, e.g., 0,1,2)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--threshold-methods",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "li",
+            "description": "Thresholding method(s) (comma-separated, e.g., li,otsu)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--median-filter-sizes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "10",
+            "description": "Size(s) of the median filter (comma-separated, e.g., 10,20)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--min-sizes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "10000",
+            "description": "Minimum size for processing (comma-separated)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--max-sizes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "55000",
+            "description": "Maximum size for processing (comma-separated)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Segmentation masks",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*_mask.tif",
+            "description": "Glob pattern for segmentation mask output TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Label info YAML files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*_mask_labelinfo.yaml",
+            "description": "Glob pattern for label info YAML files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "ImageJ ROI ZIP files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*_mask.zip",
+            "description": "Glob pattern for ImageJ ROI ZIP files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
     "version": "1.0.0",
     "author": "BIPHUB",
     "lastParsed": "2025-10-27T16:38:35.676059",

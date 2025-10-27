@@ -1,17 +1,68 @@
 {
     "id": "unsharp_filter",
-    "name": "Unsharp Filter",
-    "icon": "\ud83c\udfa8",
+    "name": "Unsharp Mask Filter",
+    "icon": "🎨",
     "color": "#569cd6",
     "description": "CLI tool: unsharp_filter",
     "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/unsharp_filter.py",
     "helpCommand": "python standard_code/python/unsharp_filter.py --help",
-    "arguments": [],
+    "arguments": [
+        {
+            "flag": "--input-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./input/*.tif",
+            "description": "Glob pattern for input images (e.g., './input/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./output/filtered",
+            "description": "Output folder for filtered images",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--sigma",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "1.0",
+            "description": "Sigma for Gaussian blur (default: 1.0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--amount",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "1.0",
+            "description": "Amount of sharpening (typically 0.5-2.0, default: 1.0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Filtered TIF files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_unsharp.tif",
+            "description": "Glob pattern for unsharp mask filtered output TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T16:38:12.169594",
+    "lastParsed": "2025-10-27T16:38:06.204997",
     "outputFilesDefined": false,
     "category": "Image Processing"
 }

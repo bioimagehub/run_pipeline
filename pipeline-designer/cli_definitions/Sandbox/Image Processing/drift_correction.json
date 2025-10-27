@@ -1,14 +1,165 @@
 {
     "id": "drift_correction",
     "name": "Drift Correction",
-    "icon": "\ud83c\udfa8",
+    "icon": "🎨",
     "color": "#569cd6",
     "description": "CLI tool: drift_correction",
     "environment": "uv@3.11:drift-correct",
     "executable": "python",
     "script": "standard_code/python/drift_correction.py",
     "helpCommand": "python standard_code/python/drift_correction.py --help",
-    "arguments": [],
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./input/*.tif",
+            "description": "Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./output/drift_corrected",
+            "description": "Output folder for corrected images",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-suffix",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "_drift_corrected",
+            "description": "Suffix to add to output filenames (default: _drift_corrected). Example: '_cor' or '_phase_cor'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--collapse-delimiter",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "__",
+            "description": "Delimiter for collapsing subfolder structure in output filenames when using '**' (default: __). Example: 'folder1/folder2/image.tif' becomes 'folder1__folder2__image.tif'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--method",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "phase_cross_correlation",
+            "description": "{phase_cross_correlation,stackreg} Registration method (default: phase_cross_correlation)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--reference-channel",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "Channel index to use for registration (0-based, default: 0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--reference",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "first",
+            "description": "{first,previous,median} Reference frame for registration (default: first). 'first' = register all to first frame, 'previous' = register each to previous frame, 'median' = register to median projection",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-save-tmats",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Do not save transformation matrices (default: False)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-gpu",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable GPU acceleration",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--crop-fraction",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "1.0",
+            "description": "Fraction of image to use for registration (0.0-1.0, default: 1.0). Values < 1.0 crop edges to speed up registration (e.g., 0.8 uses center 80%)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--upsample-factor",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "10",
+            "description": "Subpixel accuracy for phase_cross_correlation (10 = 0.1 pixel, default: 10)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--max-shift",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "50.0",
+            "description": "Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Drift corrected TIF files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*<output_suffix>.tif",
+            "description": "Glob pattern for drift-corrected output TIF files. <output_folder> and <output_suffix> are set by the corresponding input arguments. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Transformation matrices",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*<output_suffix>_tmats.npy",
+            "description": "Glob pattern for transformation matrix files (NPY format). <output_folder> and <output_suffix> are set by the corresponding input arguments. Only saved if --no-save-tmats is not set. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
     "version": "1.0.0",
     "author": "BIPHUB",
     "lastParsed": "2025-10-27T16:37:15.274174",

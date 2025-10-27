@@ -1,14 +1,75 @@
 {
     "id": "track_indexed_mask",
     "name": "Track Indexed Mask",
-    "icon": "\ud83d\udd2c",
+    "icon": "🔬",
     "color": "#c586c0",
     "description": "CLI tool: track_indexed_mask",
     "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/track_indexed_mask.py",
     "helpCommand": "python standard_code/python/track_indexed_mask.py --help",
-    "arguments": [],
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./input/*.tif",
+            "description": "Glob pattern to search for input files (e.g. './data/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--tracking-channel",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "Channel to use for tracking (default: 0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-file-name-extension",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "_tracked",
+            "description": "Extension to append to output file name (default: '_tracked')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--collapse-delimiter",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "__",
+            "description": "Delimiter for flattening output filenames",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Do not use parallel processing",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Tracked mask files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern_folder>_tracked/**/*<output_file_name_extension>.tif",
+            "description": "Glob pattern for tracked mask output TIF files. Output folder is derived from input pattern with '_tracked' suffix. <output_file_name_extension> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
     "version": "1.0.0",
     "author": "BIPHUB",
     "lastParsed": "2025-10-27T16:38:37.708213",

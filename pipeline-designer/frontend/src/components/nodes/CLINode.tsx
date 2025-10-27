@@ -305,8 +305,38 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
       )}
 
       {/* Node Footer */}
-      <div className="node-footer">
+      <div className="node-footer" style={{ position: 'relative', height: '24px' }}>
         <span className="environment-badge">{data.environment}</span>
+        {/* Generic anchor: lower left (input) */}
+        <Handle
+          type="target"
+          position={Position.Bottom}
+          id={`generic-in-${id}`}
+          style={{
+            left: 0,
+            bottom: 0,
+            background: '#666',
+            borderRadius: '50%',
+            width: '12px',
+            height: '12px',
+            position: 'absolute',
+          }}
+        />
+        {/* Generic anchor: lower right (output) */}
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id={`generic-out-${id}`}
+          style={{
+            right: 0,
+            bottom: 0,
+            background: '#666',
+            borderRadius: '50%',
+            width: '12px',
+            height: '12px',
+            position: 'absolute',
+          }}
+        />
       </div>
     </div>
   );

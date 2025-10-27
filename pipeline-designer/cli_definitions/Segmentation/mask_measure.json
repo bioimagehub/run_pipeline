@@ -31,12 +31,12 @@
         },
         {
             "flag": "--output",
-            "type": "string",
-            "socketSide": "output",
+            "type": "path",
+            "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "",
+            "defaultValue": "./output/measurements",
             "description": "Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the mask.",
-            "validation": "",
+            "validation": "create_if_missing",
             "userOverride": false
         },
         {
@@ -56,6 +56,16 @@
             "isRequired": false,
             "defaultValue": "",
             "description": "Disable parallel processing (default: parallel enabled)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Measurement CSV files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output>/**/*.csv",
+            "description": "Glob pattern for measurement CSV output files. <output> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
         }

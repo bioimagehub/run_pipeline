@@ -20,16 +20,6 @@
             "userOverride": false
         },
         {
-            "flag": "--search-subfolders",
-            "type": "bool",
-            "socketSide": "input",
-            "isRequired": false,
-            "defaultValue": "",
-            "description": "(Deprecated) Recursive search is now automatic when '**' is in the pattern",
-            "validation": "",
-            "userOverride": false
-        },
-        {
             "flag": "--collapse-delimiter",
             "type": "string",
             "socketSide": "input",
@@ -72,7 +62,7 @@
         {
             "flag": "--output-file-name-extension",
             "type": "string",
-            "socketSide": "output",
+            "socketSide": "input", 
             "isRequired": false,
             "defaultValue": "_max",
             "description": "",
@@ -82,7 +72,7 @@
         {
             "flag": "--output-folder",
             "type": "path",
-            "socketSide": "output",
+            "socketSide": "input", 
             "isRequired": false,
             "defaultValue": "",
             "description": "",
@@ -108,7 +98,21 @@
             "description": "Print version and exit.",
             "validation": "",
             "userOverride": false
+        },
+        {
+            "flag": "TIF files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*<output_file_name_extension>.tif",
+            "description": "Glob pattern for output TIF files. <output_folder> and <output_file_name_extension> are set by the corresponding input arguments. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
         }
+
+
+
+
     ],
     "version": "1.0.0",
     "author": "BIPHUB",

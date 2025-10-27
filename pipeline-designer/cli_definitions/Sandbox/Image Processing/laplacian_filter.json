@@ -1,17 +1,48 @@
 {
     "id": "laplacian_filter",
     "name": "Laplacian Filter",
-    "icon": "\ud83c\udfa8",
+    "icon": "🎨",
     "color": "#569cd6",
     "description": "CLI tool: laplacian_filter",
     "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/laplacian_filter.py",
     "helpCommand": "python standard_code/python/laplacian_filter.py --help",
-    "arguments": [],
+    "arguments": [
+        {
+            "flag": "--input-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./input/*.tif",
+            "description": "Glob pattern for input images (e.g., './input/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "./output/filtered",
+            "description": "Output folder for filtered images",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "Filtered TIF files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_laplacian.tif",
+            "description": "Glob pattern for Laplacian filtered output TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T16:38:06.533647",
+    "lastParsed": "2025-10-27T16:38:05.625767",
     "outputFilesDefined": false,
     "category": "Image Processing"
 }

@@ -119,38 +119,78 @@ func ImportLegacyYAML(yamlPipeline *YAMLPipeline, definitionsManager *CLIDefinit
 // extractScriptPath finds the .py script path from YAML commands array
 // Looks for strings ending with .py (ignoring "python" interpreter command)
 func extractScriptPath(commands interface{}) string {
+	if appLogger != nil {
+		appLogger.Printf("[EXTRACT_SCRIPT] Parsing commands: %T - %+v", commands, commands)
+	}
+
 	switch cmds := commands.(type) {
 	case []interface{}:
-		for _, cmd := range cmds {
+		if appLogger != nil {
+			appLogger.Printf("[EXTRACT_SCRIPT] Found array with %d elements", len(cmds))
+		}
+		for i, cmd := range cmds {
+			if appLogger != nil {
+				appLogger.Printf("[EXTRACT_SCRIPT]   Element %d: %T - %+v", i, cmd, cmd)
+			}
 			switch v := cmd.(type) {
 			case string:
+				if appLogger != nil {
+					appLogger.Printf("[EXTRACT_SCRIPT]     String value: '%s'", v)
+				}
 				// Skip interpreter commands
 				if v == "python" || v == "imagej" {
+					if appLogger != nil {
+						appLogger.Printf("[EXTRACT_SCRIPT]     Skipping interpreter: '%s'", v)
+					}
 					continue
 				}
 				// Check if it's a .py file path
 				if strings.HasSuffix(v, ".py") {
+					if appLogger != nil {
+						appLogger.Printf("[EXTRACT_SCRIPT]     ✓ Found .py script: '%s'", v)
+					}
 					return v
 				}
 			}
 		}
+	}
+	if appLogger != nil {
+		appLogger.Printf("[EXTRACT_SCRIPT] No script found, returning empty string")
 	}
 	return ""
 }
 
 // findCLIDefinitionByScript searches all CLI definitions for a matching script filename
 func findCLIDefinitionByScript(scriptFilename string, manager *CLIDefinitionsManager) *CLIDefinition {
+	if appLogger != nil {
+		appLogger.Printf("[FIND_DEFINITION] Searching for script: '%s'", scriptFilename)
+	}
+
 	allDefs := manager.GetAllDefinitions()
 
-	for _, def := range allDefs {
+	if appLogger != nil {
+		appLogger.Printf("[FIND_DEFINITION] Total definitions to search: %d", len(allDefs))
+	}
+
+	for i, def := range allDefs {
 		// Extract filename from definition's script path
 		defScriptFilename := filepath.Base(def.Script)
 
+		if appLogger != nil && i < 5 { // Log first 5 for debugging
+			appLogger.Printf("[FIND_DEFINITION]   Def %d: script='%s', basename='%s', match=%v", i, def.Script, defScriptFilename, defScriptFilename == scriptFilename)
+		}
+
 		if defScriptFilename == scriptFilename {
+			if appLogger != nil {
+				appLogger.Printf("[FIND_DEFINITION] ✓ MATCH FOUND: '%s' == '%s'", defScriptFilename, scriptFilename)
+			}
 			return def
 		}
 	}
 
+	if appLogger != nil {
+		appLogger.Printf("[FIND_DEFINITION] ✗ NO MATCH: Could not find definition for '%s'", scriptFilename)
+	}
 	return nil
 }
 
@@ -249,11 +289,7 @@ func createBasicNodeFromStep(step YAMLStep, index int, startX, startY, spacing f
 		parseCommandsToSockets(&node, step.Commands)
 	}
 
-	// Add visual link sockets
-	linkIn := Socket{ID: uuid.New().String(), NodeID: node.ID, ArgumentFlag: "__link_in__", Type: TypeString, SocketSide: SocketInput, Value: "", IsRequired: false, DefaultValue: "", Description: "Visual link-only handle (ignored in YAML/command)", Validation: "", SkipEmit: true}
-	linkOut := Socket{ID: uuid.New().String(), NodeID: node.ID, ArgumentFlag: "__link_out__", Type: TypeString, SocketSide: SocketOutput, Value: "", IsRequired: false, DefaultValue: "", Description: "Visual link-only handle (ignored in YAML/command)", Validation: "", SkipEmit: true}
-	node.InputSockets = append(node.InputSockets, linkIn)
-	node.OutputSockets = append(node.OutputSockets, linkOut)
+	// Note: No longer adding __link__ sockets - visual connections are handled by frontend
 
 	return node
 }

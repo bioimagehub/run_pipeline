@@ -11,7 +11,7 @@ import (
 )
 
 // LoadYAMLPipeline reads a YAML pipeline file and converts it to our visual Pipeline format
-func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
+func LoadYAMLPipeline(filePath string, definitionsManager *CLIDefinitionsManager) (*Pipeline, error) {
 	// Read the YAML file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -28,18 +28,7 @@ func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
 	if yamlPipeline.DesignerMetadata == nil {
 		appLogger.Println("[YAML_LOAD] Legacy YAML detected (no _designer_metadata). Using legacy importer...")
 
-		// Find cli_definitions directory
-		exePath, _ := os.Executable()
-		exeDir := filepath.Dir(exePath)
-		definitionsPath := filepath.Join(exeDir, "cli_definitions")
-
-		// Load all CLI definitions
-		definitionsManager := NewCLIDefinitionsManager(definitionsPath)
-		if err := definitionsManager.LoadAllDefinitions(); err != nil {
-			return nil, fmt.Errorf("failed to load CLI definitions for legacy import: %w", err)
-		}
-
-		// Use legacy importer
+		// Use legacy importer with the provided definitions manager
 		pipeline, report, err := ImportLegacyYAML(&yamlPipeline, definitionsManager)
 		if err != nil {
 			return nil, fmt.Errorf("legacy import failed: %w", err)
@@ -131,11 +120,8 @@ func LoadYAMLPipeline(filePath string) (*Pipeline, error) {
 			}
 		}
 
-		// Inject default visual-only link sockets (ignored when generating YAML)
-		linkIn := Socket{ID: uuid.New().String(), NodeID: node.ID, ArgumentFlag: "__link_in__", Type: TypeString, SocketSide: SocketInput, Value: "", IsRequired: false, DefaultValue: "", Description: "Visual link-only handle (ignored in YAML/command)", Validation: "", SkipEmit: true}
-		linkOut := Socket{ID: uuid.New().String(), NodeID: node.ID, ArgumentFlag: "__link_out__", Type: TypeString, SocketSide: SocketOutput, Value: "", IsRequired: false, DefaultValue: "", Description: "Visual link-only handle (ignored in YAML/command)", Validation: "", SkipEmit: true}
-		node.InputSockets = append(node.InputSockets, linkIn)
-		node.OutputSockets = append(node.OutputSockets, linkOut)
+		// Note: No longer injecting __link_in__/__link_out__ sockets
+		// Output sockets are now properly defined in CLI definition JSON files
 
 		pipeline.Nodes = append(pipeline.Nodes, node)
 	}

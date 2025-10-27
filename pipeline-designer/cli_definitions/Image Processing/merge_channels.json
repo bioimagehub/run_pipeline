@@ -1,7 +1,7 @@
 {
     "id": "merge_channels",
     "name": "Merge channels into Cellpose input",
-    "icon": "\ud83c\udfa8",
+    "icon": "🎨",
     "color": "#569cd6",
     "description": "CLI tool: merge_channels",
     "environment": "uv@3.11:segmentation",
@@ -20,19 +20,9 @@
             "userOverride": false
         },
         {
-            "flag": "--input-folder",
-            "type": "path",
-            "socketSide": "input",
-            "isRequired": false,
-            "defaultValue": "",
-            "description": "Deprecated: input folder (use --input-search-pattern)",
-            "validation": "must_exist",
-            "userOverride": false
-        },
-        {
             "flag": "--output-folder",
             "type": "path",
-            "socketSide": "output",
+            "socketSide": "input",
             "isRequired": false,
             "defaultValue": "./cellpose_input",
             "description": "Path to save the processed files",
@@ -52,9 +42,9 @@
         {
             "flag": "--output-format",
             "type": "string",
-            "socketSide": "output",
+            "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "",
+            "defaultValue": "tif",
             "description": "{tif,npy} Output format: 'tif' (OME-TIFF) or 'npy' (NumPy array)",
             "validation": "",
             "userOverride": false
@@ -62,9 +52,9 @@
         {
             "flag": "--output-dim-order",
             "type": "string",
-            "socketSide": "output",
+            "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "",
+            "defaultValue": "TCZYX",
             "description": "{TCZYX,TZYXC} Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'",
             "validation": "",
             "userOverride": false
@@ -72,9 +62,9 @@
         {
             "flag": "--output-scale",
             "type": "string",
-            "socketSide": "output",
+            "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "",
+            "defaultValue": "1",
             "description": "Over or under-sampling factor for the output image. Default is 1 (no scaling).",
             "validation": "",
             "userOverride": false
@@ -86,6 +76,26 @@
             "isRequired": false,
             "defaultValue": "",
             "description": "Do not use parallel processing",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Merged TIF files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*.tif",
+            "description": "Glob pattern for merged output TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Merged NPY files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/**/*.npy",
+            "description": "Glob pattern for merged output NPY files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
         }
