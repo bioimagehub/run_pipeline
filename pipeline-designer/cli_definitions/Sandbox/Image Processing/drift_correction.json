@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "./input/*.tif",
+            "defaultValue": "%YAML%/input/*.tif",
             "description": "Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively.",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "./output/drift_corrected",
+            "defaultValue": "%YAML%/output/drift_corrected",
             "description": "Output folder for corrected images",
             "validation": "create_if_missing",
             "userOverride": false

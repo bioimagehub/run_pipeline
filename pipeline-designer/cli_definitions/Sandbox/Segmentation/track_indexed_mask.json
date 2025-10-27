@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "./input/*.tif",
+            "defaultValue": "%YAML%/input/*.tif",
             "description": "Glob pattern to search for input files (e.g. './data/*.tif')",
             "validation": "",
             "userOverride": false

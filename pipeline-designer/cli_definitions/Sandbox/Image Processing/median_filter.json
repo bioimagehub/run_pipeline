@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "./input/*.tif",
+            "defaultValue": "%YAML%/input/*.tif",
             "description": "Glob pattern for input images (e.g., './input/*.tif')",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "./output/filtered",
+            "defaultValue": "%YAML%/output/filtered",
             "description": "Output folder for filtered images",
             "validation": "create_if_missing",
             "userOverride": false

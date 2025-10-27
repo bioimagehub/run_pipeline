@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./input_C2Z38_ER-FA_tif/*.tif",
+            "defaultValue": "%YAML%/input_C2Z38_ER-FA_tif/*.tif",
             "description": "Glob pattern for input images, e.g. \"folder/*.tif\" or \"folder/somefile*.tif\". Use a single file path for one image. (default: None)",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "path",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "./nellie_output",
+            "defaultValue": "%YAML%/nellie_output",
             "description": "Where to place outputs (default: None)",
             "validation": "create_if_missing",
             "userOverride": false

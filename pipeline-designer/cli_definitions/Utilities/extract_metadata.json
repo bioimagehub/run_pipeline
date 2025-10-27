@@ -14,7 +14,7 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./pipeline_configs/input_1/small_TCYX_01.ome.tif",
+            "defaultValue": "%YAML%/pipeline_configs/input_1/small_TCYX_01.ome.tif",
             "description": "Path to the input BioImage file",
             "validation": "must_exist",
             "userOverride": false

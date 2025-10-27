@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./cellpose_cyt/*_cp_masks.tif",
+            "defaultValue": "%YAML%/cellpose_cyt/*_cp_masks.tif",
             "description": "1_SEARCH_PATTERN Glob pattern for mask1 images, e.g. \"folder/*_mask1.tif\"",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./cellpose_nuc/*_cp_masks.tif",
+            "defaultValue": "%YAML%/cellpose_nuc/*_cp_masks.tif",
             "description": "2_SEARCH_PATTERN Glob pattern for mask2 images, e.g. \"folder/*_mask2.tif\"",
             "validation": "",
             "userOverride": false
@@ -34,7 +34,7 @@
             "type": "path",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "./output_summary",
+            "defaultValue": "%YAML%/output_summary",
             "description": "Path to the output folder where processed images will be saved",
             "validation": "create_if_missing",
             "userOverride": false

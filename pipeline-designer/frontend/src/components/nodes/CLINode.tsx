@@ -11,6 +11,7 @@ interface Socket {
   socketSide: 'input' | 'output';
   isRequired?: boolean;
   connectedTo?: string | null;
+  defaultValue?: string;
 }
 
 interface CLINodeData {
@@ -30,6 +31,86 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const { updateNodeSocket } = usePipelineStore();
   const edges = usePipelineStore((s) => s.edges);
   
+  // Helper function to apply transformations to values (defined early for useMemo)
+  const applyTransform = (value: string, transform: string): string => {
+    if (!value) return '';
+    
+    switch (transform) {
+      case 'dirname': {
+        // Extract directory name from glob pattern
+        // e.g., "%YAML%/input/**/*.nd2" -> "%YAML%/input"
+        // e.g., "%YAML%/data/subfolder/**/*.tif" -> "%YAML%/data/subfolder"
+        let dir = value;
+        
+        // Find the position of glob patterns (*, ?, [)
+        const globIndex = dir.search(/[\*\?\[]/);
+        if (globIndex !== -1) {
+          // Get everything before the glob pattern
+          dir = dir.substring(0, globIndex);
+          // Remove any trailing slashes or partial path segments
+          dir = dir.replace(/\/*$/, ''); // Remove trailing slashes
+        }
+        
+        return dir;
+      }
+      case 'basename': {
+        // Extract filename without extension
+        const parts = value.split('/');
+        const filename = parts[parts.length - 1];
+        return filename.replace(/\.[^.]*$/, '');
+      }
+      default:
+        return value;
+    }
+  };
+  
+  // Pre-calculate all resolved input values (two-pass to handle dependencies)
+  const resolvedInputValues = React.useMemo(() => {
+    const values: { [socketId: string]: string } = {};
+    
+    if (!data.inputSockets) return values;
+    
+    // First pass: collect all direct values (no placeholders)
+    data.inputSockets.forEach((socket) => {
+      if (socket.value) {
+        values[socket.id] = socket.value;
+      } else if (socket.defaultValue && !socket.defaultValue.includes('<')) {
+        values[socket.id] = socket.defaultValue;
+      } else {
+        values[socket.id] = '';
+      }
+    });
+    
+    // Second pass: resolve placeholders using first pass values
+    data.inputSockets.forEach((socket) => {
+      if (!socket.value && socket.defaultValue && socket.defaultValue.includes('<')) {
+        let resolved = socket.defaultValue;
+        
+        // Resolve placeholders from other sockets
+        data.inputSockets?.forEach((otherSocket) => {
+          if (otherSocket.id === socket.id) return; // Skip self
+          
+          const flagName = otherSocket.argumentFlag.replace(/^--/, '').replace(/-/g, '_');
+          const otherValue = values[otherSocket.id] || '';
+          
+          // Handle transformations like <input_search_pattern:dirname>
+          const transformRegex = new RegExp(`<${flagName}:([^>]+)>`, 'g');
+          resolved = resolved.replace(transformRegex, (match, transform) => {
+            return applyTransform(otherValue, transform);
+          });
+          
+          // Simple placeholder replacement
+          const placeholder = `<${flagName}>`;
+          resolved = resolved.split(placeholder).join(otherValue);
+        });
+        
+        values[socket.id] = resolved;
+      }
+    });
+    
+    return values;
+  }, [data.inputSockets]);
+  
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
       'Segmentation': '#c586c0',
@@ -45,6 +126,40 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const handleInputChange = (socketId: string, value: string) => {
     console.log('Input changed:', { nodeId: id, socketId, value });
     updateNodeSocket(id, socketId, value);
+  };
+
+  // Helper function to resolve placeholders in output socket values
+  const resolveOutputPlaceholders = (outputValue: string): string => {
+    if (!outputValue) return outputValue;
+    
+    let resolved = outputValue;
+    
+    // Get all input socket values
+    if (data.inputSockets) {
+      data.inputSockets.forEach((inputSocket) => {
+        // Convert flag to placeholder format: --output-folder -> <output_folder>
+        const flagName = inputSocket.argumentFlag.replace(/^--/, '').replace(/-/g, '_');
+        const value = inputSocket.value || '';
+        
+        // Handle transformations like <input_search_pattern:dirname>
+        const transformRegex = new RegExp(`<${flagName}:([^>]+)>`, 'g');
+        resolved = resolved.replace(transformRegex, (match, transform) => {
+          return applyTransform(value, transform);
+        });
+        
+        // Simple placeholder replacement
+        const placeholder = `<${flagName}>`;
+        resolved = resolved.split(placeholder).join(value);
+      });
+    }
+    
+    return resolved;
+  };
+
+  // Helper function to get display value for input socket
+  const getInputSocketDisplayValue = (socket: Socket): string => {
+    // Use pre-calculated resolved value
+    return resolvedInputValues[socket.id] || socket.value || '';
   };
 
   const color = getCategoryColor(data.category);
@@ -157,12 +272,15 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                       const isTargetConnected = edges.some(
                         (edge) => edge.target === id && edge.targetHandle === socket.id
                       );
+                      
+                      // Get display value (resolved if placeholder-based default)
+                      const displayValue = getInputSocketDisplayValue(socket);
 
                       return (
                         <input
                           type="text"
                           className="nodrag nopan"
-                          value={socket.value || ''}
+                          value={displayValue}
                           onChange={(e) => {
                             // Only allow changes when not target-connected
                             if (isTargetConnected) {
@@ -251,51 +369,56 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
             </div>
             {data.outputSockets && data.outputSockets.length > 0 ? (
               <div>
-                {data.outputSockets.map((socket) => (
-                  <div key={socket.id} style={{ position: 'relative', marginBottom: '8px' }}>
-                    <Handle
-                      type="source"
-                      position={Position.Right}
-                      id={socket.id}
-                      style={{
-                        position: 'absolute',
-                        top: '8px',
-                        right: '-20px',
-                        background: socket.connectedTo ? '#4CAF50' : '#999',
-                      }}
-                    />
-                    <div style={{ 
-                      fontSize: '10px', 
-                      color: '#aaa', 
-                      textAlign: 'right',
-                      marginBottom: '2px'
-                    }}>
-                      {socket.argumentFlag}
-                    </div>
-                    <input
-                      type="text"
-                      className="nodrag nopan"
-                      value={socket.value || ''}
-                      onChange={(e) => {
-                        handleInputChange(socket.id, e.target.value);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="output value"
-                      style={{
-                        width: '100%',
-                        padding: '4px 6px',
-                        fontSize: '11px',
-                        background: '#2a2a2a',
-                        border: '1px solid #444',
-                        borderRadius: '3px',
-                        color: '#ddd',
+                {data.outputSockets.map((socket) => {
+                  // Resolve placeholders for display
+                  const displayValue = resolveOutputPlaceholders(socket.value || '');
+                  
+                  return (
+                    <div key={socket.id} style={{ position: 'relative', marginBottom: '8px' }}>
+                      <Handle
+                        type="source"
+                        position={Position.Right}
+                        id={socket.id}
+                        style={{
+                          position: 'absolute',
+                          top: '8px',
+                          right: '-20px',
+                          background: socket.connectedTo ? '#4CAF50' : '#999',
+                        }}
+                      />
+                      <div style={{ 
+                        fontSize: '10px', 
+                        color: '#aaa', 
                         textAlign: 'right',
-                        cursor: 'text',
-                      }}
-                    />
-                  </div>
-                ))}
+                        marginBottom: '2px'
+                      }}>
+                        {socket.argumentFlag}
+                      </div>
+                      <input
+                        type="text"
+                        className="nodrag nopan"
+                        value={displayValue}
+                        readOnly
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="output value"
+                        title={`Resolved pattern: ${displayValue}`}
+                        style={{
+                          width: '100%',
+                          padding: '4px 6px',
+                          fontSize: '11px',
+                          background: '#2a2a2a',
+                          border: '1px solid #444',
+                          borderRadius: '3px',
+                          color: '#ddd',
+                          textAlign: 'right',
+                          cursor: 'default',
+                          opacity: 0.8,
+                        }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div style={{ fontSize: '10px', color: '#666', fontStyle: 'italic', textAlign: 'right' }}>No outputs</div>

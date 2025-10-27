@@ -221,13 +221,25 @@ func populateSocketsFromYAMLArgs(node *CLINode, yamlArgs map[string]string, defi
 	unmatchedArgs := make([]string, 0)
 	missingArgs := make([]string, 0)
 
+	if appLogger != nil {
+		appLogger.Printf("[POPULATE_SOCKETS] Node '%s': Processing %d YAML args", node.Name, len(yamlArgs))
+	}
+
 	// Create a map of flag -> socket for quick lookup
 	socketsByFlag := make(map[string]*Socket)
 	for i := range node.InputSockets {
 		socketsByFlag[node.InputSockets[i].ArgumentFlag] = &node.InputSockets[i]
+		if appLogger != nil {
+			appLogger.Printf("[POPULATE_SOCKETS]   Input socket: %s (default: '%s')",
+				node.InputSockets[i].ArgumentFlag, node.InputSockets[i].DefaultValue)
+		}
 	}
 	for i := range node.OutputSockets {
 		socketsByFlag[node.OutputSockets[i].ArgumentFlag] = &node.OutputSockets[i]
+		if appLogger != nil {
+			appLogger.Printf("[POPULATE_SOCKETS]   Output socket: %s (default: '%s')",
+				node.OutputSockets[i].ArgumentFlag, node.OutputSockets[i].DefaultValue)
+		}
 	}
 
 	// Match YAML args to sockets
@@ -235,11 +247,17 @@ func populateSocketsFromYAMLArgs(node *CLINode, yamlArgs map[string]string, defi
 		socket, exists := socketsByFlag[flag]
 		if !exists {
 			unmatchedArgs = append(unmatchedArgs, flag)
+			if appLogger != nil {
+				appLogger.Printf("[POPULATE_SOCKETS]   ✗ Unmatched YAML arg: %s = '%s'", flag, value)
+			}
 			continue
 		}
 
 		// Populate socket value
 		socket.Value = value
+		if appLogger != nil {
+			appLogger.Printf("[POPULATE_SOCKETS]   ✓ Matched %s = '%s'", flag, value)
+		}
 	}
 
 	// Check for missing required arguments
@@ -256,7 +274,14 @@ func populateSocketsFromYAMLArgs(node *CLINode, yamlArgs map[string]string, defi
 
 		if socket.Value == "" && yamlArgs[argDef.Flag] == "" {
 			missingArgs = append(missingArgs, argDef.Flag)
+			if appLogger != nil {
+				appLogger.Printf("[POPULATE_SOCKETS]   ✗ Missing required arg: %s", argDef.Flag)
+			}
 		}
+	}
+
+	if appLogger != nil {
+		appLogger.Printf("[POPULATE_SOCKETS] Complete: %d unmatched, %d missing", len(unmatchedArgs), len(missingArgs))
 	}
 
 	return unmatchedArgs, missingArgs

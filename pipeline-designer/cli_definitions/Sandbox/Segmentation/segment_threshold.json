@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "./input/*.tif",
+            "defaultValue": "%YAML%/input/*.tif",
             "description": "Glob pattern to search for input files (e.g. './data/*.tif')",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./output/masks",
+            "defaultValue": "%YAML%/output/masks",
             "description": "Output folder for processed files",
             "validation": "create_if_missing",
             "userOverride": false

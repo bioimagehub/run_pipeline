@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./input_tif/*.tif",
+            "defaultValue": "%YAML%/input_tif/*.tif",
             "description": "Glob pattern for input images, e.g. 'folder/*.tif'",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./cellpose_input",
+            "defaultValue": "%YAML%/cellpose_input",
             "description": "Path to save the processed files",
             "validation": "create_if_missing",
             "userOverride": false

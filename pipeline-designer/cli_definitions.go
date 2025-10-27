@@ -199,7 +199,7 @@ func CreateNodeFromDefinition(definition *CLIDefinition, position Point) *CLINod
 			ArgumentFlag: argDef.Flag,
 			Type:         argDef.Type,
 			SocketSide:   argDef.SocketSide,
-			Value:        argDef.DefaultValue,
+			Value:        "", // Always start with empty value - use DefaultValue for placeholders
 			IsRequired:   argDef.IsRequired,
 			DefaultValue: argDef.DefaultValue,
 			Description:  argDef.Description,

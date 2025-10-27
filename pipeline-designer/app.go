@@ -505,6 +505,100 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 		return outputStr, fmt.Errorf("execution failed: %w", err)
 	}
 
+	// Resolve output glob patterns to show actual files created
+	outputFilesInfo := resolveOutputGlobPatterns(node, projectRoot)
+	if outputFilesInfo != "" {
+		outputStr = outputStr + "\n\n" + outputFilesInfo
+	}
+
 	appLogger.Printf("Execution completed successfully\n")
 	return outputStr, nil
+}
+
+// resolveOutputGlobPatterns resolves glob patterns in output sockets to show actual files
+func resolveOutputGlobPatterns(node *CLINode, baseDir string) string {
+	if node.OutputSockets == nil || len(node.OutputSockets) == 0 {
+		return ""
+	}
+
+	// Build a map of input socket values for placeholder substitution
+	inputValues := make(map[string]string)
+	if node.InputSockets != nil {
+		for _, socket := range node.InputSockets {
+			// Clean the flag name (remove -- prefix) and convert to placeholder format
+			flagName := strings.TrimPrefix(socket.ArgumentFlag, "--")
+			flagName = strings.ReplaceAll(flagName, "-", "_")
+			inputValues[flagName] = socket.Value
+		}
+	}
+
+	var result strings.Builder
+	result.WriteString("=== Output Files Created ===\n")
+
+	foundAnyFiles := false
+	for _, socket := range node.OutputSockets {
+		// Skip if no value
+		if socket.Value == "" {
+			continue
+		}
+
+		// Substitute placeholders like <output_folder> and <output_file_name_extension>
+		pattern := socket.Value
+		for key, value := range inputValues {
+			placeholder := "<" + key + ">"
+			pattern = strings.ReplaceAll(pattern, placeholder, value)
+		}
+
+		// Skip if pattern still contains unresolved placeholders or has no wildcards
+		if strings.Contains(pattern, "<") || strings.Contains(pattern, ">") {
+			appLogger.Printf("[DEBUG] Skipping pattern with unresolved placeholders: %s\n", pattern)
+			continue
+		}
+
+		if !strings.Contains(pattern, "*") && !strings.Contains(pattern, "?") {
+			appLogger.Printf("[DEBUG] Skipping pattern without wildcards: %s\n", pattern)
+			continue
+		}
+
+		// Convert pattern to absolute path if it's relative
+		if !filepath.IsAbs(pattern) {
+			pattern = filepath.Join(baseDir, pattern)
+		}
+
+		// Resolve the glob pattern
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			appLogger.Printf("[WARN] Failed to resolve glob pattern '%s': %v\n", pattern, err)
+			continue
+		}
+
+		if len(matches) > 0 {
+			foundAnyFiles = true
+			result.WriteString(fmt.Sprintf("\n%s:\n", socket.ArgumentFlag))
+			result.WriteString(fmt.Sprintf("  Pattern: %s\n", pattern))
+
+			// Show up to 10 files
+			maxShow := 10
+			if len(matches) > maxShow {
+				for i := 0; i < maxShow; i++ {
+					result.WriteString(fmt.Sprintf("  - %s\n", filepath.Base(matches[i])))
+				}
+				result.WriteString(fmt.Sprintf("  ... and %d more files\n", len(matches)-maxShow))
+			} else {
+				for _, match := range matches {
+					result.WriteString(fmt.Sprintf("  - %s\n", filepath.Base(match)))
+				}
+			}
+			result.WriteString(fmt.Sprintf("  Total: %d files\n", len(matches)))
+		} else {
+			// Pattern was valid but no files matched yet (maybe they haven't been created)
+			appLogger.Printf("[DEBUG] No files matched pattern: %s\n", pattern)
+		}
+	}
+
+	if !foundAnyFiles {
+		return ""
+	}
+
+	return result.String()
 }

@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./input_tif/*.tif",
+            "defaultValue": "%YAML%/input_tif/*.tif",
             "description": "Glob pattern for input images, e.g. \"folder/*.tif\" or \"folder/somefile*.tif\". Use a single file path for one image.",
             "validation": "",
             "userOverride": false
@@ -24,7 +24,7 @@
             "type": "string",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "./output_summary",
+            "defaultValue": "%YAML%/output_summary",
             "description": "Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the input.",
             "validation": "",
             "userOverride": false

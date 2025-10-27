@@ -14,7 +14,7 @@
             "type": "glob_pattern",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "./input/*.ims",
+            "defaultValue": "%YAML%/input/*.ims",
             "description": "Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively.",
             "validation": "",
             "userOverride": false
@@ -74,8 +74,8 @@
             "type": "path",
             "socketSide": "input", 
             "isRequired": false,
-            "defaultValue": "",
-            "description": "",
+            "defaultValue": "<input_search_pattern:dirname>_tif",
+            "description": "Output folder path (default: derived from input folder with '_tif' suffix)",
             "validation": "create_if_missing",
             "userOverride": false
         },
