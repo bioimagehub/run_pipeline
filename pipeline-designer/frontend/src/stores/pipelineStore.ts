@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Node, Edge } from 'reactflow';
-import { LoadPipeline, SavePipeline, GetCLIDefinitions, CreateNodeFromDefinition, OpenFileDialog, SaveFileDialog, CreateEmptyPipeline } from '../../wailsjs/go/main/App';
+import { LoadPipeline, SavePipeline, GetCLIDefinitions, CreateNodeFromDefinition, OpenFileDialog, SaveFileDialog, CreateEmptyPipeline, LogFrontend } from '../../wailsjs/go/main/App';
 import { models } from '../types';
 
 // Use Wails generated types
@@ -22,10 +22,14 @@ interface CLINodeData {
 }
 
 interface PipelineState {
+  history: { nodes: Node<CLINodeData>[]; edges: Edge[] }[];
+  historyIndex: number;
+  undo: () => void;
+  redo: () => void;
   // Nodes and edges
   nodes: Node<CLINodeData>[];
   edges: Edge[];
-  selectedNode: CLINodeData | null;
+    selectedNode: Node<CLINodeData> | null;
   definitions: CLIDefinition[];
   currentFilePath: string | null;
   hasUnsavedChanges: boolean;
@@ -33,7 +37,7 @@ interface PipelineState {
   // Actions
   setNodes: (nodes: Node<CLINodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
-  setSelectedNode: (node: CLINodeData | null) => void;
+    setSelectedNode: (node: Node<CLINodeData> | null) => void;
   loadDefinitions: () => Promise<void>;
   addNodeFromDefinition: (definitionId: string, x: number, y: number) => Promise<void>;
   updateNodeSocket: (nodeId: string, socketId: string, value: string) => void;
@@ -45,25 +49,86 @@ interface PipelineState {
   promptForSaveLocation: () => Promise<boolean>;
   setCurrentFilePath: (path: string | null) => void;
   markAsModified: () => void;
+  deleteSelectedNode: () => void;
 }
 
 export const usePipelineStore = create<PipelineState>((set, get) => ({
+  history: [{ nodes: [], edges: [] }],
+  historyIndex: 0,
   nodes: [],
   edges: [],
+  undo: () => {
+    set((state) => {
+      if (state.historyIndex > 0) {
+        const prev = state.history[state.historyIndex - 1];
+        return {
+          nodes: prev.nodes,
+          edges: prev.edges,
+          historyIndex: state.historyIndex - 1,
+        };
+      }
+      return {};
+    });
+  },
+  redo: () => {
+    set((state) => {
+      if (state.historyIndex < state.history.length - 1) {
+        const next = state.history[state.historyIndex + 1];
+        return {
+          nodes: next.nodes,
+          edges: next.edges,
+          historyIndex: state.historyIndex + 1,
+        };
+      }
+      return {};
+    });
+  },
+  // nodes and edges initialized in history
   selectedNode: null,
   definitions: [],
   currentFilePath: null,
   hasUnsavedChanges: false,
 
   setNodes: (nodes) => {
-    set({ nodes, hasUnsavedChanges: true });
+    set((state) => {
+      const newHistory = state.history.slice(0, state.historyIndex + 1);
+      newHistory.push({ nodes, edges: state.edges });
+      return {
+        nodes,
+        hasUnsavedChanges: true,
+        history: newHistory,
+        historyIndex: newHistory.length - 1,
+      };
+    });
   },
   
   setEdges: (edges) => {
-    set({ edges, hasUnsavedChanges: true });
+    set((state) => {
+      const newHistory = state.history.slice(0, state.historyIndex + 1);
+      newHistory.push({ nodes: state.nodes, edges });
+      return {
+        edges,
+        hasUnsavedChanges: true,
+        history: newHistory,
+        historyIndex: newHistory.length - 1,
+      };
+    });
   },
   
-  setSelectedNode: (node) => set({ selectedNode: node }),
+    setSelectedNode: (node) => {
+    const msg = `[Store] setSelectedNode called: nodeId=${node?.id}, hasData=${!!node?.data}`;
+    console.log(msg, {
+      nodeId: node?.id,
+      hasData: !!node?.data,
+      dataKeys: node?.data ? Object.keys(node.data) : [],
+      inputSockets: node?.data?.inputSockets?.length,
+      outputSockets: node?.data?.outputSockets?.length
+    });
+    LogFrontend(msg).catch(console.error);
+    set({ selectedNode: node });
+    console.log('[Store] setSelectedNode - set() completed, new state should trigger re-renders');
+    LogFrontend('[Store] setSelectedNode - set() completed').catch(console.error);
+  },
 
   setCurrentFilePath: (path) => set({ currentFilePath: path }),
 
@@ -83,27 +148,24 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   addNodeFromDefinition: async (definitionId, x, y) => {
     try {
       console.log('Adding node from definition:', definitionId, 'at', x, y);
-      
       // Calculate position - place to the right of the last node
       const state = get();
       let finalX = x;
       let finalY = y;
-      
       if (state.nodes.length > 0) {
         // Find the rightmost node
-        const rightmostNode = state.nodes.reduce((max, node) => 
-          node.position.x > max.position.x ? node : max
-        , state.nodes[0]);
-        
+        const rightmostNode = state.nodes.reduce((max, node) =>
+          node.position.x > max.position.x ? node : max,
+          state.nodes[0]
+        );
         // Position new node to the right with spacing
         finalX = rightmostNode.position.x + 350; // 300 width + 50 spacing
         finalY = rightmostNode.position.y;
       }
-      
       const newNode = await CreateNodeFromDefinition(definitionId, finalX, finalY);
       console.log('Created node:', newNode);
       if (newNode) {
-        // Convert to React Flow node format
+        // Use icon and color from CLI definition if present
         const flowNode: Node<CLINodeData> = {
           id: newNode.id,
           type: 'cliNode',
@@ -113,17 +175,26 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
             definitionId: newNode.definitionId,
             name: newNode.name,
             category: newNode.category,
-            icon: '🔧', // Default icon
-            color: '#569cd6', // Default color
+            icon: newNode.icon || '🔧',
+            color: newNode.color || '#569cd6',
             inputSockets: newNode.inputSockets || [],
             outputSockets: newNode.outputSockets || [],
             environment: newNode.environment,
             script: newNode.script,
           },
         };
-        
         console.log('Adding flow node to store:', flowNode);
-        set((state) => ({ nodes: [...state.nodes, flowNode] }));
+        set((state) => {
+          const newNodes = [...state.nodes, flowNode];
+          const newHistory = state.history.slice(0, state.historyIndex + 1);
+          newHistory.push({ nodes: newNodes, edges: state.edges });
+          return {
+            nodes: newNodes,
+            history: newHistory,
+            historyIndex: newHistory.length - 1,
+            // Do not touch selectedNode here
+          };
+        });
         console.log('Node added successfully');
       }
     } catch (error) {
@@ -184,7 +255,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       let newSelectedNode = state.selectedNode;
       const selectedNodeUpdated = updatedNodes.find(n => n.id === state.selectedNode?.id);
       if (selectedNodeUpdated) {
-        newSelectedNode = selectedNodeUpdated.data;
+        newSelectedNode = selectedNodeUpdated;
       }
 
       return { 
@@ -209,8 +280,8 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
             definitionId: node.definitionID,
             name: node.name,
             category: node.category,
-            icon: '🔧',
-            color: '#569cd6',
+            icon: node.icon || '🔧',
+            color: node.color || '#569cd6',
             inputSockets: node.inputSockets || [],
             outputSockets: node.outputSockets || [],
             environment: node.environment,
@@ -365,5 +436,26 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       console.error('Failed to prompt for save location:', error);
       return false;
     }
+  },
+
+  deleteSelectedNode: () => {
+    set((state) => {
+      if (!state.selectedNode) return {};
+      const selectedId = state.selectedNode.id;
+      // Remove node and any edges connected to it
+      const nodes = state.nodes.filter((node) => node.id !== selectedId);
+      const edges = state.edges.filter((edge) => edge.source !== selectedId && edge.target !== selectedId);
+      // Push to history
+      const newHistory = state.history.slice(0, state.historyIndex + 1);
+      newHistory.push({ nodes, edges });
+      return {
+        nodes,
+        edges,
+        selectedNode: null,
+        hasUnsavedChanges: true,
+        history: newHistory,
+        historyIndex: newHistory.length - 1,
+      };
+    });
   },
 }));

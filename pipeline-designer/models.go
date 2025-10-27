@@ -84,6 +84,8 @@ type CLINode struct {
 	Script         string     `json:"script"`
 	InputSockets   []Socket   `json:"inputSockets"`
 	OutputSockets  []Socket   `json:"outputSockets"`
+	Icon           string     `json:"icon"`
+	Color          string     `json:"color"`
 	IsSelected     bool       `json:"isSelected"`
 	IsCollapsed    bool       `json:"isCollapsed"`
 	Category       string     `json:"category"`

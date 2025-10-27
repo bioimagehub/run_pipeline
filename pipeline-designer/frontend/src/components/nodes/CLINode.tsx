@@ -47,6 +47,26 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected }) => {
       <div className="node-header" style={{ backgroundColor: color }}>
         <span className="node-icon">{data.icon}</span>
         <span className="node-name">{data.name}</span>
+        {selected && (
+          <button
+            style={{
+              marginLeft: 'auto',
+              background: '#222',
+              color: '#f48771',
+              border: 'none',
+              borderRadius: '3px',
+              padding: '2px 8px',
+              cursor: 'pointer',
+              fontSize: '12px',
+            }}
+            title="Delete Node"
+            onClick={(e) => {
+              e.stopPropagation();
+              // Delete selected node via store
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
+            }}
+          >🗑️ Delete</button>
+        )}
       </div>
 
       {/* Node Body */}

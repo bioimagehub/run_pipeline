@@ -1,0 +1,14 @@
+name: filter_image
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - tifffile
+  - aicsimageio
+  - opencv
+  - pip
+  - pip:
+    - bioimage-io-core

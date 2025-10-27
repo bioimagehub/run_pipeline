@@ -38,6 +38,10 @@ export function LoadPipeline(arg1) {
   return window['go']['main']['App']['LoadPipeline'](arg1);
 }
 
+export function LogFrontend(arg1) {
+  return window['go']['main']['App']['LogFrontend'](arg1);
+}
+
 export function OpenFileDialog() {
   return window['go']['main']['App']['OpenFileDialog']();
 }

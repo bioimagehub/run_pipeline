@@ -15,6 +15,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { usePipelineStore } from '../stores/pipelineStore';
 import CLINode from './nodes/CLINode';
+import { LogFrontend } from '../../wailsjs/go/main/App';
 
 // Define custom node types
 const nodeTypes = {
@@ -136,8 +137,12 @@ const Canvas: React.FC = () => {
   // Handle node selection
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
-      console.log('Node clicked:', node);
-      setSelectedNode(node.data);
+      const logMessage = `[Canvas] Node clicked: id=${node.id}, type=${node.type}, hasData=${!!node.data}, dataKeys=${node.data ? Object.keys(node.data).join(',') : 'none'}`;
+      console.log(logMessage, { fullNode: node });
+      LogFrontend(logMessage).catch(err => console.error('Failed to log:', err));
+      setSelectedNode(node);
+      console.log('[Canvas] setSelectedNode called with node ID:', node.id);
+      LogFrontend(`[Canvas] setSelectedNode called with node ID: ${node.id}`).catch(err => console.error('Failed to log:', err));
     },
     [setSelectedNode]
   );

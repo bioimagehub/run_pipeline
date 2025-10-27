@@ -1,13 +1,28 @@
 import React, { useState } from 'react';
 import { usePipelineStore } from '../stores/pipelineStore';
-import { GetFileListPreview } from '../../wailsjs/go/main/App';
+import { GetFileListPreview, LogFrontend } from '../../wailsjs/go/main/App';
 
 const PropertiesPanel: React.FC = () => {
-  const { selectedNode, updateNodeSocket } = usePipelineStore();
+  // CRITICAL: Subscribe to the ENTIRE store to ensure re-renders
+  const store = usePipelineStore();
+  const selectedNode = store.selectedNode;
+  const updateNodeSocket = store.updateNodeSocket;
+  
   const [filePreview, setFilePreview] = useState<{ [key: string]: string }>({});
   const [loadingPreview, setLoadingPreview] = useState<{ [key: string]: boolean }>({});
+  // Local state for socket values - MUST be declared before any conditional returns
+  const [socketValues, setSocketValues] = useState<{ [key: string]: string }>({});
+
+  // Log when PropertiesPanel renders
+  React.useEffect(() => {
+    const msg = `[PropertiesPanel] Rendered - selectedNode: ${selectedNode ? `ID=${selectedNode.id}, hasData=${!!selectedNode.data}` : 'null'}`;
+    console.log(msg);
+    LogFrontend(msg).catch(console.error);
+  }, [selectedNode]);
 
   if (!selectedNode) {
+    console.log('[PropertiesPanel] No node selected, showing empty state');
+    LogFrontend('[PropertiesPanel] No node selected, showing empty state').catch(console.error);
     return (
       <div className="properties-panel">
         <div className="panel-header">
@@ -20,10 +35,34 @@ const PropertiesPanel: React.FC = () => {
     );
   }
 
-  const handleSocketValueChange = (socketId: string, newValue: string) => {
-    updateNodeSocket(selectedNode.id, socketId, newValue);
-    // Clear preview when value changes
+  React.useEffect(() => {
+    if (selectedNode && selectedNode.data && selectedNode.data.inputSockets) {
+      // Initialize local state from socket values
+      const initialValues: { [key: string]: string } = {};
+      selectedNode.data.inputSockets.forEach((socket: any) => {
+        initialValues[socket.id] = socket.value || '';
+      });
+      setSocketValues(initialValues);
+    }
+  }, [selectedNode]);
+
+  const handleSocketInputChange = (socketId: string, newValue: string) => {
+    setSocketValues((prev) => ({ ...prev, [socketId]: newValue }));
+  };
+
+  const handleSocketInputBlur = (socketId: string) => {
+    updateNodeSocket(selectedNode.id, socketId, socketValues[socketId]);
     setFilePreview(prev => ({ ...prev, [socketId]: '' }));
+  };
+
+  const handleUndo = () => {
+    // Use global undo from store
+    // (button can call usePipelineStore().undo)
+  };
+
+  const handleRedo = () => {
+    // Use global redo from store
+    // (button can call usePipelineStore().redo)
   };
 
   const handlePreviewFiles = async (socket: any) => {
@@ -49,17 +88,17 @@ const PropertiesPanel: React.FC = () => {
       <div className="panel-content">
         {/* Node Name */}
         <div className="property-section">
-          <h3>Node: {selectedNode.name}</h3>
-          <p className="category-badge" style={{ backgroundColor: selectedNode.color }}>
-            {selectedNode.category}
+          <h3>Node: {selectedNode.data.name}</h3>
+          <p className="category-badge" style={{ backgroundColor: selectedNode.data.color }}>
+            {selectedNode.data.category}
           </p>
         </div>
 
         {/* Input Sockets */}
-        {selectedNode.inputSockets && selectedNode.inputSockets.length > 0 && (
+        {selectedNode.data.inputSockets && selectedNode.data.inputSockets.length > 0 && (
           <div className="property-section">
             <h4>Input Sockets</h4>
-            {selectedNode.inputSockets.map((socket) => (
+            {selectedNode.data.inputSockets.map((socket) => (
               <div key={socket.id} className="socket-editor">
                 <label className="socket-label">
                   <span className="socket-flag">{socket.argumentFlag}</span>
@@ -69,10 +108,11 @@ const PropertiesPanel: React.FC = () => {
                   <input
                     type="text"
                     className="socket-input"
-                    value={socket.value || ''}
-                    onChange={(e) => handleSocketValueChange(socket.id, e.target.value)}
-                    placeholder={socket.defaultValue}
-                    disabled={!!socket.connectedTo}
+                      value={socketValues[socket.id] || ''}
+                      onChange={(e) => handleSocketInputChange(socket.id, e.target.value)}
+                      onBlur={() => handleSocketInputBlur(socket.id)}
+                      placeholder={socket.defaultValue}
+                      disabled={!!socket.connectedTo}
                   />
                   {(socket.type === 'glob_pattern' || socket.type === 'file_list') && !socket.connectedTo && (
                     <button
@@ -100,10 +140,10 @@ const PropertiesPanel: React.FC = () => {
         )}
 
         {/* Output Sockets */}
-        {selectedNode.outputSockets && selectedNode.outputSockets.length > 0 && (
+        {selectedNode.data.outputSockets && selectedNode.data.outputSockets.length > 0 && (
           <div className="property-section">
             <h4>Output Sockets</h4>
-            {selectedNode.outputSockets.map((socket) => (
+            {selectedNode.data.outputSockets.map((socket) => (
               <div key={socket.id} className="socket-editor">
                 <label className="socket-label">
                   <span className="socket-flag">{socket.argumentFlag}</span>
@@ -112,8 +152,9 @@ const PropertiesPanel: React.FC = () => {
                   <input
                     type="text"
                     className="socket-input"
-                    value={socket.value || ''}
-                    onChange={(e) => handleSocketValueChange(socket.id, e.target.value)}
+                    value={socketValues[socket.id] || ''}
+                    onChange={(e) => handleSocketInputChange(socket.id, e.target.value)}
+                    onBlur={() => handleSocketInputBlur(socket.id)}
                     placeholder={socket.defaultValue}
                     disabled={!!socket.connectedTo}
                   />
@@ -144,11 +185,11 @@ const PropertiesPanel: React.FC = () => {
           <h4>Execution Configuration</h4>
           <div className="info-item">
             <span className="info-label">Environment:</span>
-            <span className="info-value">{selectedNode.environment}</span>
+            <span className="info-value">{selectedNode.data.environment}</span>
           </div>
           <div className="info-item">
             <span className="info-label">Script:</span>
-            <span className="info-value">{selectedNode.script}</span>
+            <span className="info-value">{selectedNode.data.script}</span>
           </div>
         </div>
       </div>

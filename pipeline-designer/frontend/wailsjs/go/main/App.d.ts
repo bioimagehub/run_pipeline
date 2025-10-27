@@ -20,6 +20,8 @@ export function Greet(arg1:string):Promise<string>;
 
 export function LoadPipeline(arg1:string):Promise<main.Pipeline>;
 
+export function LogFrontend(arg1:string):Promise<void>;
+
 export function OpenFileDialog():Promise<string>;
 
 export function SaveFileDialog(arg1:string):Promise<string>;

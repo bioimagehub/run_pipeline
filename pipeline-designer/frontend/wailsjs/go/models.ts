@@ -154,6 +154,8 @@ export namespace main {
 	    script: string;
 	    inputSockets: Socket[];
 	    outputSockets: Socket[];
+	    icon: string;
+	    color: string;
 	    isSelected: boolean;
 	    isCollapsed: boolean;
 	    category: string;
@@ -179,6 +181,8 @@ export namespace main {
 	        this.script = source["script"];
 	        this.inputSockets = this.convertValues(source["inputSockets"], Socket);
 	        this.outputSockets = this.convertValues(source["outputSockets"], Socket);
+	        this.icon = source["icon"];
+	        this.color = source["color"];
 	        this.isSelected = source["isSelected"];
 	        this.isCollapsed = source["isCollapsed"];
 	        this.category = source["category"];

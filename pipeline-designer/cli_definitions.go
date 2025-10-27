@@ -142,6 +142,8 @@ func CreateNodeFromDefinition(definition *CLIDefinition, position Point) *CLINod
 		Script:        definition.Script,
 		InputSockets:  make([]Socket, 0),
 		OutputSockets: make([]Socket, 0),
+		Icon:          definition.Icon,
+		Color:         definition.Color,
 		Category:      definition.Category,
 		TestStatus:    TestNotRun,
 	}
