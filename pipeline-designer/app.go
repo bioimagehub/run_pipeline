@@ -36,6 +36,11 @@ func NewApp() *App {
 	exeDir := filepath.Dir(exePath)
 	logFilePath := filepath.Join(exeDir, "pipeline-designer.log")
 
+	// Delete existing log file if it exists to prevent it from growing too large
+	if _, err := os.Stat(logFilePath); err == nil {
+		os.Remove(logFilePath)
+	}
+
 	// Open or create log file (append mode)
 	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {

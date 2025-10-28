@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { usePipelineStore } from '../../stores/pipelineStore';
+import { LogFrontend } from '../../../wailsjs/go/main/App';
 
 interface Socket {
   id: string;
@@ -165,6 +166,12 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     updateNodeSocket(id, socketId, value);
   };
 
+  const handleUpdateSocket = (socket: Socket) => {
+    const msg = `[CLINode] Update button clicked for socket: ${socket.argumentFlag} (ID: ${socket.id}, NodeId: ${id}, Value: ${socket.value || resolvedInputValues[socket.id]})`;
+    console.log(msg);
+    LogFrontend(msg).catch(console.error);
+  };
+
   // Helper function to resolve placeholders in output socket values
   const resolveOutputPlaceholders = (outputValue: string): string => {
     if (!outputValue) return outputValue;
@@ -314,33 +321,56 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                       const displayValue = getInputSocketDisplayValue(socket);
 
                       return (
-                        <input
-                          type="text"
-                          className="nodrag nopan"
-                          value={displayValue}
-                          onChange={(e) => {
-                            // Only allow changes when not target-connected
-                            if (isTargetConnected) {
-                              return;
-                            }
-                            handleInputChange(socket.id, e.target.value);
-                          }}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          placeholder={`Enter ${socket.argumentFlag}...`}
-                          disabled={isTargetConnected}
-                          style={{
-                            width: '100%',
-                            padding: '4px 6px',
-                            fontSize: '11px',
-                            background: isTargetConnected ? '#222' : '#2a2a2a',
-                            border: isTargetConnected ? '1px dashed #555' : '1px solid #444',
-                            borderRadius: '3px',
-                            color: isTargetConnected ? '#888' : '#ddd',
-                            textAlign: 'left',
-                            cursor: isTargetConnected ? 'not-allowed' : 'text',
-                          }}
-                        />
+                        <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+                          <button
+                            className="nodrag"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateSocket(socket);
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            title="Update socket value"
+                            style={{
+                              background: '#2a2a2a',
+                              border: '1px solid #444',
+                              borderRadius: '3px',
+                              color: '#ddd',
+                              cursor: 'pointer',
+                              fontSize: '11px',
+                              padding: '4px 6px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            🔄
+                          </button>
+                          <input
+                            type="text"
+                            className="nodrag nopan"
+                            value={displayValue}
+                            onChange={(e) => {
+                              // Only allow changes when not target-connected
+                              if (isTargetConnected) {
+                                return;
+                              }
+                              handleInputChange(socket.id, e.target.value);
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            placeholder={`Enter ${socket.argumentFlag}...`}
+                            disabled={isTargetConnected}
+                            style={{
+                              flex: 1,
+                              padding: '4px 6px',
+                              fontSize: '11px',
+                              background: isTargetConnected ? '#222' : '#2a2a2a',
+                              border: isTargetConnected ? '1px dashed #555' : '1px solid #444',
+                              borderRadius: '3px',
+                              color: isTargetConnected ? '#888' : '#ddd',
+                              textAlign: 'left',
+                              cursor: isTargetConnected ? 'not-allowed' : 'text',
+                            }}
+                          />
+                        </div>
                       );
                     })()}
                   </div>
