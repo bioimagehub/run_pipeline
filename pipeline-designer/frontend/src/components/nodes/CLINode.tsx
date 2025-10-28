@@ -171,10 +171,14 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     let resolvedValue = socket.defaultValue || '';
     
     if (resolvedValue.includes('<') && resolvedValue.includes('>')) {
-      // Get all input socket values for placeholder resolution
+      // Use RESOLVED input socket values (not raw values) for placeholder resolution
+      // This ensures multi-level placeholders work correctly
       data.inputSockets?.forEach((inputSocket) => {
         const flagName = inputSocket.argumentFlag.replace(/^--/, '').replace(/-/g, '_');
-        const inputValue = inputSocket.value || '';
+        
+        // Use resolvedInputValues instead of inputSocket.value
+        // This handles cases where input sockets themselves have placeholders
+        const inputValue = resolvedInputValues[inputSocket.id] || inputSocket.value || '';
         
         // Only replace placeholders if the input value is non-empty
         if (inputValue.trim() !== '') {

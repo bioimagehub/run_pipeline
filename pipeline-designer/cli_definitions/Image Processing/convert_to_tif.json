@@ -13,7 +13,7 @@
             "flag": "--input-search-pattern",
             "type": "glob_pattern",
             "socketSide": "input",
-            "isRequired": false,
+            "isRequired": true,
             "defaultValue": "%YAML%/input/*.ims",
             "description": "Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively.",
             "validation": "",
@@ -34,7 +34,7 @@
             "type": "string",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "max",
+            "defaultValue": "None",
             "description": "{None,max,sum,mean,median,min,std} Z projection method over Z axis if Z>1",
             "validation": "",
             "userOverride": false
@@ -64,7 +64,7 @@
             "type": "string",
             "socketSide": "input", 
             "isRequired": false,
-            "defaultValue": "_max",
+            "defaultValue": "",
             "description": "",
             "validation": "",
             "userOverride": false
