@@ -167,9 +167,73 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   };
 
   const handleUpdateSocket = (socket: Socket) => {
-    const msg = `[CLINode] Update button clicked for socket: ${socket.argumentFlag} (ID: ${socket.id}, NodeId: ${id}, Value: ${socket.value || resolvedInputValues[socket.id]})`;
+    // Resolve placeholders in the socket's defaultValue and update the socket value
+    let resolvedValue = socket.defaultValue || '';
+    
+    if (resolvedValue.includes('<') && resolvedValue.includes('>')) {
+      // Get all input socket values for placeholder resolution
+      data.inputSockets?.forEach((inputSocket) => {
+        const flagName = inputSocket.argumentFlag.replace(/^--/, '').replace(/-/g, '_');
+        const inputValue = inputSocket.value || '';
+        
+        // Only replace placeholders if the input value is non-empty
+        if (inputValue.trim() !== '') {
+          // Handle transformations like <input_search_pattern:dirname>
+          const transformRegex = new RegExp(`<${flagName}:([^>]+)>`, 'g');
+          resolvedValue = resolvedValue.replace(transformRegex, (match, transform) => {
+            return applyTransform(inputValue, transform);
+          });
+          
+          // Simple placeholder replacement
+          const placeholder = `<${flagName}>`;
+          resolvedValue = resolvedValue.split(placeholder).join(inputValue);
+        } else {
+          // If input is empty, remove the placeholder entirely (replace with empty string)
+          const transformRegex = new RegExp(`<${flagName}:([^>]+)>`, 'g');
+          resolvedValue = resolvedValue.replace(transformRegex, '');
+          
+          const placeholder = `<${flagName}>`;
+          resolvedValue = resolvedValue.split(placeholder).join('');
+        }
+      });
+    }
+    
+    // Update the socket with resolved value
+    updateNodeSocket(id, socket.id, resolvedValue);
+    
+    const msg = `[CLINode] Update button clicked for socket: ${socket.argumentFlag} (ID: ${socket.id}, NodeId: ${id}, Resolved: ${resolvedValue})`;
     console.log(msg);
     LogFrontend(msg).catch(console.error);
+  };
+
+  const handleUpdateAll = () => {
+    const msg = `[CLINode] Update All button clicked for node: ${data.name} (ID: ${id})`;
+    console.log(msg);
+    LogFrontend(msg).catch(console.error);
+    
+    let updateCount = 0;
+    
+    // Update all input sockets with placeholders
+    if (data.inputSockets) {
+      data.inputSockets.forEach((socket) => {
+        if (socket.defaultValue && socket.defaultValue.includes('<') && socket.defaultValue.includes('>')) {
+          handleUpdateSocket(socket);
+          updateCount++;
+        }
+      });
+    }
+    
+    // Update all output sockets with placeholders
+    if (data.outputSockets) {
+      data.outputSockets.forEach((socket) => {
+        if (socket.defaultValue && socket.defaultValue.includes('<') && socket.defaultValue.includes('>')) {
+          handleUpdateSocket(socket);
+          updateCount++;
+        }
+      });
+    }
+    
+    LogFrontend(`[CLINode] Updated ${updateCount} sockets with placeholders`).catch(console.error);
   };
 
   // Helper function to resolve placeholders in output socket values
@@ -234,6 +298,25 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
               className="nodrag"
               style={{
                 marginLeft: 'auto',
+                background: '#2a5a2a',
+                color: '#bfb',
+                border: '1px solid #3a7a3a',
+                borderRadius: '3px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                marginRight: '4px',
+                fontWeight: '500',
+              }}
+              title="Update all fields with placeholders"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUpdateAll();
+              }}
+            >🔄 Update All</button>
+            <button
+              className="nodrag"
+              style={{
                 background: '#1a7f37',
                 color: '#fff',
                 border: 'none',
@@ -317,32 +400,37 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                         (edge) => edge.target === id && edge.targetHandle === socket.id
                       );
                       
-                      // Get display value (resolved if placeholder-based default)
-                      const displayValue = getInputSocketDisplayValue(socket);
+                      // Use actual socket value, not resolved - only show placeholder in placeholder attribute
+                      const displayValue = socket.value || '';
+                      
+                      // Check if socket has placeholders in defaultValue
+                      const hasPlaceholders = socket.defaultValue && socket.defaultValue.includes('<') && socket.defaultValue.includes('>');
 
                       return (
                         <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
-                          <button
-                            className="nodrag"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleUpdateSocket(socket);
-                            }}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            title="Update socket value"
-                            style={{
-                              background: '#2a2a2a',
-                              border: '1px solid #444',
-                              borderRadius: '3px',
-                              color: '#ddd',
-                              cursor: 'pointer',
-                              fontSize: '11px',
-                              padding: '4px 6px',
-                              flexShrink: 0,
-                            }}
-                          >
-                            🔄
-                          </button>
+                          {hasPlaceholders && (
+                            <button
+                              className="nodrag"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateSocket(socket);
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              title="Update socket value from placeholders"
+                              style={{
+                                background: '#2a2a2a',
+                                border: '1px solid #444',
+                                borderRadius: '3px',
+                                color: '#ddd',
+                                cursor: 'pointer',
+                                fontSize: '11px',
+                                padding: '4px 6px',
+                                flexShrink: 0,
+                              }}
+                            >
+                              🔄
+                            </button>
+                          )}
                           <input
                             type="text"
                             className="nodrag nopan"
@@ -356,7 +444,7 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
-                            placeholder={`Enter ${socket.argumentFlag}...`}
+                            placeholder={socket.defaultValue || `Enter ${socket.argumentFlag}...`}
                             disabled={isTargetConnected}
                             style={{
                               flex: 1,
@@ -437,8 +525,23 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
             {data.outputSockets && data.outputSockets.length > 0 ? (
               <div>
                 {data.outputSockets.map((socket) => {
-                  // Use pre-calculated resolved value
-                  const displayValue = resolvedOutputValues[socket.id] || socket.value || '';
+                  // Use actual socket value, not auto-resolved
+                  const displayValue = socket.value || '';
+                  
+                  // Check if socket has placeholders in defaultValue
+                  const hasPlaceholders = socket.defaultValue && socket.defaultValue.includes('<') && socket.defaultValue.includes('>');
+                  
+                  // Debug logging for output sockets
+                  if (data.name === "Convert to tif") {
+                    console.log('[CLINode Output Socket Debug]', {
+                      nodeName: data.name,
+                      socketFlag: socket.argumentFlag,
+                      socketId: socket.id,
+                      defaultValue: socket.defaultValue,
+                      hasPlaceholders: hasPlaceholders,
+                      value: socket.value
+                    });
+                  }
                   
                   return (
                     <div key={socket.id} style={{ position: 'relative', marginBottom: '8px' }}>
@@ -461,28 +564,52 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                       }}>
                         {socket.argumentFlag}
                       </div>
-                      <input
-                        type="text"
-                        className="nodrag nopan"
-                        value={displayValue}
-                        readOnly
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                        placeholder="output value"
-                        title={`Resolved pattern: ${displayValue}`}
-                        style={{
-                          width: '100%',
-                          padding: '4px 6px',
-                          fontSize: '11px',
-                          background: '#2a2a2a',
-                          border: '1px solid #444',
-                          borderRadius: '3px',
-                          color: '#ddd',
-                          textAlign: 'right',
-                          cursor: 'default',
-                          opacity: 0.8,
-                        }}
-                      />
+                      <div style={{ display: 'flex', gap: '2px', alignItems: 'center', justifyContent: 'flex-end' }}>
+                        <input
+                          type="text"
+                          className="nodrag nopan"
+                          value={displayValue}
+                          onChange={(e) => handleInputChange(socket.id, e.target.value)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder={socket.defaultValue || 'output value'}
+                          title={socket.defaultValue ? `Template: ${socket.defaultValue}` : 'Output value'}
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            fontSize: '11px',
+                            background: '#2a2a2a',
+                            border: '1px solid #444',
+                            borderRadius: '3px',
+                            color: '#ddd',
+                            textAlign: 'right',
+                            cursor: 'text',
+                          }}
+                        />
+                        {hasPlaceholders && (
+                          <button
+                            className="nodrag"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateSocket(socket);
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            title="Update output value from placeholders"
+                            style={{
+                              background: '#2a2a2a',
+                              border: '1px solid #444',
+                              borderRadius: '3px',
+                              color: '#ddd',
+                              cursor: 'pointer',
+                              fontSize: '11px',
+                              padding: '4px 6px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            🔄
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

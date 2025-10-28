@@ -212,16 +212,30 @@ func CreateNodeFromDefinition(definition *CLIDefinition, position Point) *CLINod
 			node.InputSockets = append(node.InputSockets, socket)
 		} else {
 			node.OutputSockets = append(node.OutputSockets, socket)
+			// Debug logging for output sockets
+			if debugMode {
+				appLogger.Printf("[DEBUG] Output socket created: Flag=%s, DefaultValue=%s\n",
+					socket.ArgumentFlag, socket.DefaultValue)
+			}
 		}
 	}
 
-	// Resolve placeholder defaults in output sockets based on input socket defaults
-	resolveDefaultPlaceholders(node)
+	// DO NOT resolve placeholder defaults - keep them as templates!
+	// Resolution happens when:
+	// 1. User clicks update button (frontend)
+	// 2. Pipeline is exported to YAML (backend)
+	// resolveDefaultPlaceholders(node) // REMOVED - this was the bug!
+
+	// Debug logging after creation
+	if debugMode {
+		for _, socket := range node.OutputSockets {
+			appLogger.Printf("[DEBUG] Output socket final: Flag=%s, DefaultValue=%s\n",
+				socket.ArgumentFlag, socket.DefaultValue)
+		}
+	}
 
 	return node
-}
-
-// resolveDefaultPlaceholders resolves placeholder templates in output socket defaults
+} // resolveDefaultPlaceholders resolves placeholder templates in output socket defaults
 // This is called ONCE when a node is created to set up proper default values
 func resolveDefaultPlaceholders(node *CLINode) {
 	// Build a map of input socket default values for quick lookup
