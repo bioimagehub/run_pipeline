@@ -38,19 +38,6 @@ torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 
 [dependency-groups]
-# Default dependencies shared across all environments
-default = [
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
-	"tqdm",
-	"joblib",
-	"nd2reader",
-	"pyyaml",
-]
-
 convert-to-tif = [
 	"numpy",
 	"matplotlib",
@@ -62,6 +49,16 @@ convert-to-tif = [
 	"pystackreg",
 	"cupy-cuda12x",
 	"pyGPUreg",
+
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
 ]
 
 drift-correct = [
@@ -81,6 +78,16 @@ drift-correct = [
 	"pandas",
 	"scipy",
 	"opencv-python>=4.11.0.86",
+
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
 ]
 segment-ernet = [
 	"torch==2.4.0+cu124",
@@ -100,6 +107,17 @@ segment-ernet = [
 	"timm",
 	"einops",
 	"sknw==0.12",
+
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
+
 ]
 
 segmentation = [
@@ -109,6 +127,16 @@ segmentation = [
 	"scikit-image",
 	"pandas",
 	"trackpy",
+
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
 ]
 run_ilastik = [
 	"numpy",
@@ -119,6 +147,16 @@ run_ilastik = [
 	"roifile",
 	"trackpy",
 	"h5py",
+
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
 ]
 
 # Development dependencies
@@ -132,4 +170,14 @@ dev = [
 	"pre-commit",
 	"jupyter",
 	"ipython",
+
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"pyyaml",
 ]

@@ -29,6 +29,7 @@ interface CLINodeData {
 
 const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const [showAllArgs, setShowAllArgs] = useState(false);
+  const [localValues, setLocalValues] = useState<{ [socketId: string]: string }>({});
   const { updateNodeSocket } = usePipelineStore();
   const edges = usePipelineStore((s) => s.edges);
   
@@ -163,8 +164,34 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
 
   const handleInputChange = (socketId: string, value: string) => {
     console.log('Input changed:', { nodeId: id, socketId, value });
+    // Update local state immediately for responsive typing
+    setLocalValues(prev => ({ ...prev, [socketId]: value }));
+    // Debounce or batch update to store
     updateNodeSocket(id, socketId, value);
   };
+
+  // Sync local values with props when data changes externally (but not during typing)
+  React.useEffect(() => {
+    const newLocalValues: { [socketId: string]: string } = {};
+    
+    // Only initialize local values that don't exist yet
+    // This prevents overwriting values while user is typing
+    data.inputSockets?.forEach(socket => {
+      if (!(socket.id in localValues)) {
+        newLocalValues[socket.id] = socket.value || '';
+      }
+    });
+    data.outputSockets?.forEach(socket => {
+      if (!(socket.id in localValues)) {
+        newLocalValues[socket.id] = socket.value || '';
+      }
+    });
+    
+    if (Object.keys(newLocalValues).length > 0) {
+      setLocalValues(prev => ({ ...prev, ...newLocalValues }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.inputSockets, data.outputSockets]);
 
   const handleUpdateSocket = (socket: Socket) => {
     // Resolve placeholders in the socket's defaultValue and update the socket value
@@ -202,7 +229,8 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
       });
     }
     
-    // Update the socket with resolved value
+    // Update both local state and store
+    setLocalValues(prev => ({ ...prev, [socket.id]: resolvedValue }));
     updateNodeSocket(id, socket.id, resolvedValue);
     
     const msg = `[CLINode] Update button clicked for socket: ${socket.argumentFlag} (ID: ${socket.id}, NodeId: ${id}, Resolved: ${resolvedValue})`;
@@ -270,8 +298,21 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
 
   // Helper function to get display value for input socket
   const getInputSocketDisplayValue = (socket: Socket): string => {
+    // Use local value if available (for responsive typing), otherwise fall back to socket value
+    if (localValues[socket.id] !== undefined) {
+      return localValues[socket.id];
+    }
     // Use pre-calculated resolved value
     return resolvedInputValues[socket.id] || socket.value || '';
+  };
+
+  // Helper function to get display value for output socket
+  const getOutputSocketDisplayValue = (socket: Socket): string => {
+    // Use local value if available (for responsive typing), otherwise fall back to socket value
+    if (localValues[socket.id] !== undefined) {
+      return localValues[socket.id];
+    }
+    return socket.value || '';
   };
 
   const color = getCategoryColor(data.category);
@@ -404,8 +445,8 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                         (edge) => edge.target === id && edge.targetHandle === socket.id
                       );
                       
-                      // Use actual socket value, not resolved - only show placeholder in placeholder attribute
-                      const displayValue = socket.value || '';
+                      // Use local value for responsive typing
+                      const displayValue = getInputSocketDisplayValue(socket);
                       
                       // Check if socket has placeholders in defaultValue
                       const hasPlaceholders = socket.defaultValue && socket.defaultValue.includes('<') && socket.defaultValue.includes('>');
@@ -529,8 +570,8 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
             {data.outputSockets && data.outputSockets.length > 0 ? (
               <div>
                 {data.outputSockets.map((socket) => {
-                  // Use actual socket value, not auto-resolved
-                  const displayValue = socket.value || '';
+                  // Use local value for responsive typing
+                  const displayValue = getOutputSocketDisplayValue(socket);
                   
                   // Check if socket has placeholders in defaultValue
                   const hasPlaceholders = socket.defaultValue && socket.defaultValue.includes('<') && socket.defaultValue.includes('>');
