@@ -303,37 +303,64 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
 
   loadPipeline: async (filePath) => {
     try {
-      const pipeline = await LoadPipeline(filePath);
-      if (pipeline) {
-        // Convert pipeline nodes to React Flow nodes
-        const flowNodes: Node<CLINodeData>[] = pipeline.nodes.map((node: any) => ({
-          id: node.id,
-          type: 'cliNode',
-          position: { x: node.position.x, y: node.position.y },
-          data: {
+      // First, check if there's a .reactflow.json file next to the YAML
+      const reactFlowStatePath = filePath.replace(/\.yaml$/, '.reactflow.json');
+      
+      let loadedFromReactFlow = false;
+      try {
+        // @ts-ignore - ReadFile will be available after rebuild
+        const { ReadFile } = await import('../../wailsjs/go/main/App');
+        const reactFlowStateContent = await ReadFile(reactFlowStatePath);
+        const reactFlowState = JSON.parse(reactFlowStateContent);
+        
+        // Successfully loaded React Flow state!
+        console.log('Loaded React Flow state from:', reactFlowStatePath);
+        set({ 
+          nodes: reactFlowState.nodes || [], 
+          edges: reactFlowState.edges || [],
+          currentFilePath: filePath,
+          hasUnsavedChanges: false
+        });
+        loadedFromReactFlow = true;
+      } catch (err) {
+        // No .reactflow.json file found or error reading it - fall back to YAML parsing
+        console.log('No React Flow state file found, loading from YAML:', err);
+      }
+      
+      if (!loadedFromReactFlow) {
+        // Load from YAML (legacy mode or first time)
+        const pipeline = await LoadPipeline(filePath);
+        if (pipeline) {
+          // Convert pipeline nodes to React Flow nodes
+          const flowNodes: Node<CLINodeData>[] = pipeline.nodes.map((node: any) => ({
             id: node.id,
-            definitionId: node.definitionID,
-            name: node.name,
-            category: node.category,
-            icon: node.icon || '🔧',
-            color: node.color || '#569cd6',
-            inputSockets: node.inputSockets || [],
-            outputSockets: node.outputSockets || [],
-            environment: node.environment,
-            script: node.script,
-          },
-        }));
-        
-        // Convert pipeline connections to React Flow edges
-        const flowEdges: Edge[] = (pipeline.connections || []).map((conn: any) => ({
-          id: conn.id,
-          source: conn.fromNodeId,
-          target: conn.toNodeId,
-          sourceHandle: conn.fromSocketId,
-          targetHandle: conn.toSocketId,
-        }));
-        
-        set({ nodes: flowNodes, edges: flowEdges });
+            type: 'cliNode',
+            position: { x: node.position.x, y: node.position.y },
+            data: {
+              id: node.id,
+              definitionId: node.definitionID,
+              name: node.name,
+              category: node.category,
+              icon: node.icon || '🔧',
+              color: node.color || '#569cd6',
+              inputSockets: node.inputSockets || [],
+              outputSockets: node.outputSockets || [],
+              environment: node.environment,
+              script: node.script,
+            },
+          }));
+          
+          // Convert pipeline connections to React Flow edges
+          const flowEdges: Edge[] = (pipeline.connections || []).map((conn: any) => ({
+            id: conn.id,
+            source: conn.fromNodeId,
+            target: conn.toNodeId,
+            sourceHandle: conn.fromSocketId,
+            targetHandle: conn.toSocketId,
+          }));
+          
+          set({ nodes: flowNodes, edges: flowEdges, currentFilePath: filePath, hasUnsavedChanges: false });
+        }
       }
     } catch (error) {
       console.error('Failed to load pipeline:', error);
@@ -404,9 +431,11 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         viewport: { x: 0, y: 0, zoom: 1 } // You can get this from React Flow instance if needed
       };
       
-      // Save React Flow state (use a backend function to write JSON)
+      // Save React Flow state (will be available after rebuild)
       try {
-        await window.runtime.WriteFile(reactFlowStatePath, JSON.stringify(reactFlowState, null, 2));
+        // @ts-ignore - WriteFile will be available after rebuild
+        const { WriteFile } = await import('../../wailsjs/go/main/App');
+        await WriteFile(reactFlowStatePath, JSON.stringify(reactFlowState, null, 2));
         console.log('Saved React Flow state to:', reactFlowStatePath);
       } catch (err) {
         console.warn('Failed to save React Flow state:', err);

@@ -12,6 +12,37 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// cleanupBooleanSocketValues removes boolean values from sockets
+// This is a migration helper to clean up old pipelines that stored "true"/"false" values
+// Boolean flags should not have values - they are presence-only flags
+func cleanupBooleanSocketValues(pipeline *Pipeline) {
+	for i := range pipeline.Nodes {
+		node := &pipeline.Nodes[i]
+
+		// Clean input sockets
+		for j := range node.InputSockets {
+			socket := &node.InputSockets[j]
+			if socket.Type == "bool" {
+				// For boolean sockets, clear any stored value
+				// The presence of the socket itself determines if the flag is set
+				if socket.Value == "true" || socket.Value == "false" {
+					socket.Value = ""
+				}
+			}
+		}
+
+		// Output sockets shouldn't be boolean, but clean them too just in case
+		for j := range node.OutputSockets {
+			socket := &node.OutputSockets[j]
+			if socket.Type == "bool" {
+				if socket.Value == "true" || socket.Value == "false" {
+					socket.Value = ""
+				}
+			}
+		}
+	}
+}
+
 // LoadYAMLPipeline reads a YAML pipeline file and converts it to our visual Pipeline format
 func LoadYAMLPipeline(filePath string, definitionsManager *CLIDefinitionsManager) (*Pipeline, error) {
 	// Read the YAML file
@@ -158,6 +189,10 @@ func LoadYAMLPipeline(filePath string, definitionsManager *CLIDefinitionsManager
 		}
 	}
 
+	// Clean up boolean socket values (convert "true"/"false" to empty strings)
+	// This ensures compatibility with old pipelines that stored boolean values
+	cleanupBooleanSocketValues(pipeline)
+
 	return pipeline, nil
 }
 
@@ -166,21 +201,11 @@ func SaveYAMLPipeline(pipeline *Pipeline, filePath string) error {
 	yamlPipeline := YAMLPipeline{
 		PipelineName: pipeline.Metadata.Name,
 		Run:          make([]YAMLStep, 0),
-		DesignerMetadata: &DesignerMetadata{
-			Nodes:       make([]VisualNodeMetadata, 0),
-			Connections: make([]VisualConnectionMetadata, 0),
-		},
+		// DesignerMetadata is excluded from YAML (stored in .reactflow.json instead)
 	}
 
-	// Save visual node metadata
+	// Convert nodes to YAML steps
 	for _, node := range pipeline.Nodes {
-		nodeMeta := VisualNodeMetadata{
-			ID:       node.ID,
-			Position: node.Position,
-			Size:     node.Size,
-		}
-		yamlPipeline.DesignerMetadata.Nodes = append(yamlPipeline.DesignerMetadata.Nodes, nodeMeta)
-
 		// Convert node to YAML step with commands and expected output files
 		commands, expectedOutputFiles := convertSocketsToCommandsAndOutputs(node, pipeline)
 
@@ -194,18 +219,6 @@ func SaveYAMLPipeline(pipeline *Pipeline, filePath string) error {
 		}
 
 		yamlPipeline.Run = append(yamlPipeline.Run, step)
-	}
-
-	// Save connections metadata
-	for _, conn := range pipeline.Connections {
-		connMeta := VisualConnectionMetadata{
-			ID:           conn.ID,
-			FromNodeID:   conn.FromNodeID,
-			ToNodeID:     conn.ToNodeID,
-			FromSocketID: conn.FromSocketID,
-			ToSocketID:   conn.ToSocketID,
-		}
-		yamlPipeline.DesignerMetadata.Connections = append(yamlPipeline.DesignerMetadata.Connections, connMeta)
 	}
 
 	// Marshal to YAML
@@ -288,7 +301,18 @@ func convertSocketsToCommandsAndOutputs(node CLINode, pipeline *Pipeline) ([]int
 			value = socket.DefaultValue
 		}
 
-		// Skip empty values (typical for bool/flag arguments like --dry-run, --version, etc.)
+		// Handle boolean flags (store_true style)
+		if socket.Type == "bool" {
+			// Only add the flag if value is "true" (Yes was selected)
+			if value == "true" {
+				// Add just the flag without a value (store_true behavior)
+				commands = append(commands, socket.ArgumentFlag)
+			}
+			// If value is empty or anything else, skip this flag entirely
+			continue
+		}
+
+		// Skip empty values for non-bool types
 		if value == "" {
 			continue
 		}
@@ -523,11 +547,30 @@ func ConvertNodeToYAMLStep(node *CLINode) *YAMLStep {
 
 	// Add input socket arguments
 	for _, socket := range node.InputSockets {
-		if !socket.SkipEmit && socket.Value != "" {
-			argMap := make(map[string]interface{})
-			argMap[socket.ArgumentFlag] = socket.Value
-			commands = append(commands, argMap)
+		if socket.SkipEmit {
+			continue
 		}
+
+		// Handle boolean flags (store_true style)
+		if socket.Type == "bool" {
+			// Only add the flag if value is "true" (Yes was selected)
+			if socket.Value == "true" {
+				// Add just the flag without a value (store_true behavior)
+				commands = append(commands, socket.ArgumentFlag)
+			}
+			// If value is empty or anything else, skip this flag entirely
+			continue
+		}
+
+		// Skip empty values for non-bool types
+		if socket.Value == "" {
+			continue
+		}
+
+		// Add as map entry
+		argMap := make(map[string]interface{})
+		argMap[socket.ArgumentFlag] = socket.Value
+		commands = append(commands, argMap)
 	}
 
 	// Add output socket values to expected_output_files instead of commands

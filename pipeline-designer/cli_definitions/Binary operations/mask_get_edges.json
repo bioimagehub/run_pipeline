@@ -3,7 +3,7 @@
     "name": "Mask Get Edges",
     "icon": "\ud83d\udd2c",
     "color": "#c586c0",
-    "description": "CLI tool: mask_get_edges",
+    "description": "Extract edge regions from masks at specified distances inside and outside object boundaries",
     "environment": "uv@3.11:segmentation",
     "executable": "python",
     "script": "standard_code/python/mask_get_edges.py",
@@ -13,8 +13,8 @@
             "flag": "--input-search-pattern",
             "type": "glob_pattern",
             "socketSide": "input",
-            "isRequired": false,
-            "defaultValue": "",
+            "isRequired": true,
+            "defaultValue": "%YAML%/masks/*_segmentation.tif",
             "description": "Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'",
             "validation": "",
             "userOverride": false
@@ -31,20 +31,20 @@
         },
         {
             "flag": "--distance-inside",
-            "type": "string",
+            "type": "int",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "",
+            "defaultValue": "3",
             "description": "How far inside the object should the mask be extended? (default: 3 pixels)",
             "validation": "",
             "userOverride": false
         },
         {
             "flag": "--distance-outside",
-            "type": "string",
+            "type": "int",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "",
+            "defaultValue": "3",
             "description": "How far outside the object should the mask be extended? (default: 3 pixels)",
             "validation": "",
             "userOverride": false
@@ -52,17 +52,27 @@
         {
             "flag": "--output-folder",
             "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern:dirname>",
+            "description": "Path to the output folder. Defaults to same directory as input files.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "Edge masks",
+            "type": "glob_pattern",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "",
-            "description": "Path to the output folder.",
-            "validation": "create_if_missing",
+            "defaultValue": "<output_folder>/*_edge.tif",
+            "description": "Glob pattern for output edge mask files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
             "userOverride": false
         }
     ],
     "version": "1.0.0",
     "author": "BIPHUB",
-    "lastParsed": "2025-10-27T16:12:10.874179",
-    "outputFilesDefined": false,
-    "category": "Segmentation"
+    "lastParsed": "2025-10-29T00:00:00.000000",
+    "outputFilesDefined": true,
+    "category": "Binary operations"
 }

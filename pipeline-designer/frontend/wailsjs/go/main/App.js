@@ -62,6 +62,10 @@ export function PathExists(arg1) {
   return window['go']['main']['App']['PathExists'](arg1);
 }
 
+export function ReadFile(arg1) {
+  return window['go']['main']['App']['ReadFile'](arg1);
+}
+
 export function RunSingleNode(arg1, arg2) {
   return window['go']['main']['App']['RunSingleNode'](arg1, arg2);
 }
@@ -72,4 +76,8 @@ export function SaveFileDialog(arg1) {
 
 export function SavePipeline(arg1, arg2) {
   return window['go']['main']['App']['SavePipeline'](arg1, arg2);
+}
+
+export function WriteFile(arg1, arg2) {
+  return window['go']['main']['App']['WriteFile'](arg1, arg2);
 }

@@ -188,7 +188,7 @@ type DesignerMetadata struct {
 // YAMLPipeline represents the YAML pipeline format
 type YAMLPipeline struct {
 	PipelineName     string            `yaml:"pipeline_name,omitempty"`
-	DesignerMetadata *DesignerMetadata `yaml:"_designer_metadata,omitempty"`
+	DesignerMetadata *DesignerMetadata `yaml:"-"` // Excluded from YAML - stored in .reactflow.json instead
 	Run              []YAMLStep        `yaml:"run"`
 }
 

@@ -1,0 +1,128 @@
+{
+    "id": "qc_tracking",
+    "name": "QC Tracking",
+    "icon": "📊",
+    "color": "#ce9178",
+    "description": "Quality Control for Tracked Masks - Creates heatmap showing mask counts per timepoint and validates track completeness",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/plots/qc_tracking.py",
+    "helpCommand": "python standard_code/python/plots/qc_tracking.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/input/*.tif",
+            "description": "Glob pattern for input images (e.g., './input/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/masks/*_tracked.tif",
+            "description": "Glob pattern for mask images (e.g., './masks/*_tracked.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--qc-key",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "track_completeness",
+            "description": "QC key to use for checking results (e.g., 'track_completeness')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern:dirname>_qc_tracking.png",
+            "description": "Output file path for heatmap. If not specified, displays interactively.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--remove-qc-failed",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Remove files that have failed QC from the plot (only show passed files)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mode",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "all",
+            "description": "File selection mode: 'all', 'examples[N]', 'first[N]', 'random[N]', 'group[N]'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search for files",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--width",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Figure width in inches (auto-calculated if not specified)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--height",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Figure height in inches (auto-calculated if not specified)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "QC Heatmap",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output>",
+            "description": "QC tracking heatmap image (PNG). Shows mask counts per timepoint with QC status.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "QC YAML files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern:dirname>/*_QC.yaml",
+            "description": "QC YAML files created for each input file (saved next to mask files)",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-29T10:30:00.000000",
+    "outputFilesDefined": true,
+    "category": "QC"
+}

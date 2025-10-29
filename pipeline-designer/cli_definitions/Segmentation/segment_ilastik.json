@@ -14,7 +14,7 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": true,
-            "defaultValue": "",
+            "defaultValue": "%ILASTIK_PATH%",
             "description": "Path to the ilastik executable",
             "validation": "must_exist",
             "userOverride": false
@@ -164,7 +164,7 @@
             "type": "glob_pattern",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "<output_folder>/*.tif",
+            "defaultValue": "<output_folder>/*_segmentation.tif",
             "description": "Glob pattern for output segmented TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
@@ -176,6 +176,16 @@
             "isRequired": false,
             "defaultValue": "<output_folder>/*_metadata.yaml",
             "description": "Glob pattern for output metadata YAML files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Ilastk h5 output files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern:dirname>/*_segmentation.h5",
+            "description": "Glob pattern for output Ilastik h5 files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
         },

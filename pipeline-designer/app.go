@@ -506,11 +506,58 @@ func (a *App) PathExists(path string) bool {
 	_, err := os.Stat(resolvedPath)
 	exists := err == nil
 
-	if debugMode {
-		appLogger.Printf("[DEBUG] PathExists check: '%s' -> '%s' = %v\n", path, resolvedPath, exists)
-	}
+	// Always log path validation attempts for debugging
+	appLogger.Printf("[PATH_CHECK] Input: '%s' -> Resolved: '%s' -> Exists: %v (Error: %v)\n", path, resolvedPath, exists, err)
 
 	return exists
+}
+
+// WriteFile writes content to a file
+func (a *App) WriteFile(filePath string, content string) error {
+	if debugMode {
+		appLogger.Printf("[DEBUG] WriteFile called: %s (%d bytes)\n", filePath, len(content))
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		appLogger.Printf("[ERROR] Failed to create directory '%s': %v\n", dir, err)
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Write file
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		appLogger.Printf("[ERROR] Failed to write file '%s': %v\n", filePath, err)
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	appLogger.Printf("File written successfully: %s\n", filePath)
+	return nil
+}
+
+// ReadFile reads content from a file
+func (a *App) ReadFile(filePath string) (string, error) {
+	if debugMode {
+		appLogger.Printf("[DEBUG] ReadFile called: %s\n", filePath)
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("file does not exist: %s", filePath)
+	}
+
+	// Read file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		appLogger.Printf("[ERROR] Failed to read file '%s': %v\n", filePath, err)
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	if debugMode {
+		appLogger.Printf("[DEBUG] File read successfully: %s (%d bytes)\n", filePath, len(data))
+	}
+
+	return string(data), nil
 }
 
 // RunSingleNode creates a temporary YAML file with a single node and executes it

@@ -212,6 +212,24 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     console.log('Input changed:', { nodeId: id, socketId, value });
     // Update local state immediately for responsive typing
     setLocalValues(prev => ({ ...prev, [socketId]: value }));
+    
+    // For path-type sockets, trigger validation during typing (debounced)
+    const inputSocket = data.inputSockets?.find(s => s.id === socketId);
+    const outputSocket = data.outputSockets?.find(s => s.id === socketId);
+    const socket = inputSocket || outputSocket;
+    
+    if (socket?.type === 'path' && value && value.trim() !== '') {
+      // Debounce: clear previous timeout and set a new one
+      if ((window as any).pathValidationTimeouts?.[socketId]) {
+        clearTimeout((window as any).pathValidationTimeouts[socketId]);
+      }
+      if (!(window as any).pathValidationTimeouts) {
+        (window as any).pathValidationTimeouts = {};
+      }
+      (window as any).pathValidationTimeouts[socketId] = setTimeout(() => {
+        checkPathExists(socketId, value);
+      }, 500); // Wait 500ms after user stops typing
+    }
   };
 
   const handleInputCommit = (socketId: string, value: string) => {
@@ -603,45 +621,76 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                               🔄
                             </button>
                           )}
-                          <input
-                            type="text"
-                            className="nodrag nopan"
-                            value={displayValue}
-                            onChange={(e) => {
-                              // Only allow changes when not target-connected
-                              if (isTargetConnected) {
-                                return;
-                              }
-                              handleInputChange(socket.id, e.target.value);
-                            }}
-                            onBlur={(e) => {
-                              // Commit changes on blur
-                              if (!isTargetConnected) {
-                                handleInputCommit(socket.id, e.target.value);
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              // Commit changes on Enter or Tab
-                              if ((e.key === 'Enter' || e.key === 'Tab') && !isTargetConnected) {
-                                handleInputCommit(socket.id, e.currentTarget.value);
-                              }
-                            }}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={(e) => e.stopPropagation()}
-                            placeholder={socket.defaultValue || `Enter ${socket.argumentFlag}...`}
-                            disabled={isTargetConnected}
-                            style={{
-                              flex: 1,
-                              padding: '4px 6px',
-                              fontSize: '11px',
-                              background: isTargetConnected ? '#222' : '#2a2a2a',
-                              border: isTargetConnected ? '1px dashed #555' : '1px solid #444',
-                              borderRadius: '3px',
-                              color: isTargetConnected ? '#888' : '#ddd',
-                              textAlign: 'left',
-                              cursor: isTargetConnected ? 'not-allowed' : 'text',
-                            }}
-                          />
+                          {/* Render dropdown for bool type */}
+                          {socket.type === 'bool' ? (
+                            <select
+                              className="nodrag nopan"
+                              value={displayValue || ''}
+                              onChange={(e) => {
+                                if (!isTargetConnected) {
+                                  const newValue = e.target.value;
+                                  handleInputChange(socket.id, newValue);
+                                  handleInputCommit(socket.id, newValue);
+                                }
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              disabled={isTargetConnected}
+                              style={{
+                                flex: 1,
+                                padding: '4px 6px',
+                                fontSize: '11px',
+                                background: isTargetConnected ? '#222' : '#2a2a2a',
+                                border: isTargetConnected ? '1px dashed #555' : '1px solid #444',
+                                borderRadius: '3px',
+                                color: isTargetConnected ? '#888' : '#ddd',
+                                cursor: isTargetConnected ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              <option value="">No</option>
+                              <option value="true">Yes</option>
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              className="nodrag nopan"
+                              value={displayValue}
+                              onChange={(e) => {
+                                // Only allow changes when not target-connected
+                                if (isTargetConnected) {
+                                  return;
+                                }
+                                handleInputChange(socket.id, e.target.value);
+                              }}
+                              onBlur={(e) => {
+                                // Commit changes on blur
+                                if (!isTargetConnected) {
+                                  handleInputCommit(socket.id, e.target.value);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                // Commit changes on Enter or Tab
+                                if ((e.key === 'Enter' || e.key === 'Tab') && !isTargetConnected) {
+                                  handleInputCommit(socket.id, e.currentTarget.value);
+                                }
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              placeholder={socket.defaultValue || `Enter ${socket.argumentFlag}...`}
+                              disabled={isTargetConnected}
+                              style={{
+                                flex: 1,
+                                padding: '4px 6px',
+                                fontSize: '11px',
+                                background: isTargetConnected ? '#222' : '#2a2a2a',
+                                border: isTargetConnected ? '1px dashed #555' : '1px solid #444',
+                                borderRadius: '3px',
+                                color: isTargetConnected ? '#888' : '#ddd',
+                                textAlign: 'left',
+                                cursor: isTargetConnected ? 'not-allowed' : 'text',
+                              }}
+                            />
+                          )}
                           {/* Show file count for glob_pattern type */}
                           {socket.type === 'glob_pattern' && displayValue && (
                             <span

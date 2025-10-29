@@ -137,6 +137,7 @@ segmentation = [
 	"joblib",
 	"nd2reader",
 	"pyyaml",
+	"seaborn"
 ]
 run_ilastik = [
 	"numpy",

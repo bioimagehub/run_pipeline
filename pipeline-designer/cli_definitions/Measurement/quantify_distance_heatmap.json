@@ -1,0 +1,188 @@
+{
+    "id": "quantify_distance_heatmap",
+    "name": "Quantify Distance Heatmap",
+    "icon": "\ud83d\udcca",
+    "color": "#4ec9b0",
+    "description": "Quantify signal spread (distance) and decay (time) from distance matrices",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/plots/quantify_distance_heatmap.py",
+    "helpCommand": "python standard_code/python/plots/quantify_distance_heatmap.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/input/*.tif",
+            "description": "Glob pattern for input images. Use '**' for recursive search (e.g., './data/**/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--distance-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/distances/*_geodesic.tif",
+            "description": "Glob pattern for distance matrix images. Use '**' for recursive search (e.g., './distances/**/*_geodesic.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--qc-key",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "nuc_segmentation",
+            "description": "QC key to use for filtering (e.g., 'nuc_segmentation', 'track_completeness'). Images with failed status will be excluded.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern:dirname>_quantification",
+            "description": "Folder to save plots and quantification results. If not specified, displays interactively.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--mode",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "all",
+            "description": "File selection mode: 'all' = all files, 'examples[N]' = first, middle, last N files, 'first[N]' = first N files, 'random[N]' = N random files, 'group[N]' = N samples per experimental group (default: all)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--force-show",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Display plots interactively even when saving to output folder",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--channel",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "Which channel to use for quantification (default: 0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--colormap",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "viridis",
+            "description": "Matplotlib colormap for heatmaps (default: viridis)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--remove-first-n-bins",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "5",
+            "description": "Remove first N distance bins (closest to reference) from analysis (default: 5)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--smooth-sigma-distance",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "1.5",
+            "description": "Gaussian smoothing sigma for distance dimension ONLY. Each timepoint is processed independently (no temporal smoothing). (default: 1.5)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--max-measure-pixels",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "20",
+            "description": "Maximum number of pixels to randomly sample per distance bin (default: 20). Makes measurement less sensitive to pixel count variations. Use -1 for all pixels.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-alpha",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0.5",
+            "description": "Alpha transparency for mask overlay on heatmap (0=transparent, 1=opaque) (default: 0.5)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--region-grow-threshold",
+            "type": "float",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0.5",
+            "description": "Threshold for region growing segmentation (0.0-1.0). Grows region from peak by including neighbors >= threshold × running maximum intensity. Higher = more restrictive (e.g., 0.75), lower = more permissive (e.g., 0.25). (default: 0.5)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing. By default, files are processed in parallel when saving to output folder.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--n-jobs",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Number of parallel jobs to run. Default: use all available CPU cores. Ignored if --no-parallel is set.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Quantification plots",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_quantification.png",
+            "description": "Glob pattern for output quantification plots. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Quantification data",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_quantification.tsv",
+            "description": "Glob pattern for output quantification TSV files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-29T00:00:00.000000",
+    "outputFilesDefined": true,
+    "category": "Measurement"
+}

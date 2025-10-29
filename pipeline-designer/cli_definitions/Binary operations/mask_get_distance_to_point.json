@@ -62,7 +62,7 @@
         {
             "flag": "--output-folder",
             "type": "path",
-            "socketSide": "output",
+            "socketSide": "input",
             "isRequired": false,
             "defaultValue": "",
             "description": "Destination folder for output distance maps.",
@@ -76,6 +76,16 @@
             "isRequired": false,
             "defaultValue": "",
             "description": "Do not use parallel processing",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Distance map TIF files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_<distance_method>_bin<bin_size>.tif",
+            "description": "Glob pattern for output distance map TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
         }

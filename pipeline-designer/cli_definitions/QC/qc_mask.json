@@ -6,8 +6,8 @@
     "description": "CLI tool: qc_mask",
     "environment": "uv@3.11:segmentation",
     "executable": "python",
-    "script": "standard_code/python/qc_mask.py",
-    "helpCommand": "python standard_code/python/qc_mask.py --help",
+    "script": "standard_code/python/plots/qc_mask.py",
+    "helpCommand": "python standard_code/python/plots/qc_mask.py --help",
     "arguments": [
         {
             "flag": "--input-search-pattern",

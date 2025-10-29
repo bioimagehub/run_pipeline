@@ -32,8 +32,12 @@ export function OpenFileDialog():Promise<string>;
 
 export function PathExists(arg1:string):Promise<boolean>;
 
+export function ReadFile(arg1:string):Promise<string>;
+
 export function RunSingleNode(arg1:main.CLINode,arg2:string):Promise<string>;
 
 export function SaveFileDialog(arg1:string):Promise<string>;
 
 export function SavePipeline(arg1:main.Pipeline,arg2:string):Promise<void>;
+
+export function WriteFile(arg1:string,arg2:string):Promise<void>;
