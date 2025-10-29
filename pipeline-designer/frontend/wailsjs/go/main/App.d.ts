@@ -30,6 +30,8 @@ export function LogFrontend(arg1:string):Promise<void>;
 
 export function OpenFileDialog():Promise<string>;
 
+export function PathExists(arg1:string):Promise<boolean>;
+
 export function RunSingleNode(arg1:main.CLINode,arg2:string):Promise<string>;
 
 export function SaveFileDialog(arg1:string):Promise<string>;

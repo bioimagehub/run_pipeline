@@ -28,7 +28,9 @@ const Canvas: React.FC = () => {
     edges: storeEdges, 
     setNodes, 
     setEdges, 
-    setSelectedNode, 
+    setSelectedNode,
+    selectedNode,
+    deleteSelectedNode,
     updateNodeSocket
   } = usePipelineStore();
   const [nodes, setLocalNodes, onNodesChange] = useNodesState(storeNodes);
@@ -43,6 +45,28 @@ const Canvas: React.FC = () => {
   React.useEffect(() => {
     setLocalEdges(storeEdges);
   }, [storeEdges]); // Sync whenever store edges change (not just length)
+
+  // Handle keyboard shortcuts (Delete key)
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle Delete key when:
+      // 1. A node is selected
+      // 2. User is NOT typing in an input field
+      if (e.key === 'Delete' && selectedNode) {
+        const target = e.target as HTMLElement;
+        const isTyping = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+        
+        if (!isTyping) {
+          e.preventDefault();
+          deleteSelectedNode();
+          LogFrontend(`[Canvas] Node deleted via Delete key: ${selectedNode.id}`).catch(console.error);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedNode, deleteSelectedNode]);
 
   // Handle node changes (dragging, selecting, etc.)
   const handleNodesChange = useCallback(
@@ -168,26 +192,90 @@ const Canvas: React.FC = () => {
     }
   };
 
+  // Helper function to check if socket types are compatible
+  const areTypesCompatible = (sourceType: string, targetType: string): boolean => {
+    // Exact match is always valid
+    if (sourceType === targetType) return true;
+    
+    // Allow some flexibility: path can connect to string or glob_pattern
+    if (sourceType === 'path' && (targetType === 'string' || targetType === 'glob_pattern')) return true;
+    if (targetType === 'path' && (sourceType === 'string' || sourceType === 'glob_pattern')) return true;
+    
+    // Allow glob_pattern to connect to string (but warn visually)
+    if (sourceType === 'glob_pattern' && targetType === 'string') return true;
+    if (targetType === 'glob_pattern' && sourceType === 'string') return true;
+    
+    // Otherwise, types don't match
+    return false;
+  };
+
   // Handle connection between nodes
   const onConnect = useCallback(
     (params: Connection) => {
       setLocalEdges((eds) => {
-        const newEdges = addEdge(params, eds);
+        // Check type compatibility
+        const sourceNode = nodes.find(n => n.id === params.source);
+        const targetNode = nodes.find(n => n.id === params.target);
+        
+        let isValidConnection = true;
+        let warningMessage = '';
+        
+        if (sourceNode && targetNode && params.sourceHandle && params.targetHandle) {
+          const outputSocket = sourceNode.data.outputSockets?.find(s => s.id === params.sourceHandle);
+          const inputSocket = targetNode.data.inputSockets?.find(s => s.id === params.targetHandle);
+          
+          if (outputSocket && inputSocket) {
+            const typesMatch = areTypesCompatible(outputSocket.type, inputSocket.type);
+            
+            if (!typesMatch) {
+              warningMessage = `Type mismatch: ${outputSocket.type} → ${inputSocket.type}`;
+              console.warn(warningMessage, {
+                source: { node: sourceNode.data.name, socket: outputSocket.argumentFlag, type: outputSocket.type },
+                target: { node: targetNode.data.name, socket: inputSocket.argumentFlag, type: inputSocket.type }
+              });
+              // Don't prevent connection, just mark it as invalid
+              isValidConnection = false;
+            }
+          }
+        }
+        
+        // Create edge with validation metadata
+        const newEdge = {
+          ...params,
+          id: `${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`,
+          animated: true,
+          style: isValidConnection ? { stroke: '#007acc' } : { stroke: '#f48771', strokeWidth: 2 },
+          data: { isValidConnection, warningMessage }
+        };
+        
+        const newEdges = [...eds, newEdge];
         setEdges(newEdges);
         
         // Sync value from output socket to input socket
-        const sourceNode = nodes.find(n => n.id === params.source);
         if (sourceNode && params.sourceHandle) {
           const outputSocket = sourceNode.data.outputSockets?.find(s => s.id === params.sourceHandle);
           if (outputSocket && params.target && params.targetHandle) {
-            // Resolve the output socket value (handles placeholders)
-            const resolvedValue = resolveOutputValue(outputSocket, sourceNode);
+            // Get the actual value from the output socket (not just default, but resolved value)
+            const outputValue = outputSocket.value || resolveOutputValue(outputSocket, sourceNode);
             
-            // Update the target socket with the resolved value
+            console.log('[Canvas] Copying value on connection:', {
+              from: { node: sourceNode.data.name, socket: outputSocket.argumentFlag, value: outputValue },
+              to: { node: params.target, socket: params.targetHandle }
+            });
+            
+            // Update the target socket with the output value immediately
             setTimeout(() => {
-              updateNodeSocket(params.target!, params.targetHandle!, resolvedValue);
+              updateNodeSocket(params.target!, params.targetHandle!, outputValue);
+              LogFrontend(`[Canvas] Connected and copied value: "${outputValue}" from ${sourceNode.data.name} to ${targetNode?.data.name}`).catch(console.error);
             }, 0);
           }
+        }
+        
+        // Show warning if types don't match
+        if (!isValidConnection && warningMessage) {
+          setTimeout(() => {
+            LogFrontend(`[Canvas] Connection warning: ${warningMessage}`).catch(console.error);
+          }, 0);
         }
         
         return newEdges;

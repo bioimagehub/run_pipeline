@@ -485,6 +485,34 @@ func (a *App) GetPathTokens() []PathToken {
 	return tokens
 }
 
+// PathExists checks if a file or directory exists at the given path
+func (a *App) PathExists(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	// Substitute path tokens (%YAML%, %REPO%, etc.)
+	envVars := a.GetEnvVariables()
+	resolvedPath := path
+	for key, value := range envVars {
+		token := "%" + key + "%"
+		resolvedPath = strings.ReplaceAll(resolvedPath, token, value)
+	}
+
+	// Convert forward slashes to OS-specific separators
+	resolvedPath = filepath.FromSlash(resolvedPath)
+
+	// Check if path exists
+	_, err := os.Stat(resolvedPath)
+	exists := err == nil
+
+	if debugMode {
+		appLogger.Printf("[DEBUG] PathExists check: '%s' -> '%s' = %v\n", path, resolvedPath, exists)
+	}
+
+	return exists
+}
+
 // RunSingleNode creates a temporary YAML file with a single node and executes it
 func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) {
 	appLogger.Printf("Running single node: %s (ID: %s)\n", node.Name, node.ID)

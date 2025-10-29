@@ -122,6 +122,21 @@ func LoadYAMLPipeline(filePath string, definitionsManager *CLIDefinitionsManager
 			}
 		}
 
+		// Parse expected_output_files into output sockets
+		if step.ExpectedOutputFiles != nil {
+			for flag, value := range step.ExpectedOutputFiles {
+				socket := Socket{
+					ID:           uuid.New().String(),
+					NodeID:       node.ID,
+					ArgumentFlag: flag,
+					Value:        value,
+					Type:         TypeGlobPattern, // Output files are typically glob patterns
+					SocketSide:   SocketOutput,
+				}
+				node.OutputSockets = append(node.OutputSockets, socket)
+			}
+		}
+
 		// Note: No longer injecting __link_in__/__link_out__ sockets
 		// Output sockets are now properly defined in CLI definition JSON files
 

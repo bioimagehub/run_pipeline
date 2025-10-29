@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { usePipelineStore } from '../../stores/pipelineStore';
-import { LogFrontend, CountFilesMatchingPattern } from '../../../wailsjs/go/main/App';
+import { LogFrontend, CountFilesMatchingPattern, PathExists } from '../../../wailsjs/go/main/App';
 
 interface Socket {
   id: string;
@@ -31,9 +31,53 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const [showAllArgs, setShowAllArgs] = useState(false);
   const [localValues, setLocalValues] = useState<{ [socketId: string]: string }>({});
   const [fileCounts, setFileCounts] = useState<{ [socketId: string]: number }>({});
-  const { updateNodeSocket } = usePipelineStore();
+  const [pathExists, setPathExists] = useState<{ [socketId: string]: boolean }>({});
+  const { updateNodeSocket, deleteSelectedNode } = usePipelineStore();
   const edges = usePipelineStore((s) => s.edges);
+  const nodes = usePipelineStore((s) => s.nodes);
   const currentFilePath = usePipelineStore((s) => s.currentFilePath);
+  
+  // Helper function to check if types are compatible
+  const areTypesCompatible = (type1: string, type2: string): boolean => {
+    if (type1 === type2) return true;
+    if (type1 === 'path' && (type2 === 'string' || type2 === 'glob_pattern')) return true;
+    if (type2 === 'path' && (type1 === 'string' || type1 === 'glob_pattern')) return true;
+    if (type1 === 'glob_pattern' && type2 === 'string') return true;
+    if (type2 === 'glob_pattern' && type1 === 'string') return true;
+    return false;
+  };
+  
+  // Helper function to get socket color based on connection validity
+  const getSocketColor = (socket: Socket, isOutput: boolean): string => {
+    // Find connected edge
+    const connectedEdge = edges.find(edge => 
+      isOutput 
+        ? edge.source === id && edge.sourceHandle === socket.id
+        : edge.target === id && edge.targetHandle === socket.id
+    );
+    
+    if (!connectedEdge) {
+      return '#999'; // Default gray for unconnected
+    }
+    
+    // Find the connected socket to check type compatibility
+    const connectedNode = nodes.find(n => 
+      n.id === (isOutput ? connectedEdge.target : connectedEdge.source)
+    );
+    
+    if (!connectedNode) return '#4CAF50'; // Green if connected but can't find node
+    
+    const connectedSocketId = isOutput ? connectedEdge.targetHandle : connectedEdge.sourceHandle;
+    const connectedSocket = isOutput
+      ? connectedNode.data.inputSockets?.find(s => s.id === connectedSocketId)
+      : connectedNode.data.outputSockets?.find(s => s.id === connectedSocketId);
+    
+    if (!connectedSocket) return '#4CAF50'; // Green if connected but can't find socket
+    
+    // Check type compatibility
+    const typesMatch = areTypesCompatible(socket.type, connectedSocket.type);
+    return typesMatch ? '#4CAF50' : '#f48771'; // Green for valid, red for invalid
+  };
   
   // Helper function to apply transformations to values (defined early for useMemo)
   const applyTransform = (value: string, transform: string): string => {
@@ -168,7 +212,11 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     console.log('Input changed:', { nodeId: id, socketId, value });
     // Update local state immediately for responsive typing
     setLocalValues(prev => ({ ...prev, [socketId]: value }));
-    // Debounce or batch update to store
+  };
+
+  const handleInputCommit = (socketId: string, value: string) => {
+    console.log('Input committed:', { nodeId: id, socketId, value });
+    // Update the store and propagate to connected nodes
     updateNodeSocket(id, socketId, value);
     
     // If this is a glob_pattern socket, update the file count
@@ -176,8 +224,12 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     const outputSocket = data.outputSockets?.find(s => s.id === socketId);
     const socket = inputSocket || outputSocket;
     
-    if (socket && socket.type === 'glob_pattern') {
-      updateFileCount(socketId, value);
+    if (socket) {
+      if (socket.type === 'glob_pattern') {
+        updateFileCount(socketId, value);
+      } else if (socket.type === 'path') {
+        checkPathExists(socketId, value);
+      }
     }
   };
 
@@ -197,17 +249,43 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     }
   };
 
-  // Sync local values with props when data changes externally (but not during typing)
+  // Check if a path exists for a path socket
+  const checkPathExists = async (socketId: string, path: string) => {
+    if (!path || path.trim() === '') {
+      setPathExists(prev => ({ ...prev, [socketId]: false }));
+      return;
+    }
+
+    try {
+      const exists = await PathExists(path);
+      setPathExists(prev => ({ ...prev, [socketId]: exists }));
+    } catch (error) {
+      console.error('Failed to check path existence:', error);
+      setPathExists(prev => ({ ...prev, [socketId]: false }));
+    }
+  };
+
+  // Sync local values with props when data changes externally
   React.useEffect(() => {
     const newLocalValues: { [socketId: string]: string } = {};
     
-    // Only initialize local values that don't exist yet
-    // This prevents overwriting values while user is typing
+    // Update input sockets - only sync from store for connected inputs or initial load
     data.inputSockets?.forEach(socket => {
-      if (!(socket.id in localValues)) {
+      // Check if socket is connected (target of an edge)
+      const isConnected = edges.some(
+        edge => edge.target === id && edge.targetHandle === socket.id
+      );
+      
+      // If connected, always update from store (controlled by connection)
+      // If not connected, only initialize if we don't have a local value yet
+      if (isConnected) {
+        newLocalValues[socket.id] = socket.value || '';
+      } else if (!(socket.id in localValues)) {
         newLocalValues[socket.id] = socket.value || '';
       }
     });
+    
+    // Update output sockets - only initialize if we don't have a local value yet
     data.outputSockets?.forEach(socket => {
       if (!(socket.id in localValues)) {
         newLocalValues[socket.id] = socket.value || '';
@@ -217,14 +295,15 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     if (Object.keys(newLocalValues).length > 0) {
       setLocalValues(prev => ({ ...prev, ...newLocalValues }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.inputSockets, data.outputSockets]);
+  }, [data.inputSockets, data.outputSockets, edges, id, localValues]);
 
-  // Initialize file counts for glob_pattern sockets
+  // Initialize file counts for glob_pattern sockets and path validation for path sockets
   React.useEffect(() => {
     data.inputSockets?.forEach(socket => {
       if (socket.type === 'glob_pattern' && socket.value) {
         updateFileCount(socket.id, socket.value);
+      } else if (socket.type === 'path' && socket.value) {
+        checkPathExists(socket.id, socket.value);
       }
     });
     
@@ -232,6 +311,8 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     data.outputSockets?.forEach(socket => {
       if (socket.type === 'glob_pattern' && socket.value) {
         updateFileCount(socket.id, socket.value);
+      } else if (socket.type === 'path' && socket.value) {
+        checkPathExists(socket.id, socket.value);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -433,11 +514,11 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                 cursor: 'pointer',
                 fontSize: '12px',
               }}
-              title="Delete Node"
+              title="Delete Node (or press Delete key)"
               onClick={(e) => {
                 e.stopPropagation();
-                // Delete selected node via store
-                window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
+                deleteSelectedNode();
+                LogFrontend(`[CLINode] Delete button clicked for node: ${id}`).catch(console.error);
               }}
             >🗑️ Delete</button>
           </>
@@ -470,8 +551,10 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                         position: 'absolute',
                         top: '8px',
                         left: '-20px',
-                        background: socket.connectedTo ? '#4CAF50' : '#999',
+                        background: getSocketColor(socket, false),
+                        transition: 'background 0.2s ease',
                       }}
+                      title={`Type: ${socket.type}`}
                     />
                     <label style={{ 
                       fontSize: '10px', 
@@ -531,6 +614,18 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                               }
                               handleInputChange(socket.id, e.target.value);
                             }}
+                            onBlur={(e) => {
+                              // Commit changes on blur
+                              if (!isTargetConnected) {
+                                handleInputCommit(socket.id, e.target.value);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              // Commit changes on Enter or Tab
+                              if ((e.key === 'Enter' || e.key === 'Tab') && !isTargetConnected) {
+                                handleInputCommit(socket.id, e.currentTarget.value);
+                              }
+                            }}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                             placeholder={socket.defaultValue || `Enter ${socket.argumentFlag}...`}
@@ -565,6 +660,20 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                               title={`${fileCounts[socket.id] || 0} file(s) matching pattern`}
                             >
                               ({fileCounts[socket.id] ?? '...'})
+                            </span>
+                          )}
+                          {/* Show green checkmark for path type if path exists */}
+                          {socket.type === 'path' && displayValue && pathExists[socket.id] && (
+                            <span
+                              style={{
+                                fontSize: '14px',
+                                color: '#4ec9b0',
+                                flexShrink: 0,
+                                lineHeight: 1,
+                              }}
+                              title="Path exists"
+                            >
+                              ✓
                             </span>
                           )}
                         </div>
@@ -662,8 +771,10 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                           position: 'absolute',
                           top: '8px',
                           right: '-20px',
-                          background: socket.connectedTo ? '#4CAF50' : '#999',
+                          background: getSocketColor(socket, true),
+                          transition: 'background 0.2s ease',
                         }}
+                        title={`Type: ${socket.type}`}
                       />
                       <div style={{ 
                         fontSize: '10px', 
@@ -702,6 +813,13 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                           className="nodrag nopan"
                           value={displayValue}
                           onChange={(e) => handleInputChange(socket.id, e.target.value)}
+                          onBlur={(e) => handleInputCommit(socket.id, e.target.value)}
+                          onKeyDown={(e) => {
+                            // Commit changes on Enter or Tab
+                            if (e.key === 'Enter' || e.key === 'Tab') {
+                              handleInputCommit(socket.id, e.currentTarget.value);
+                            }
+                          }}
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={(e) => e.stopPropagation()}
                           placeholder={socket.defaultValue || 'output value'}

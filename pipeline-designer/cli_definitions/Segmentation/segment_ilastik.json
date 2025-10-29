@@ -1,0 +1,198 @@
+{
+    "id": "segment_ilastik",
+    "name": "Ilastik segmentation",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: segment_ilastik",
+    "environment": "uv@3.11:run_ilastik",
+    "executable": "python",
+    "script": "standard_code/python/segment_ilastik.py",
+    "helpCommand": "python standard_code/python/segment_ilastik.py --help",
+    "arguments": [
+        {
+            "flag": "--ilastik-path",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "",
+            "description": "Path to the ilastik executable",
+            "validation": "must_exist",
+            "userOverride": false
+        },
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/input_Ilastik/*.npy",
+            "description": "Glob pattern for input images, e.g. './input_Ilastik/*.npy'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--project-path",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "",
+            "description": "Path to already trained ilp project",
+            "validation": "must_exist",
+            "userOverride": false
+        },
+        {
+            "flag": "--min-sizes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0",
+            "description": "Minimum size for processing. Comma-separated list, one per channel, or single value for all.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--max-sizes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "99999999",
+            "description": "Maximum size for processing. Comma-separated list, one per channel, or single value for all.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--keep-labels",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Comma-separated ilastik label values to keep (e.g. 2,3). Default: keep all non-zero; note 1 is often background.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--remove-xy-edges",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Remove edges in XY",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--remove-z-edges",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Remove edges in Z",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--max-z-gap",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "-1",
+            "description": "Fill Z gaps up to this many slices (e.g., 1 or 2). Default -1 (disabled). Fills gaps where pixels have matching labels at z-gap and z+gap.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--max-time-gap",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "-1",
+            "description": "Fill temporal gaps up to this many frames (e.g., 1 or 2). Default -1 (disabled). Fills gaps where pixels have labels at t-gap and t+gap.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "%YAML%/output_masks",
+            "description": "Output folder for processed files (default: derived from input folder with '_segmented' suffix)",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-scale",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "1",
+            "description": "Over or under-sampling factor for the output image. Default is 1 (no scaling).",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-qc",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Folder to save QC YAML files (default: same folder as input file)",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--qc-key",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "segment_ilastik",
+            "description": "Key to use in QC YAML files (default: segment_ilastik)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Segmented TIF files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*.tif",
+            "description": "Glob pattern for output segmented TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Metadata YAML files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_metadata.yaml",
+            "description": "Glob pattern for output metadata YAML files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "QC YAML files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_qc>/*_QC.yaml",
+            "description": "Glob pattern for QC YAML files. <output_qc> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-29T00:00:00.000000",
+    "outputFilesDefined": true,
+    "category": "Segmentation"
+}

@@ -252,6 +252,40 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         });
       }
 
+      // Also check if this node has any INPUT sockets that are SOURCES for other connections
+      // This handles the case where an input socket value changes and it's connected downstream
+      const connectionsFromThisNodeAsSource = state.edges.filter(
+        edge => edge.source === nodeId
+      );
+
+      if (connectionsFromThisNodeAsSource.length > 0) {
+        connectionsFromThisNodeAsSource.forEach(connection => {
+          const sourceNode = updatedNodes.find(n => n.id === nodeId);
+          if (!sourceNode) return;
+
+          // Get the source socket value from the updated node
+          const sourceSocket = sourceNode.data.outputSockets?.find(s => s.id === connection.sourceHandle);
+          if (!sourceSocket) return;
+
+          const sourceValue = sourceSocket.value || sourceSocket.defaultValue || '';
+
+          // Update the target socket
+          const targetNodeIndex = updatedNodes.findIndex(n => n.id === connection.target);
+          if (targetNodeIndex !== -1) {
+            const targetNode = updatedNodes[targetNodeIndex];
+            const updatedData = { ...targetNode.data };
+            
+            if (updatedData.inputSockets) {
+              updatedData.inputSockets = updatedData.inputSockets.map((socket) =>
+                socket.id === connection.targetHandle ? { ...socket, value: sourceValue, connectedTo: connection.sourceHandle } : socket
+              );
+            }
+            
+            updatedNodes[targetNodeIndex] = { ...targetNode, data: updatedData };
+          }
+        });
+      }
+
       // Also update selectedNode if it's the one being modified or connected to
       let newSelectedNode = state.selectedNode;
       const selectedNodeUpdated = updatedNodes.find(n => n.id === state.selectedNode?.id);
@@ -293,10 +327,10 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         // Convert pipeline connections to React Flow edges
         const flowEdges: Edge[] = (pipeline.connections || []).map((conn: any) => ({
           id: conn.id,
-          source: conn.fromNodeID,
-          target: conn.toNodeID,
-          sourceHandle: conn.fromSocketID,
-          targetHandle: conn.toSocketID,
+          source: conn.fromNodeId,
+          target: conn.toNodeId,
+          sourceHandle: conn.fromSocketId,
+          targetHandle: conn.toSocketId,
         }));
         
         set({ nodes: flowNodes, edges: flowEdges });
@@ -361,6 +395,24 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       });
       
       await SavePipeline(pipeline, filePath);
+      
+      // Also save React Flow state to a separate .reactflow.json file
+      const reactFlowStatePath = filePath.replace(/\.yaml$/, '.reactflow.json');
+      const reactFlowState = {
+        nodes: state.nodes,
+        edges: state.edges,
+        viewport: { x: 0, y: 0, zoom: 1 } // You can get this from React Flow instance if needed
+      };
+      
+      // Save React Flow state (use a backend function to write JSON)
+      try {
+        await window.runtime.WriteFile(reactFlowStatePath, JSON.stringify(reactFlowState, null, 2));
+        console.log('Saved React Flow state to:', reactFlowStatePath);
+      } catch (err) {
+        console.warn('Failed to save React Flow state:', err);
+        // Non-fatal - YAML is the critical file
+      }
+      
       set({ hasUnsavedChanges: false, currentFilePath: filePath });
     } catch (error) {
       console.error('Failed to save pipeline:', error);

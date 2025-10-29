@@ -1,6 +1,6 @@
 {
     "id": "merge_channels",
-    "name": "Merge channels into Cellpose input",
+    "name": "Merge channels",
     "icon": "🎨",
     "color": "#569cd6",
     "description": "CLI tool: merge_channels",
@@ -24,8 +24,8 @@
             "type": "path",
             "socketSide": "input",
             "isRequired": false,
-            "defaultValue": "%YAML%/cellpose_input",
-            "description": "Path to save the processed files",
+            "defaultValue": "<input_search_pattern:dirname>_merged",
+            "description": "Path to save the processed files (auto-derived from input pattern + _merged)",
             "validation": "create_if_missing",
             "userOverride": false
         },
@@ -81,20 +81,20 @@
         },
         {
             "flag": "Merged TIF files",
-            "type": "string",
+            "type": "glob_pattern",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "<output_folder>/**/*.tif",
+            "defaultValue": "<output_folder>/*.tif",
             "description": "Glob pattern for merged output TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false
         },
         {
             "flag": "Merged NPY files",
-            "type": "string",
+            "type": "glob_pattern",
             "socketSide": "output",
             "isRequired": false,
-            "defaultValue": "<output_folder>/**/*.npy",
+            "defaultValue": "<output_folder>/*.npy",
             "description": "Glob pattern for merged output NPY files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
             "validation": "",
             "userOverride": false

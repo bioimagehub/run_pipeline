@@ -338,6 +338,19 @@ body {
   stroke: var(--accent-green);
 }
 
+/* Invalid connection styling */
+.react-flow__edge[data-invalid="true"] .react-flow__edge-path {
+  stroke: var(--warning);
+  stroke-dasharray: 5, 5;
+  animation: dash 0.5s linear infinite;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   width: 10px;

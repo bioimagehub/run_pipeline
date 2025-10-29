@@ -58,6 +58,10 @@ export function OpenFileDialog() {
   return window['go']['main']['App']['OpenFileDialog']();
 }
 
+export function PathExists(arg1) {
+  return window['go']['main']['App']['PathExists'](arg1);
+}
+
 export function RunSingleNode(arg1, arg2) {
   return window['go']['main']['App']['RunSingleNode'](arg1, arg2);
 }

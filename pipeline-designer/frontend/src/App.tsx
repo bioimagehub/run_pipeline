@@ -57,7 +57,8 @@ function App() {
         e.preventDefault();
         openPipeline();
       }
-      // Note: Delete key removed to avoid accidentally deleting nodes while editing text
+      // Note: Delete key removed from here to avoid accidentally deleting nodes while editing text
+      // Delete is now handled in Canvas.tsx with focus detection
     };
 
     window.addEventListener('keydown', handleKeyDown);
