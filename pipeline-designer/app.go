@@ -241,7 +241,55 @@ func (a *App) GetFileListPreview(searchPattern string, searchSubfolders bool) st
 	return GetFileListPreview(searchPattern, searchSubfolders)
 }
 
-// OpenFileDialog shows a file picker dialog for opening YAML files
+// CountFilesMatchingPattern counts files matching a glob pattern
+// Supports %YAML%, %REPO% and other path tokens from .env
+// yamlFilePath should be the path to the currently open YAML file (for resolving %YAML%)
+func (a *App) CountFilesMatchingPattern(pattern string, yamlFilePath string) int {
+	if pattern == "" {
+		return 0
+	}
+
+	// Substitute path tokens (%YAML%, %REPO%, etc.)
+	envVars := a.GetEnvVariables()
+
+	// Override YAML with the directory of the current YAML file if provided
+	if yamlFilePath != "" {
+		envVars["YAML"] = filepath.Dir(yamlFilePath)
+	}
+
+	resolvedPattern := pattern
+	for key, value := range envVars {
+		token := "%" + key + "%"
+		resolvedPattern = strings.ReplaceAll(resolvedPattern, token, value)
+	}
+
+	// Convert forward slashes to OS-specific separators
+	resolvedPattern = filepath.FromSlash(resolvedPattern)
+
+	// Always log the path resolution for debugging
+	appLogger.Printf("[COUNT_FILES] Original pattern: '%s'\n", pattern)
+	appLogger.Printf("[COUNT_FILES] YAML file path: '%s'\n", yamlFilePath)
+	appLogger.Printf("[COUNT_FILES] YAML directory: '%s'\n", envVars["YAML"])
+	appLogger.Printf("[COUNT_FILES] Resolved pattern: '%s'\n", resolvedPattern)
+
+	// Use filepath.Glob to match files
+	matches, err := filepath.Glob(resolvedPattern)
+	if err != nil {
+		appLogger.Printf("[COUNT_FILES] Error: %v\n", err)
+		return 0
+	}
+
+	count := len(matches)
+	appLogger.Printf("[COUNT_FILES] Found %d matching files\n", count)
+	if count > 0 && count <= 5 {
+		// Log first few matches for debugging
+		for i, match := range matches {
+			appLogger.Printf("[COUNT_FILES]   Match %d: %s\n", i+1, match)
+		}
+	}
+
+	return count
+} // OpenFileDialog shows a file picker dialog for opening YAML files
 func (a *App) OpenFileDialog() (string, error) {
 	if debugMode {
 		appLogger.Println("[DEBUG] OpenFileDialog called")
@@ -503,6 +551,18 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 		appLogger.Printf("[WARN] Failed to remove temporary YAML: %v\n", removeErr)
 	} else {
 		appLogger.Printf("Cleaned up temporary YAML file\n")
+	}
+
+	// Clean up status file created by run_pipeline
+	statusFilePath := filepath.Join(yamlDir, "tmp_yaml_config_status.yaml")
+	statusRemoveErr := os.Remove(statusFilePath)
+	if statusRemoveErr != nil {
+		// Only log if file exists (not all runs create status files)
+		if !os.IsNotExist(statusRemoveErr) {
+			appLogger.Printf("[WARN] Failed to remove temporary status YAML: %v\n", statusRemoveErr)
+		}
+	} else {
+		appLogger.Printf("Cleaned up temporary status YAML file\n")
 	}
 
 	if err != nil {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { usePipelineStore } from '../../stores/pipelineStore';
-import { LogFrontend } from '../../../wailsjs/go/main/App';
+import { LogFrontend, CountFilesMatchingPattern } from '../../../wailsjs/go/main/App';
 
 interface Socket {
   id: string;
@@ -30,8 +30,10 @@ interface CLINodeData {
 const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const [showAllArgs, setShowAllArgs] = useState(false);
   const [localValues, setLocalValues] = useState<{ [socketId: string]: string }>({});
+  const [fileCounts, setFileCounts] = useState<{ [socketId: string]: number }>({});
   const { updateNodeSocket } = usePipelineStore();
   const edges = usePipelineStore((s) => s.edges);
+  const currentFilePath = usePipelineStore((s) => s.currentFilePath);
   
   // Helper function to apply transformations to values (defined early for useMemo)
   const applyTransform = (value: string, transform: string): string => {
@@ -168,6 +170,31 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     setLocalValues(prev => ({ ...prev, [socketId]: value }));
     // Debounce or batch update to store
     updateNodeSocket(id, socketId, value);
+    
+    // If this is a glob_pattern socket, update the file count
+    const inputSocket = data.inputSockets?.find(s => s.id === socketId);
+    const outputSocket = data.outputSockets?.find(s => s.id === socketId);
+    const socket = inputSocket || outputSocket;
+    
+    if (socket && socket.type === 'glob_pattern') {
+      updateFileCount(socketId, value);
+    }
+  };
+
+  // Update file count for a glob_pattern socket
+  const updateFileCount = async (socketId: string, pattern: string) => {
+    if (!pattern || pattern.trim() === '') {
+      setFileCounts(prev => ({ ...prev, [socketId]: 0 }));
+      return;
+    }
+
+    try {
+      const count = await CountFilesMatchingPattern(pattern, currentFilePath || '');
+      setFileCounts(prev => ({ ...prev, [socketId]: count }));
+    } catch (error) {
+      console.error('Failed to count files:', error);
+      setFileCounts(prev => ({ ...prev, [socketId]: 0 }));
+    }
   };
 
   // Sync local values with props when data changes externally (but not during typing)
@@ -190,6 +217,23 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     if (Object.keys(newLocalValues).length > 0) {
       setLocalValues(prev => ({ ...prev, ...newLocalValues }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.inputSockets, data.outputSockets]);
+
+  // Initialize file counts for glob_pattern sockets
+  React.useEffect(() => {
+    data.inputSockets?.forEach(socket => {
+      if (socket.type === 'glob_pattern' && socket.value) {
+        updateFileCount(socket.id, socket.value);
+      }
+    });
+    
+    // Also initialize file counts for output sockets with glob_pattern type
+    data.outputSockets?.forEach(socket => {
+      if (socket.type === 'glob_pattern' && socket.value) {
+        updateFileCount(socket.id, socket.value);
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.inputSockets, data.outputSockets]);
 
@@ -503,6 +547,26 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                               cursor: isTargetConnected ? 'not-allowed' : 'text',
                             }}
                           />
+                          {/* Show file count for glob_pattern type */}
+                          {socket.type === 'glob_pattern' && displayValue && (
+                            <span
+                              style={{
+                                fontSize: '10px',
+                                color: fileCounts[socket.id] === 0 ? '#f48771' : '#4ec9b0',
+                                fontWeight: 'bold',
+                                padding: '2px 6px',
+                                background: '#1a1a1a',
+                                borderRadius: '3px',
+                                border: '1px solid #444',
+                                flexShrink: 0,
+                                minWidth: '30px',
+                                textAlign: 'center',
+                              }}
+                              title={`${fileCounts[socket.id] || 0} file(s) matching pattern`}
+                            >
+                              ({fileCounts[socket.id] ?? '...'})
+                            </span>
+                          )}
                         </div>
                       );
                     })()}
@@ -565,7 +629,7 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
               textTransform: 'uppercase',
               textAlign: 'right'
             }}>
-              Outputs
+              Output Files
             </div>
             {data.outputSockets && data.outputSockets.length > 0 ? (
               <div>
@@ -610,27 +674,6 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                         {socket.argumentFlag}
                       </div>
                       <div style={{ display: 'flex', gap: '2px', alignItems: 'center', justifyContent: 'flex-end' }}>
-                        <input
-                          type="text"
-                          className="nodrag nopan"
-                          value={displayValue}
-                          onChange={(e) => handleInputChange(socket.id, e.target.value)}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          placeholder={socket.defaultValue || 'output value'}
-                          title={socket.defaultValue ? `Template: ${socket.defaultValue}` : 'Output value'}
-                          style={{
-                            flex: 1,
-                            padding: '4px 6px',
-                            fontSize: '11px',
-                            background: '#2a2a2a',
-                            border: '1px solid #444',
-                            borderRadius: '3px',
-                            color: '#ddd',
-                            textAlign: 'right',
-                            cursor: 'text',
-                          }}
-                        />
                         {hasPlaceholders && (
                           <button
                             className="nodrag"
@@ -653,6 +696,47 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
                           >
                             🔄
                           </button>
+                        )}
+                        <input
+                          type="text"
+                          className="nodrag nopan"
+                          value={displayValue}
+                          onChange={(e) => handleInputChange(socket.id, e.target.value)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder={socket.defaultValue || 'output value'}
+                          title={socket.defaultValue ? `Template: ${socket.defaultValue}` : 'Output value'}
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            fontSize: '11px',
+                            background: '#2a2a2a',
+                            border: '1px solid #444',
+                            borderRadius: '3px',
+                            color: '#ddd',
+                            textAlign: 'right',
+                            cursor: 'text',
+                          }}
+                        />
+                        {/* Show file count for glob_pattern type */}
+                        {socket.type === 'glob_pattern' && displayValue && (
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              color: fileCounts[socket.id] === 0 ? '#f48771' : '#4ec9b0',
+                              fontWeight: 'bold',
+                              padding: '2px 6px',
+                              background: '#1a1a1a',
+                              borderRadius: '3px',
+                              border: '1px solid #444',
+                              flexShrink: 0,
+                              minWidth: '30px',
+                              textAlign: 'center',
+                            }}
+                            title={`${fileCounts[socket.id] || 0} file(s) matching pattern`}
+                          >
+                            ({fileCounts[socket.id] ?? '...'})
+                          </span>
                         )}
                       </div>
                     </div>

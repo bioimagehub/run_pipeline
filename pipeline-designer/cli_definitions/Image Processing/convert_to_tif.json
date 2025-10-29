@@ -101,7 +101,7 @@
         },
         {
             "flag": "TIF files",
-            "type": "string",
+            "type": "glob_pattern",
             "socketSide": "output",
             "isRequired": false,
             "defaultValue": "<output_folder>/*<output_file_name_extension>.tif",
@@ -111,7 +111,7 @@
         },
                 {
             "flag": "Yaml files",
-            "type": "string",
+            "type": "glob_pattern",
             "socketSide": "output",
             "isRequired": false,
             "defaultValue": "<output_folder>/*<output_file_name_extension>_metadata.yaml",

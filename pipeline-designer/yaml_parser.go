@@ -494,6 +494,7 @@ func contains(s, substr string) bool {
 // ConvertNodeToYAMLStep converts a single node to a YAML step (without connections)
 func ConvertNodeToYAMLStep(node *CLINode) *YAMLStep {
 	commands := make([]interface{}, 0)
+	expectedOutputFiles := make(map[string]string)
 
 	// Add python interpreter if needed
 	if node.Environment != "" && node.Environment != "imageJ" {
@@ -514,20 +515,19 @@ func ConvertNodeToYAMLStep(node *CLINode) *YAMLStep {
 		}
 	}
 
-	// Add output socket arguments
+	// Add output socket values to expected_output_files instead of commands
 	for _, socket := range node.OutputSockets {
 		if !socket.SkipEmit && socket.Value != "" {
-			argMap := make(map[string]interface{})
-			argMap[socket.ArgumentFlag] = socket.Value
-			commands = append(commands, argMap)
+			expectedOutputFiles[socket.ArgumentFlag] = socket.Value
 		}
 	}
 
 	step := &YAMLStep{
-		Name:        node.Name,
-		Environment: node.Environment,
-		Script:      node.Script,
-		Commands:    commands,
+		Name:                node.Name,
+		Environment:         node.Environment,
+		Script:              node.Script,
+		Commands:            commands,
+		ExpectedOutputFiles: expectedOutputFiles,
 	}
 
 	return step

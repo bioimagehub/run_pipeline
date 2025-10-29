@@ -8,7 +8,7 @@ import { GetStartupFilePath } from '../wailsjs/go/main/App';
 import './styles/globals.css';
 
 function App() {
-  const { loadDefinitions, addNodeFromDefinition, nodes, saveCurrentPipeline, saveAsPipeline, openPipeline, currentFilePath, promptForSaveLocation, loadPipeline, setCurrentFilePath, deleteSelectedNode, runNode } = usePipelineStore();
+  const { loadDefinitions, addNodeFromDefinition, nodes, saveCurrentPipeline, saveAsPipeline, openPipeline, currentFilePath, promptForSaveLocation, loadPipeline, setCurrentFilePath, runNode } = usePipelineStore();
   const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
@@ -56,15 +56,13 @@ function App() {
       } else if (e.ctrlKey && e.key === 'o') {
         e.preventDefault();
         openPipeline();
-      } else if (e.key === 'Delete') {
-        // Delete selected node
-        deleteSelectedNode();
       }
+      // Note: Delete key removed to avoid accidentally deleting nodes while editing text
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [saveCurrentPipeline, saveAsPipeline, openPipeline, deleteSelectedNode]);
+  }, [saveCurrentPipeline, saveAsPipeline, openPipeline]);
 
   // Handle custom runNode event
   useEffect(() => {
