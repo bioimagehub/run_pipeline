@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -537,13 +538,69 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 
 	appLogger.Printf("Executing: %s %s\n", runPipelinePath, tmpYamlPath)
 
-	// Execute run_pipeline.exe with the temporary YAML
-	cmd := exec.Command(runPipelinePath, tmpYamlPath)
+	// Define status file path
+	statusFilePath := filepath.Join(yamlDir, "tmp_yaml_config_status.yaml")
+
+	// Remove old status file if it exists
+	os.Remove(statusFilePath)
+
+	// Execute run_pipeline.exe with the temporary YAML in a new visible terminal window
+	// Use cmd.exe /k to keep the window open after execution so user can see output
+	// Build the command string properly with escaped quotes
+	cmdStr := fmt.Sprintf(`%s %s`, runPipelinePath, tmpYamlPath)
+	appLogger.Printf("Command string: %s\n", cmdStr)
+	cmd := exec.Command("cmd", "/c", "start", "cmd", "/k", cmdStr)
 	cmd.Dir = projectRoot
 
-	// Capture output
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
+	// Launch the terminal (non-blocking)
+	runErr := cmd.Start()
+	if runErr != nil {
+		appLogger.Printf("[ERROR] Failed to launch terminal: %v\n", runErr)
+		return "", fmt.Errorf("failed to launch terminal: %w", runErr)
+	}
+
+	appLogger.Printf("Launched execution in new terminal window. Monitoring status file...\n")
+
+	// Poll the status file until run_duration appears (indicating completion)
+	outputStr := "Execution started in new terminal window...\n"
+	maxWaitTime := 30 * time.Minute // Maximum wait time
+	pollInterval := 500 * time.Millisecond
+	startTime := time.Now()
+
+	for {
+		// Check if we've exceeded max wait time
+		if time.Since(startTime) > maxWaitTime {
+			outputStr += "Warning: Maximum wait time exceeded. Process may still be running.\n"
+			appLogger.Printf("[WARN] Maximum wait time exceeded while monitoring status file\n")
+			break
+		}
+
+		// Check if status file exists and contains run_duration
+		if data, err := os.ReadFile(statusFilePath); err == nil {
+			content := string(data)
+			if strings.Contains(content, "run_duration:") {
+				// Execution completed!
+				appLogger.Printf("Status file indicates execution completed\n")
+
+				// Parse duration from status file if possible
+				if idx := strings.Index(content, "run_duration:"); idx != -1 {
+					line := content[idx:]
+					if endIdx := strings.Index(line, "\n"); endIdx != -1 {
+						duration := strings.TrimSpace(strings.TrimPrefix(line[:endIdx], "run_duration:"))
+						outputStr += fmt.Sprintf("Execution completed successfully in %s\n", duration)
+					} else {
+						outputStr += "Execution completed successfully\n"
+					}
+				} else {
+					outputStr += "Execution completed successfully\n"
+				}
+				break
+			}
+		}
+
+		// Wait before next poll
+		time.Sleep(pollInterval)
+	}
 
 	// Clean up temporary file
 	removeErr := os.Remove(tmpYamlPath)
@@ -554,7 +611,6 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 	}
 
 	// Clean up status file created by run_pipeline
-	statusFilePath := filepath.Join(yamlDir, "tmp_yaml_config_status.yaml")
 	statusRemoveErr := os.Remove(statusFilePath)
 	if statusRemoveErr != nil {
 		// Only log if file exists (not all runs create status files)
@@ -563,11 +619,6 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 		}
 	} else {
 		appLogger.Printf("Cleaned up temporary status YAML file\n")
-	}
-
-	if err != nil {
-		appLogger.Printf("[ERROR] Execution failed: %v\nOutput: %s\n", err, outputStr)
-		return outputStr, fmt.Errorf("execution failed: %w", err)
 	}
 
 	// Resolve output glob patterns to show actual files created
