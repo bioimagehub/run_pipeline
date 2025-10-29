@@ -312,8 +312,8 @@ func convertSocketsToCommandsAndOutputs(node CLINode, pipeline *Pipeline) ([]int
 			continue
 		}
 
-		// Skip empty values for non-bool types
-		if value == "" {
+		// Skip empty values or "None" (Python's None should be omitted, not passed as string)
+		if value == "" || value == "None" {
 			continue
 		}
 
@@ -562,8 +562,8 @@ func ConvertNodeToYAMLStep(node *CLINode) *YAMLStep {
 			continue
 		}
 
-		// Skip empty values for non-bool types
-		if socket.Value == "" {
+		// Skip empty values or "None" (Python's None should be omitted, not passed as string)
+		if socket.Value == "" || socket.Value == "None" {
 			continue
 		}
 
