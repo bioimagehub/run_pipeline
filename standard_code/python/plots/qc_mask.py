@@ -956,37 +956,19 @@ Examples:
         os.makedirs(args.output_folder, exist_ok=True)
         logging.info(f"Output folder: {args.output_folder}")
     
-    # Extract prefix from input pattern
-    import re
-    def get_prefix(pattern):
-        m = re.search(r'(.*)\*', pattern)
-        return m.group(1) if m else ''
+    # Use robust bidirectional matching to pair images with masks
+    search_patterns = {
+        'input': args.input_search_pattern,
+        'mask': args.mask_search_pattern
+    }
     
-    input_prefix = get_prefix(args.input_search_pattern)
+    grouped_files = rp.get_grouped_files_to_process(search_patterns, args.search_subfolders)
     
-    # Prepare file pairs by matching patterns
-    file_pairs = []
-    
-    for image_path in image_files:
-        # Get relative path for filename matching
-        rel_img = image_path[len(input_prefix):] if image_path.startswith(input_prefix) else os.path.basename(image_path)
-        rel_img_noext = os.path.splitext(rel_img)[0]
-        
-        # Replace * with the image filename (without extension)
-        specific_mask_pattern = args.mask_search_pattern.replace('*', rel_img_noext)
-        mask_matches = rp.get_files_to_process2(specific_mask_pattern, args.search_subfolders)
-        
-        if len(mask_matches) == 0:
-            logging.warning(f"Mask not found for {image_path} using pattern {specific_mask_pattern}, skipping.")
-            continue
-        if len(mask_matches) > 1:
-            logging.warning(f"Multiple masks found for {image_path} using pattern {specific_mask_pattern}, skipping.")
-            continue
-        
-        file_pairs.append((image_path, mask_matches[0]))
-    
-    if not file_pairs:
+    if not grouped_files:
         raise ValueError(f"No matching image-mask pairs found!")
+    
+    # Convert grouped files to list of tuples (image_path, mask_path)
+    file_pairs = [(group['input'], group['mask']) for group in grouped_files.values()]
     
     logging.info(f"Matched {len(file_pairs)} image-mask pairs")
     
