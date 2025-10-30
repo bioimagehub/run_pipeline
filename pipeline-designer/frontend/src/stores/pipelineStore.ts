@@ -19,6 +19,7 @@ interface CLINodeData {
   environment: string;
   script: string;
   isCollapsed?: boolean;
+  width?: number; // Store node width for persistence
 }
 
 interface PipelineState {
@@ -41,6 +42,7 @@ interface PipelineState {
   loadDefinitions: () => Promise<void>;
   addNodeFromDefinition: (definitionId: string, x: number, y: number) => Promise<void>;
   updateNodeSocket: (nodeId: string, socketId: string, value: string) => void;
+  updateNodeWidth: (nodeId: string, width: number) => void;
   loadPipeline: (filePath: string) => Promise<void>;
   savePipeline: (filePath: string) => Promise<void>;
   saveCurrentPipeline: () => Promise<void>;
@@ -182,6 +184,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
             outputSockets: newNode.outputSockets || [],
             environment: newNode.environment,
             script: newNode.script,
+            width: 300, // Default width for new nodes
           },
         };
         console.log('Adding flow node to store:', flowNode);
@@ -301,6 +304,35 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     });
   },
 
+  updateNodeWidth: (nodeId, width) => {
+    set((state) => {
+      const updatedNodes = state.nodes.map((node) => {
+        if (node.id === nodeId) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              width: width,
+            },
+          };
+        }
+        return node;
+      });
+
+      // Also update selectedNode if it's the one being modified
+      let newSelectedNode = state.selectedNode;
+      if (state.selectedNode?.id === nodeId) {
+        newSelectedNode = updatedNodes.find(n => n.id === nodeId) || null;
+      }
+
+      return {
+        nodes: updatedNodes,
+        selectedNode: newSelectedNode,
+        hasUnsavedChanges: true,
+      };
+    });
+  },
+
   loadPipeline: async (filePath) => {
     try {
       // First, check if there's a .reactflow.json file next to the YAML
@@ -347,6 +379,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
               outputSockets: node.outputSockets || [],
               environment: node.environment,
               script: node.script,
+              width: node.size?.width || 300, // Preserve width from YAML or default to 300
             },
           }));
           
@@ -380,7 +413,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         definitionId: node.data.definitionId,
         name: node.data.name,
         position: { x: node.position.x, y: node.position.y },
-        size: { width: 300, height: 150 },
+        size: { width: node.data.width || 300, height: 150 }, // Use stored width or default
         environment: node.data.environment,
         executable: '',
         script: node.data.script,

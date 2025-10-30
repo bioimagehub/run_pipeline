@@ -25,6 +25,7 @@ interface CLINodeData {
   outputSockets: Socket[];
   environment: string;
   isCollapsed?: boolean;
+  width?: number; // Store node width for persistence
 }
 
 const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
@@ -32,7 +33,8 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   const [localValues, setLocalValues] = useState<{ [socketId: string]: string }>({});
   const [fileCounts, setFileCounts] = useState<{ [socketId: string]: number }>({});
   const [pathExists, setPathExists] = useState<{ [socketId: string]: boolean }>({});
-  const { updateNodeSocket, deleteSelectedNode } = usePipelineStore();
+  const [nodeWidth, setNodeWidth] = useState(data.width || 300); // Initialize from data or default
+  const { updateNodeSocket, deleteSelectedNode, updateNodeWidth } = usePipelineStore();
   const edges = usePipelineStore((s) => s.edges);
   const nodes = usePipelineStore((s) => s.nodes);
   const currentFilePath = usePipelineStore((s) => s.currentFilePath);
@@ -267,6 +269,35 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     }
   };
 
+  // Handle horizontal resize
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const startX = e.clientX;
+    const startWidth = nodeWidth;
+    let currentWidth = startWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      currentWidth = Math.max(300, Math.min(800, startWidth + deltaX)); // Min 300px, max 800px
+      setNodeWidth(currentWidth);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = ''; // Reset cursor
+      
+      // Save the final width to the store (use currentWidth, not nodeWidth)
+      updateNodeWidth(id, currentWidth);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'ew-resize'; // Set cursor during drag
+  };
+
   // Check if a path exists for a path socket
   const checkPathExists = async (socketId: string, path: string) => {
     if (!path || path.trim() === '') {
@@ -335,6 +366,13 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.inputSockets, data.outputSockets]);
+
+  // Sync node width when data.width changes (e.g., when loading from file)
+  React.useEffect(() => {
+    if (data.width !== undefined && data.width !== nodeWidth) {
+      setNodeWidth(data.width);
+    }
+  }, [data.width, nodeWidth]);
 
   const handleUpdateSocket = (socket: Socket) => {
     // Resolve placeholders in the socket's defaultValue and update the socket value
@@ -474,8 +512,35 @@ const CLINode: React.FC<NodeProps<CLINodeData>> = ({ data, selected, id }) => {
   return (
     <div
       className={`cli-node ${selected ? 'selected' : ''}`}
-      style={{ borderColor: color }}
+      style={{ borderColor: color, width: `${nodeWidth}px`, position: 'relative' }}
     >
+      {/* Resize Handle */}
+      <div
+        className="nodrag"
+        onMouseDown={handleResizeMouseDown}
+        style={{
+          position: 'absolute',
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: '8px',
+          cursor: 'ew-resize',
+          background: 'transparent',
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+        title="Drag to resize node width"
+      >
+        <div style={{
+          width: '2px',
+          height: '30px',
+          background: selected ? '#2563eb' : '#444',
+          borderRadius: '1px',
+          transition: 'background 0.2s',
+        }} />
+      </div>
       {/* Node Header */}
       <div className="node-header" style={{ backgroundColor: color }}>
         <span className="node-icon">{data.icon}</span>

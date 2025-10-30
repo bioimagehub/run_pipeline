@@ -967,8 +967,41 @@ Examples:
     if not grouped_files:
         raise ValueError(f"No matching image-mask pairs found!")
     
+    # Debug: Log grouping information
+    logging.info(f"Found {len(grouped_files)} groups")
+    groups_with_input = sum(1 for g in grouped_files.values() if 'input' in g)
+    groups_with_mask = sum(1 for g in grouped_files.values() if 'mask' in g)
+    groups_with_both = sum(1 for g in grouped_files.values() if 'input' in g and 'mask' in g)
+    
+    logging.info(f"Groups with 'input': {groups_with_input}")
+    logging.info(f"Groups with 'mask': {groups_with_mask}")
+    logging.info(f"Groups with both: {groups_with_both}")
+    
+    # Show first few groups for debugging
+    for i, (basename, group) in enumerate(list(grouped_files.items())[:3]):
+        logging.info(f"Group {i} basename='{basename}': {list(group.keys())}")
+    
     # Convert grouped files to list of tuples (image_path, mask_path)
-    file_pairs = [(group['input'], group['mask']) for group in grouped_files.values()]
+    # Only include groups that have both input and mask
+    file_pairs = []
+    missing_mask_groups = []
+    missing_input_groups = []
+    
+    for basename, group in grouped_files.items():
+        if 'input' in group and 'mask' in group:
+            file_pairs.append((group['input'], group['mask']))
+        elif 'input' not in group:
+            missing_input_groups.append(basename)
+        elif 'mask' not in group:
+            missing_mask_groups.append(basename)
+    
+    if missing_mask_groups:
+        logging.warning(f"Found {len(missing_mask_groups)} input files without matching masks. First few: {missing_mask_groups[:5]}")
+    if missing_input_groups:
+        logging.warning(f"Found {len(missing_input_groups)} mask files without matching inputs. First few: {missing_input_groups[:5]}")
+    
+    if not file_pairs:
+        raise ValueError(f"No matching image-mask pairs found! Check that basenames match between input and mask patterns.")
     
     logging.info(f"Matched {len(file_pairs)} image-mask pairs")
     

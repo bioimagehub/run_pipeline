@@ -202,9 +202,9 @@ body {
   background-color: var(--bg-panel);
   border: 2px solid var(--border-color);
   border-radius: 8px;
-  min-width: 300px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-  transition: all 0.2s;
+  transition: box-shadow 0.2s;
+  position: relative;
 }
 
 .cli-node.selected {
@@ -285,6 +285,21 @@ body {
   border-radius: 4px;
   font-size: 11px;
   width: 100%;
+  word-break: break-all;
+  overflow-x: auto;
+}
+
+/* Better text handling in node inputs */
+.cli-node input[type="text"],
+.cli-node select {
+  word-break: break-all;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.cli-node input[type="text"]:focus {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: -1px;
 }
 
 .node-footer {

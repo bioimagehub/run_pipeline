@@ -5,6 +5,7 @@ import tempfile
 import bioio_ome_tiff, bioio_tifffile, bioio_nd2
 import numpy as np
 import warnings
+import logging
 
 # Suppress all cryptography-related warnings (TripleDES, Blowfish deprecations from paramiko)
 warnings.filterwarnings('ignore', category=Warning)
@@ -379,12 +380,16 @@ def get_grouped_files_to_process(
     for pattern_name, pattern in search_patterns.items():
         files = get_files_to_process2(pattern, search_subfolders)
         
+        # Handle ** glob pattern specially - it should be ignored for basename extraction
+        # Replace ** with a placeholder that won't interfere with suffix extraction
+        pattern_for_parsing = pattern.replace('**/', '').replace('**\\', '').replace('**', '')
+        
         # Extract the part before the '*' to use as prefix
-        prefix_match = re.search(r'(.*)\*', pattern)
+        prefix_match = re.search(r'(.*)\*', pattern_for_parsing)
         prefix = prefix_match.group(1) if prefix_match else ''
         
         # Extract the part after the '*' to use as suffix
-        suffix_match = re.search(r'\*(.*)', pattern)
+        suffix_match = re.search(r'\*(.*)', pattern_for_parsing)
         suffix = suffix_match.group(1) if suffix_match else ''
         
         basenames_and_paths = []
