@@ -1,0 +1,68 @@
+[project]
+name = "biphub-image-converter-gui"
+version = "1.0.0"
+description = "Standalone GUI application for converting microscopy images to OME-TIFF"
+authors = [
+    {name = "BIPHUB - Bioimage Informatics Hub", email = "biphub@uio.no"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+dependencies = [
+    # GUI framework
+    "gooey>=1.0.8",
+    "wxPython>=4.2.0",
+    "colored==1.4.4",  # Pin to compatible version for Gooey
+    
+    # Full convert-to-tif dependencies
+    "numpy",
+    "matplotlib",
+    "scyjava",
+    "jpype1==1.5.0",
+    "dask[array]",
+    "h5py",
+    "imaris-ims-file-reader",
+    "pystackreg",
+    "cupy-cuda12x",
+    "pyGPUreg",
+    
+    # BioIO stack
+    "bioio",
+    "bioio-bioformats",
+    "bioio-ome-tiff",
+    "bioio-tifffile",
+    "bioio-nd2",
+    "tqdm",
+    "joblib",
+    "nd2reader",
+    "pyyaml",
+    
+    # For building executable
+    "pyinstaller>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+# UV-specific settings for faster resolution
+index-url = "https://pypi.org/simple"
+
+[tool.black]
+line-length = 120
+target-version = ['py39', 'py310', 'py311']
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
