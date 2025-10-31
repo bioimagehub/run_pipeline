@@ -1,7 +1,5 @@
 # Local clones of external repos
 external/# Ignore files and folders that start with an underscore
-_*/
-_*
 *.env
 *.pyc
 *.log
