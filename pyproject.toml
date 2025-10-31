@@ -57,7 +57,7 @@ convert-to-tif = [
 	"bioio-tifffile",
 	"bioio-nd2",
 	"bioio_lif",
-	"bioio_czi"
+	"bioio_czi",
 	"bioio_dv",
 	"pyGPUreg",
 ]
