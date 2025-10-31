@@ -2,9 +2,11 @@ from typing import Union
 from bioio import BioImage
 import os
 import tempfile
-import bioio_ome_tiff, bioio_tifffile, bioio_nd2
+import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv
 import numpy as np
 import warnings
+
+
 
 # Suppress all cryptography-related warnings (TripleDES, Blowfish deprecations from paramiko)
 warnings.filterwarnings('ignore', category=Warning)
@@ -136,19 +138,31 @@ def load_tczyx_image(path: str) -> BioImage:
     elif path.endswith(".nd2"):
         img = BioImage(path, reader=bioio_nd2.Reader)
         return img
+    elif path.endswith(".lif"):
+        img = BioImage(path, reader=bioio_lif.Reader)
+        return img
+    elif path.endswith(".czi"):
+        img = BioImage(path, reader=bioio_czi.Reader)
+        return img
+    elif path.endswith(".dv"):
+        img = BioImage(path, reader=bioio_dv.Reader)
+        return img
     elif path.endswith(".ims"):
+        # Try custom bioio_imaris reader first (faster, pure Python)
         try:
             from bioio_imaris import Reader as ImarisReader
             img = BioImage(path, reader=ImarisReader)
             return img
         except Exception:
-            _configure_bioformats_safe_io(path)
-            try:
-                import bioio_bioformats  # type: ignore
-                img = BioImage(path, reader=bioio_bioformats.Reader)
-                return img
-            except Exception:
-                pass
+            pass
+        # Fall back to Bio-Formats if bioio_imaris fails
+        _configure_bioformats_safe_io(path)
+        try:
+            import bioio_bioformats  # type: ignore
+            img = BioImage(path, reader=bioio_bioformats.Reader)
+            return img
+        except Exception:
+            pass
     else:
         _configure_bioformats_safe_io(path)
         import bioio_bioformats  # type: ignore

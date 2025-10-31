@@ -56,6 +56,9 @@ convert-to-tif = [
 	"bioio-ome-tiff",
 	"bioio-tifffile",
 	"bioio-nd2",
+	"bioio_lif",
+	"bioio_czi"
+	"bioio_dv",
 	"pyGPUreg",
 ]
 drift-correct = [
