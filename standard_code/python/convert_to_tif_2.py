@@ -53,6 +53,22 @@ def project_z(data: np.ndarray, method: str) -> np.ndarray:
         return np.max(data, axis=0)
 
 
+def get_scene_dimensions(img: BioImage, scene_id: str) -> tuple[int, int]:
+    """
+    Get the physical dimensions (Y, X pixel count) of a scene.
+    
+    Args:
+        img: BioImage object
+        scene_id: Scene identifier
+    
+    Returns:
+        Tuple of (height, width) in pixels
+    """
+    img.set_scene(scene_id)
+    shape = img.shape  # TCZYX
+    return (shape[-2], shape[-1])  # Y, X
+
+
 def convert_single_file(
     input_path: str,
     output_path: str,
@@ -61,6 +77,7 @@ def convert_single_file(
 ) -> bool:
     """
     Convert a single image file to OME-TIFF.
+    Handles multi-scene files by saving each scene separately.
     
     Args:
         input_path: Path to input image file
@@ -77,55 +94,100 @@ def convert_single_file(
         # Load image using BioIO
         img = BioImage(input_path)
         
-        # Apply projection if requested
-        if projection_method:
-            logger.info(f"Applying {projection_method} projection")
-            # Get data as numpy array
+        # Check for multiple scenes
+        scenes = img.scenes
+        logger.info(f"Found {len(scenes)} scene(s)")
+        
+        # If multiple scenes, filter by physical dimensions
+        scenes_to_process = []
+        if len(scenes) > 1:
+            # Get dimensions of all scenes
+            scene_dims = {}
+            for scene_id in scenes:
+                dims = get_scene_dimensions(img, scene_id)
+                scene_dims[scene_id] = dims
+                logger.info(f"Scene '{scene_id}': {dims[0]}x{dims[1]} pixels")
+            
+            # Find the largest dimension (assuming this is the full resolution)
+            max_pixels = max(dims[0] * dims[1] for dims in scene_dims.values())
+            
+            # Only keep scenes with the same pixel count as the largest
+            for scene_id, dims in scene_dims.items():
+                if dims[0] * dims[1] == max_pixels:
+                    scenes_to_process.append(scene_id)
+                else:
+                    logger.info(f"Skipping scene '{scene_id}' - lower resolution pyramid level")
+        else:
+            scenes_to_process = scenes
+        
+        logger.info(f"Processing {len(scenes_to_process)} scene(s) at full resolution")
+        
+        # Process each scene
+        for scene_idx, scene_id in enumerate(scenes_to_process):
+            img.set_scene(scene_id)
+            
+            # Determine output path for this scene
+            if len(scenes_to_process) > 1:
+                base, ext = os.path.splitext(output_path)
+                scene_output_path = f"{base}_{scene_idx + 1}{ext}"
+            else:
+                scene_output_path = output_path
+            
+            logger.info(f"Processing scene '{scene_id}' -> {os.path.basename(scene_output_path)}")
+            
+            # Get data for this scene
             data = np.asarray(img.data)
             
-            # Check if Z dimension exists and is > 1
-            # BioImage typically gives TCZYX or similar
-            if data.ndim >= 3:
-                # Project along Z axis (assuming axis 2 for standard TCZYX)
-                # For safety, find which axis is Z
-                z_axis = None
+            # Apply projection if requested
+            if projection_method:
+                logger.info(f"Applying {projection_method} projection")
+                
+                # Check if Z dimension exists and is > 1
+                if data.ndim >= 3:
+                    # Project along Z axis (assuming axis 2 for standard TCZYX)
+                    z_axis = None
+                    try:
+                        # Try to determine Z axis from dims
+                        dim_order = img.dims.order
+                        z_axis = dim_order.index('Z') if 'Z' in dim_order else 2
+                    except:
+                        z_axis = 2  # Default to axis 2
+                    
+                    if data.shape[z_axis] > 1:
+                        data = np.apply_along_axis(
+                            lambda x: project_z(x, projection_method),
+                            z_axis,
+                            data
+                        )
+            
+            # Save as OME-TIFF
+            os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
+            
+            # Create a new BioImage from the processed data and save
+            # Note: BioImage.save() saves the current scene's data
+            img.save(scene_output_path)
+            logger.info(f"Saved: {scene_output_path}")
+            
+            # Save metadata if requested
+            if save_metadata:
+                metadata_path = os.path.splitext(scene_output_path)[0] + "_metadata.yaml"
                 try:
-                    # Try to determine Z axis from dims
-                    dim_order = img.dims.order
-                    z_axis = dim_order.index('Z') if 'Z' in dim_order else 2
-                except:
-                    z_axis = 2  # Default to axis 2
-                
-                if data.shape[z_axis] > 1:
-                    data = np.apply_along_axis(
-                        lambda x: project_z(x, projection_method),
-                        z_axis,
-                        data
-                    )
-                    # Note: This will reduce dimensionality, BioImage will handle it
-        
-        # Save as OME-TIFF (BioIO handles this elegantly)
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        img.save(output_path)
-        logger.info(f"Saved: {output_path}")
-        
-        # Save metadata if requested
-        if save_metadata:
-            metadata_path = os.path.splitext(output_path)[0] + "_metadata.yaml"
-            try:
-                metadata = extract_metadata.get_all_metadata(input_path, output_file=None)
-                
-                # Add conversion info
-                if projection_method:
+                    metadata = extract_metadata.get_all_metadata(input_path, output_file=None)
+                    
+                    # Add scene and conversion info
                     metadata["Convert to tif"] = {
-                        "Projection": {"Method": projection_method}
+                        "Scene": scene_id,
+                        "Scene_index": scene_idx + 1,
+                        "Total_scenes_processed": len(scenes_to_process)
                     }
-                
-                with open(metadata_path, 'w', encoding='utf-8') as f:
-                    yaml.safe_dump(metadata, f, sort_keys=False)
-                logger.info(f"Saved metadata: {metadata_path}")
-            except Exception as e:
-                logger.warning(f"Failed to save metadata: {e}")
+                    if projection_method:
+                        metadata["Convert to tif"]["Projection"] = {"Method": projection_method}
+                    
+                    with open(metadata_path, 'w', encoding='utf-8') as f:
+                        yaml.safe_dump(metadata, f, sort_keys=False)
+                    logger.info(f"Saved metadata: {metadata_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save metadata: {e}")
         
         return True
         
