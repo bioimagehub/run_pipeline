@@ -222,6 +222,7 @@ def process_file(
 
 
 def process_pattern(args: argparse.Namespace) -> None:
+    
     # Determine if recursive search is requested
     search_subfolders = '**' in args.input_search_pattern
     
