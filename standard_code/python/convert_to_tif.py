@@ -145,8 +145,7 @@ def _save_outputs(
     metadata: dict,
     proj_method: Optional[str],
     out_md_path: str,
-    logger: Optional[Any] = None,
-) -> None:
+    logger: Optional[Any] = None,) -> None:
     """
     Save output image and metadata sidecar.
 
@@ -185,8 +184,7 @@ def process_file(
     img: BioImage,
     input_file_path: str,
     output_tif_file_path: str,
-    projection_method: Optional[str] = None,
-) -> None:
+    projection_method: Optional[str] = None,) -> None:
     """
     Process a single image: project and save outputs and metadata.
 
