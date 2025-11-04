@@ -4,13 +4,9 @@ from typing import Any, Dict, Optional, Tuple, Iterable
 import numpy as np
 import dask.array as da
 
-try:
-    from bioio_base import Reader as BaseReader  # type: ignore
-    from bioio_base import types, constants  # type: ignore
-except Exception as e:  # fallback if bioio_base not exposed directly
-    # bioio exposes base under bioio.types/constants in some versions
-    from bioio import types, constants  # type: ignore
-    from bioio.readers.reader import Reader as BaseReader  # type: ignore
+from bioio_base.reader import Reader as BaseReader
+from bioio_base import types
+from bioio_base import dimensions
 
 
 class Reader(BaseReader):
@@ -81,7 +77,7 @@ class Reader(BaseReader):
         return types.PhysicalPixelSizes(1.0, 1.0, 1.0)
 
     def _get_dims(self) -> str:
-        return constants.Dimensions.DefaultOrder  # "TCZYX"
+        return dimensions.DEFAULT_DIMENSION_ORDER  # "TCZYX"
 
     def _get_metadata(self) -> Dict[str, Any]:
         md: Dict[str, Any] = {}

@@ -29,4 +29,9 @@ dependencies:
       - bioio_ome_tiff
       - bioio-tifffile
       - bioio_nd2
+      - bioio_lif
+      - bioio_czi
+      - bioio_dv
       - pyGPUreg
+
+

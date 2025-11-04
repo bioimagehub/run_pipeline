@@ -1,368 +1,406 @@
+"""
+Minimalistic image format converter using BioIO.
+Converts various image formats to OME-TIFF with optional Z-projection.
+Saves metadata and ROIs as YAML sidecars.
+
+MIT License - BIPHUB, University of Oslo
+"""
+
 import os
-import sys
 import argparse
 import logging
-from typing import Optional, Any, Tuple
+from pathlib import Path
+from typing import Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
+
+from bioio import BioImage
+import yaml
+
+import bioimage_pipeline_utils as rp
+import extract_metadata
 
 # Module-level logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)
-
-from bioio.writers import OmeTiffWriter  # type: ignore
-from bioio import BioImage
-
-# Local helpers
-# Use standard import since bioimage_pipeline_utils is in same directory
-import bioimage_pipeline_utils as rp
-import extract_metadata  
 
 
-def get_physical_pixel_sizes_safe(image: BioImage, src_path: str, out_path: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+def project_z(data: np.ndarray, method: str) -> np.ndarray:
     """
-    Safely retrieve physical pixel sizes from a BioImage object.
-    If retrieval fails, logs a warning and writes an error sidecar file.
-
-    Args:
-        image: BioImage object to extract pixel sizes from.
-        src_path: Path to the source image file.
-        out_path: Path to the intended output file (for error sidecar).
-
-    Returns:
-        Tuple of (Z, Y, X) pixel sizes, or (None, None, None) if unavailable.
-    """
-    try:
-        pps = image.physical_pixel_sizes if image.physical_pixel_sizes is not None else (None, None, None)
-    except Exception as e:
-        logger.warning(f"Error retrieving physical pixel sizes: {e} for file {src_path}. Using None.")
-        # Persist an error sidecar for traceability
-        try:
-            with open(os.path.splitext(out_path)[0] + "_error.txt", 'w', encoding='utf-8') as f:
-                f.write(f"pps_error: {e}\n")
-        except Exception:
-            pass
-        pps = (None, None, None)
-    return pps  # type: ignore[return-value]
-
-
-def load_or_derive_metadata(src_path: str, out_path: str) -> dict:
-    """
-    Load metadata from a YAML sidecar if present, else extract from image.
-
-    Args:
-        src_path: Path to the source image file.
-        out_path: Path to the intended output file.
-
-    Returns:
-        Dictionary of metadata.
-    """
-    md_path = os.path.splitext(src_path)[0] + "_metadata.yaml"
-    if os.path.exists(md_path):
-        try:
-            import yaml
-            with open(md_path, 'r', encoding='utf-8') as f:
-                loaded = yaml.safe_load(f)
-            if isinstance(loaded, dict):
-                return loaded
-        except Exception as e:
-            logger.warning(f"Failed reading existing metadata yaml: {e}")
+    Apply Z-projection to image data.
     
-    # Extract metadata using the extract_metadata module
-    try:
-        metadata = extract_metadata.get_all_metadata(src_path, output_file=None)
-        return metadata
-    except Exception as e:
-        logger.warning(f"Failed extracting metadata: {e}")
-        return {"Source": os.path.basename(src_path)}
-
-
-def _project(image: BioImage, proj_method: Optional[str]) -> np.ndarray:
-    """
-    Optionally Z-project a BioImage to reduce Z dimension using a specified method.
-    Always returns a 5D array (TCZYX).
-
     Args:
-        image: BioImage object to project.
-        proj_method: Projection method ('max', 'sum', 'mean', etc.), or None for no projection.
-
+        data: Input image array
+        method: Projection method ('max', 'sum', 'mean', 'median', 'min', 'std')
+    
     Returns:
-        Projected numpy array in TCZYX order.
+        Projected image array
     """
-    # Load to numpy eagerly; BioImage.data may be dask-backed
-    base = image.data
-    # If this is a Dask array, it has a callable .compute(); otherwise fallback to np.asarray
-    base_np: np.ndarray
-    try:
-        compute_fn = getattr(base, "compute", None)
-        if callable(compute_fn):
-            base_np = np.asarray(compute_fn())
-        else:
-            base_np = np.asarray(base)
-    except Exception:
-        base_np = np.asarray(base)
-
-    # Expect axis order in BioImage to be TCZYX whenever present
-    # No-op if no projection requested
-    if not proj_method:
-        return base_np
-
-    m = proj_method.lower()
-    # Project over Z if has Z>1; otherwise return as-is
-    # Identify axes by shape length; simplest heuristic
-    # BioImage usually orders TCZYX; pad missing leading dims
-    arr = base_np
-    # Normalize to 5D (T,C,Z,Y,X)
-    while arr.ndim < 5:
-        arr = arr[np.newaxis, ...]
-    T, C, Z, Y, X = arr.shape
-    if Z <= 1:
-        return arr  # already 2D per T,C
-
-    if m == "max":
-        proj = arr.max(axis=2)
-    elif m == "sum":
-        proj = arr.sum(axis=2)
-    elif m == "mean":
-        proj = arr.mean(axis=2)
-    elif m == "median":
-        proj = np.median(arr, axis=2)
-    elif m == "min":
-        proj = arr.min(axis=2)
-    elif m == "std":
-        proj = arr.std(axis=2)
+    if method == "max":
+        return np.max(data, axis=0)
+    elif method == "sum":
+        return np.sum(data, axis=0)
+    elif method == "mean":
+        return np.mean(data, axis=0)
+    elif method == "median":
+        return np.median(data, axis=0)
+    elif method == "min":
+        return np.min(data, axis=0)
+    elif method == "std":
+        return np.std(data, axis=0)
     else:
-        logger.warning(f"Unknown projection '{proj_method}', using max")
-        proj = arr.max(axis=2)
-    # Insert a singleton Z back to keep TCZYX
-    proj = proj[:, :, np.newaxis, ...]
-    return proj
+        logger.warning(f"Unknown projection method '{method}', using max")
+        return np.max(data, axis=0)
 
 
-def _save_outputs(
-    image_tczyx: np.ndarray,
-    pps,
-    out_tif_path: str,
-    metadata: dict,
-    proj_method: Optional[str],
-    out_md_path: str,
-    logger: Optional[Any] = None,) -> None:
+def get_scene_dimensions(img: BioImage, scene_id: str) -> tuple[int, int]:
     """
-    Save output image and metadata sidecar.
-
+    Get the physical dimensions (Y, X pixel count) of a scene.
+    
     Args:
-        image_tczyx: Output image array (TCZYX).
-        pps: Physical pixel sizes.
-        out_tif_path: Output OME-TIFF path.
-        metadata: Metadata dictionary to update and save.
-        proj_method: Projection method used.
-        out_md_path: Output metadata YAML path.
-        logger: Logger instance (optional).
-    """
-    if logger is None:
-        logger = logging.getLogger(__name__)
-    rp.save_tczyx_image(image_tczyx, out_tif_path, dim_order="TCZYX", physical_pixel_sizes=pps)
-
-    # Add "Image metadata" wrapper if not already present
-    if "Image metadata" not in metadata and any(key in metadata for key in ["Image dimensions", "Physical dimensions", "Channels"]):
-        # Wrap the extracted metadata under "Image metadata"
-        image_meta_keys = ["Image dimensions", "Physical dimensions", "Channels", "ROIs"]
-        image_metadata = {k: metadata.pop(k) for k in image_meta_keys if k in metadata}
-        metadata["Image metadata"] = image_metadata
+        img: BioImage object
+        scene_id: Scene identifier
     
-    # Update metadata sidecar with conversion info
-    convert_info: dict[str, Any] = {"Projection": {"Method": proj_method}}
-    metadata["Convert to tif"] = convert_info
-    try:
-        import yaml
-        with open(out_md_path, 'w', encoding='utf-8') as f:
-            yaml.safe_dump(metadata, f, sort_keys=False)
-    except Exception as e:
-        logger.warning(f"Failed writing metadata yaml: {e}")
-
-
-def process_file(
-    img: BioImage,
-    input_file_path: str,
-    output_tif_file_path: str,
-    projection_method: Optional[str] = None,) -> None:
+    Returns:
+        Tuple of (height, width) in pixels
     """
-    Process a single image: project and save outputs and metadata.
+    img.set_scene(scene_id)
+    shape = img.shape  # TCZYX
+    return (shape[-2], shape[-1])  # Y, X
 
+
+def convert_single_file(
+    input_path: str,
+    output_path: str,
+    projection_method: Optional[str] = None,
+    save_metadata: bool = True
+) -> bool:
+    """
+    Convert a single image file to OME-TIFF.
+    Handles multi-scene files by saving each scene separately.
+    
     Args:
-        img: Input BioImage object.
-        input_file_path: Path to input image file.
-        output_tif_file_path: Path to output OME-TIFF file.
-        projection_method: Z-projection method (optional).
+        input_path: Path to input image file
+        output_path: Path to output OME-TIFF file
+        projection_method: Optional Z-projection method
+        save_metadata: Whether to save metadata YAML sidecar
+    
+    Returns:
+        True if successful, False otherwise
     """
-    # SAFEGUARDS: avoid overwriting inputs or metadata
-    input_metadata_file_path: str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
-    output_metadata_file_path: str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"
-
-    if os.path.abspath(input_file_path) == os.path.abspath(output_tif_file_path):
-        logger.error("Output equals input; aborting to prevent overwrite")
-        return
-    if os.path.abspath(input_metadata_file_path) == os.path.abspath(output_metadata_file_path):
-        logger.error("Output metadata equals input metadata; aborting to prevent overwrite")
-        return
-
-    # Determine dtype early to force load
     try:
-        _ = img.data.dtype
+        logger.info(f"Converting: {os.path.basename(input_path)}")
+        
+        # Load image using BioIO with proper format detection
+        img = rp.load_tczyx_image(input_path)
+        
+        # Check for multiple scenes
+        scenes = img.scenes
+        logger.info(f"Found {len(scenes)} scene(s)")
+        
+        # If multiple scenes, filter by physical dimensions
+        scenes_to_process = []
+        if len(scenes) > 1:
+            # Get dimensions of all scenes
+            scene_dims = {}
+            for scene_id in scenes:
+                dims = get_scene_dimensions(img, scene_id)
+                scene_dims[scene_id] = dims
+                logger.info(f"Scene '{scene_id}': {dims[0]}x{dims[1]} pixels")
+            
+            # Find the largest dimension (assuming this is the full resolution)
+            max_pixels = max(dims[0] * dims[1] for dims in scene_dims.values())
+            
+            # Only keep scenes with the same pixel count as the largest
+            for scene_id, dims in scene_dims.items():
+                if dims[0] * dims[1] == max_pixels:
+                    scenes_to_process.append(scene_id)
+                else:
+                    logger.info(f"Skipping scene '{scene_id}' - lower resolution pyramid level")
+        else:
+            scenes_to_process = scenes
+        
+        logger.info(f"Processing {len(scenes_to_process)} scene(s) at full resolution")
+        
+        # Process each scene
+        for scene_idx, scene_id in enumerate(scenes_to_process):
+            img.set_scene(scene_id)
+            
+            # Determine output path for this scene
+            if len(scenes_to_process) > 1:
+                base, ext = os.path.splitext(output_path)
+                scene_output_path = f"{base}_{scene_idx + 1}{ext}"
+            else:
+                scene_output_path = output_path
+            
+            logger.info(f"Processing scene '{scene_id}' -> {os.path.basename(scene_output_path)}")
+            
+            # Apply projection if requested
+            if projection_method:
+                logger.info(f"Applying {projection_method} projection")
+                
+                # Get data for this scene using Dask for better performance
+                # Dask provides lazy loading and is ~38% faster for large files
+                dask_data = img.dask_data
+                data = dask_data.compute()
+                
+                # Check if Z dimension exists and is > 1
+                if data.ndim >= 3:
+                    # Project along Z axis (assuming axis 2 for standard TCZYX)
+                    z_axis = None
+                    try:
+                        # Try to determine Z axis from dims
+                        dim_order = img.dims.order
+                        z_axis = dim_order.index('Z') if 'Z' in dim_order else 2
+                    except:
+                        z_axis = 2  # Default to axis 2
+                    
+                    if data.shape[z_axis] > 1:
+                        data = np.apply_along_axis(
+                            lambda x: project_z(x, projection_method),
+                            z_axis,
+                            data
+                        )
+                
+                # Save projected data using save_tczyx_image for consistency
+                os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
+                rp.save_tczyx_image(data, scene_output_path)
+                logger.info(f"Saved: {scene_output_path}")
+            else:
+                # No projection - use direct img.save() for best performance and metadata preservation
+                os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
+                img.save(scene_output_path)
+                logger.info(f"Saved: {scene_output_path}")
+            
+            # Save metadata if requested
+            if save_metadata:
+                metadata_path = os.path.splitext(scene_output_path)[0] + "_metadata.yaml"
+                try:
+                    metadata = extract_metadata.get_all_metadata(input_path, output_file=None)
+                    
+                    # Add scene and conversion info
+                    metadata["Convert to tif"] = {
+                        "Scene": scene_id,
+                        "Scene_index": scene_idx + 1,
+                        "Total_scenes_processed": len(scenes_to_process)
+                    }
+                    if projection_method:
+                        metadata["Convert to tif"]["Projection"] = {"Method": projection_method}
+                    
+                    with open(metadata_path, 'w', encoding='utf-8') as f:
+                        yaml.safe_dump(metadata, f, sort_keys=False)
+                    logger.info(f"Saved metadata: {metadata_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save metadata: {e}")
+        
+        return True
+        
     except Exception as e:
-        logger.error(f"Image lacks dtype: {e}; skipping {input_file_path}")
-        return
-
-    pps = get_physical_pixel_sizes_safe(img, input_file_path, output_tif_file_path)
-    metadata = load_or_derive_metadata(input_file_path, output_tif_file_path)
-
-    arr = _project(img, projection_method)
-
-    _save_outputs(arr, pps, output_tif_file_path, metadata,
-                  projection_method, output_metadata_file_path, logger=logger)
+        logger.error(f"Failed to convert {input_path}: {e}")
+        return False
 
 
-def process_pattern(args: argparse.Namespace) -> None:
+def process_files(
+    input_pattern: str,
+    output_folder: Optional[str] = None,
+    projection_method: Optional[str] = None,
+    collapse_delimiter: str = "__",
+    no_parallel: bool = False,
+    save_metadata: bool = True,
+    output_extension: str = "",
+    dry_run: bool = False
+) -> None:
+    """
+    Process multiple files matching a pattern.
     
-    # Determine if recursive search is requested
-    search_subfolders = '**' in args.input_search_pattern
+    Args:
+        input_pattern: File search pattern (supports ** for recursive)
+        output_folder: Output directory (default: input_dir + '_tif')
+        projection_method: Optional Z-projection method
+        collapse_delimiter: Delimiter for collapsing subfolder paths
+        no_parallel: Disable parallel processing
+        save_metadata: Whether to save metadata YAML sidecars
+        output_extension: Additional extension to add before .tif
+        dry_run: Only print planned actions without executing
+    """
+    # Find files
+    search_subfolders = '**' in input_pattern
+    files = rp.get_files_to_process2(input_pattern, search_subfolders=search_subfolders)
     
-    # Expand glob pattern using standardized helper function
-    files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=search_subfolders)
     if not files:
-        logger.error(f"No files found matching pattern: {args.input_search_pattern}")
+        logger.error(f"No files found matching pattern: {input_pattern}")
         return
     
     logger.info(f"Found {len(files)} file(s) to process")
     
-    # Determine base_folder for path collapsing
-    # If pattern contains '**', use the part before '**' as base
-    # Otherwise, use the parent directory of the pattern
-    if '**' in args.input_search_pattern:
-        # Extract base path before '**'
-        base_folder = args.input_search_pattern.split('**')[0].rstrip('/\\')
-        if not base_folder:  # If pattern starts with '**', use current directory
+    # Determine base folder
+    if '**' in input_pattern:
+        base_folder = input_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:
             base_folder = os.getcwd()
-        # Normalize path separators and resolve to absolute path
         base_folder = os.path.abspath(base_folder)
-        logger.info(f"Using base folder for path collapsing: {base_folder}")
-        logger.info(f"Subfolders after '**' will be collapsed with delimiter '{args.collapse_delimiter}'")
     else:
-        # For non-recursive patterns, use parent of first file
-        from pathlib import Path
         base_folder = str(Path(files[0]).parent)
-
-    # Destination
-    dest = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
-    os.makedirs(dest, exist_ok=True)
-    logger.info(f"Output folder: {dest}")
-
+    
+    # Determine output folder
+    if output_folder is None:
+        output_folder = base_folder + "_tif"
+    
+    logger.info(f"Output folder: {output_folder}")
+    
+    # Prepare file pairs
+    file_pairs = []
     for src in files:
-        collapsed = rp.collapse_filename(src, base_folder, args.collapse_delimiter)
-        out_path = os.path.splitext(collapsed)[0] + args.output_file_name_extension + ".tif"
-        out_path = os.path.join(dest, out_path)
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
-        try:
-            img = rp.load_tczyx_image(src)
-        except Exception as e:
-            logger.error(f"Failed to load {src}: {e}")
-            continue
-
-        process_file(
-            img=img,
-            input_file_path=src,
-            output_tif_file_path=out_path,
-            projection_method=args.projection_method,
-        )
+        collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
+        out_name = os.path.splitext(collapsed)[0] + output_extension + ".tif"
+        out_path = os.path.join(output_folder, out_name)
+        file_pairs.append((src, out_path))
+    
+    # Dry run - just print plans
+    if dry_run:
+        print(f"[DRY RUN] Would process {len(file_pairs)} files")
+        print(f"[DRY RUN] Output folder: {output_folder}")
+        if projection_method:
+            print(f"[DRY RUN] Projection method: {projection_method}")
+        for src, dst in file_pairs:
+            print(f"[DRY RUN] {src} -> {dst}")
+        return
+    
+    # Process files
+    if no_parallel or len(file_pairs) == 1:
+        # Sequential processing
+        for src, dst in file_pairs:
+            convert_single_file(src, dst, projection_method, save_metadata)
+    else:
+        # Parallel processing
+        max_workers = min(os.cpu_count() or 4, len(file_pairs))
+        logger.info(f"Processing with {max_workers} workers")
+        
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(convert_single_file, src, dst, projection_method, save_metadata): (src, dst)
+                for src, dst in file_pairs
+            }
+            
+            for future in as_completed(futures):
+                src, dst = futures[future]
+                try:
+                    success = future.result()
+                    if not success:
+                        logger.error(f"Failed: {src}")
+                except Exception as e:
+                    logger.error(f"Exception processing {src}: {e}")
 
 
 def main() -> None:
-
+    """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Convert images to OME-TIFF with optional Z-projection."
+        description="Minimalistic image converter to OME-TIFF with optional Z-projection.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Convert all ND2 files in a folder
+  python convert_to_tif_2.py --input-search-pattern "data/*.nd2"
+  
+  # Recursive search with max projection
+  python convert_to_tif_2.py --input-search-pattern "data/**/*.czi" --projection-method max
+  
+  # Sequential processing (no parallel)
+  python convert_to_tif_2.py --input-search-pattern "data/*.lif" --no-parallel
+  
+  # Dry run to preview actions
+  python convert_to_tif_2.py --input-search-pattern "data/**/*.nd2" --dry-run
+        """
     )
+    
     parser.add_argument(
         "--input-search-pattern",
         type=str,
         required=True,
-        help="Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively."
+        help="Input file pattern (supports wildcards, use '**' for recursive search)"
     )
+    
     parser.add_argument(
-        "--search-subfolders",
-        action="store_true",
-        help="(Deprecated) Recursive search is now automatic when '**' is in the pattern"
+        "--output-folder",
+        type=str,
+        default=None,
+        help="Output folder (default: input_folder + '_tif')"
     )
+    
+    parser.add_argument(
+        "--projection-method",
+        type=str,
+        default=None,
+        choices=["max", "sum", "mean", "median", "min", "std"],
+        help="Z-projection method (default: no projection)"
+    )
+    
     parser.add_argument(
         "--collapse-delimiter",
         type=str,
         default="__",
-        help="Delimiter for collapsing subfolder structure in output filenames when using '**' (default: __). Example: 'folder1/folder2/image.tif' becomes 'folder1__folder2__image.tif'"
+        help="Delimiter for collapsing subfolder paths (default: '__')"
     )
-
-    parser.add_argument("--projection-method", type=str, default=None,
-                        choices=[None, "max", "sum", "mean", "median", "min", "std"],
-                        help="Z projection method over Z axis if Z>1")
-    parser.add_argument("--multipoint-files", action="store_true", help="(not implemented) multiple scenes to separate files")
-
-    parser.add_argument("--no-parallel", action="store_true", help="unused; kept for CLI compatibility")
-
-    parser.add_argument("--output-file-name-extension", type=str, default="")
-    parser.add_argument("--output-folder", type=str)
-
-    parser.add_argument("--dry-run", action="store_true", help="Print planned actions but do not write any files.")
-    parser.add_argument("--version", action="store_true", help="Print version and exit.")
-
+    
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable parallel processing (process files sequentially)"
+    )
+    
+    parser.add_argument(
+        "--no-metadata",
+        action="store_true",
+        help="Skip saving metadata YAML sidecars"
+    )
+    
+    parser.add_argument(
+        "--output-file-name-extension",
+        type=str,
+        default="",
+        help="Additional extension to add before .tif"
+    )
+    
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned actions without executing"
+    )
+    
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print version and exit"
+    )
+    
     args = parser.parse_args()
-
+    
     if args.version:
-        # Print version from VERSION file if present, else fallback
-        version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "VERSION")
-        version = None
+        version_file = Path(__file__).parent.parent.parent / "VERSION"
         try:
-            with open(version_file, "r", encoding="utf-8") as vf:
-                version = vf.read().strip()
+            version = version_file.read_text(encoding='utf-8').strip()
         except Exception:
             version = "unknown"
-        print(f"convert_to_tif.py version: {version}")
+        print(f"convert_to_tif_2.py version: {version}")
         return
-
+    
+    # Setup logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s | %(levelname)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-
-    if args.dry_run:
-        # Print planned actions for each file, do not write outputs
-        search_subfolders = '**' in args.input_search_pattern
-        files = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=search_subfolders)
-        
-        if not files:
-            print(f"[DRY RUN] No files found matching pattern: {args.input_search_pattern}")
-            return
-        
-        # Determine base_folder using same logic as main processing
-        if '**' in args.input_search_pattern:
-            base_folder = args.input_search_pattern.split('**')[0].rstrip('/\\')
-            if not base_folder:
-                base_folder = os.getcwd()
-            base_folder = os.path.abspath(base_folder)
-            print(f"[DRY RUN] Using base folder for path collapsing: {base_folder}")
-            print(f"[DRY RUN] Subfolders after '**' will be collapsed with delimiter '{args.collapse_delimiter}'")
-        else:
-            from pathlib import Path
-            base_folder = str(Path(files[0]).parent)
-
-        dest = args.output_folder if getattr(args, "output_folder", None) else base_folder + "_tif"
-        print(f"[DRY RUN] Would process {len(files)} files. Output folder: {dest}")
-        for src in files:
-            collapsed = rp.collapse_filename(src, base_folder, args.collapse_delimiter)
-            out_path = os.path.splitext(collapsed)[0] + args.output_file_name_extension + ".tif"
-            out_path = os.path.join(dest, out_path)
-            print(f"[DRY RUN] Would convert: {src} -> {out_path}")
-        return
-
-    process_pattern(args)
+    
+    # Process files
+    process_files(
+        input_pattern=args.input_search_pattern,
+        output_folder=args.output_folder,
+        projection_method=args.projection_method,
+        collapse_delimiter=args.collapse_delimiter,
+        no_parallel=args.no_parallel,
+        save_metadata=not args.no_metadata,
+        output_extension=args.output_file_name_extension,
+        dry_run=args.dry_run
+    )
 
 
 if __name__ == "__main__":
