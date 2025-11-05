@@ -279,7 +279,7 @@ int main() {
                     write_yaml_command[strlen(write_yaml_command) + 1] = 0;
                 }
                 //strcat(write_yaml_command, "/");  // Add single forward slash
-                strcat(write_yaml_command, "'\n      - --no-parallel\n''')");
+                strcat(write_yaml_command, "'\n      - --no-parallel\n      - --standard-tif\n''')");
                 
                 Python_RunString(write_yaml_command);
                 Wait(0.2);

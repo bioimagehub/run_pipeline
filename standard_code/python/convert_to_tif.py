@@ -72,17 +72,19 @@ def convert_single_file(
     input_path: str,
     output_path: str,
     projection_method: Optional[str] = None,
-    save_metadata: bool = True
+    save_metadata: bool = True,
+    standard_tif: bool = False
 ) -> bool:
     """
-    Convert a single image file to OME-TIFF.
+    Convert a single image file to OME-TIFF or standard TIFF.
     Handles multi-scene files by saving each scene separately.
     
     Args:
         input_path: Path to input image file
-        output_path: Path to output OME-TIFF file
+        output_path: Path to output TIFF file
         projection_method: Optional Z-projection method
         save_metadata: Whether to save metadata YAML sidecar
+        standard_tif: If True, save as standard TIFF instead of OME-TIFF (better NIS-Elements compatibility)
     
     Returns:
         True if successful, False otherwise
@@ -185,6 +187,11 @@ def convert_single_file(
             if channel_names is not None:
                 save_kwargs['channel_names'] = channel_names
             
+            # Add standard_tif flag for NIS-Elements compatibility
+            if standard_tif:
+                save_kwargs['ome_tiff'] = False
+                logger.info("Saving as standard TIFF (NIS-Elements compatible)")
+            
             # Save with metadata
             rp.save_tczyx_image(data, scene_output_path, **save_kwargs)
             logger.info(f"Saved: {scene_output_path}")
@@ -225,7 +232,8 @@ def process_files(
     no_parallel: bool = False,
     save_metadata: bool = True,
     output_extension: str = "",
-    dry_run: bool = False
+    dry_run: bool = False,
+    standard_tif: bool = False
 ) -> None:
     """
     Process multiple files matching a pattern.
@@ -239,6 +247,7 @@ def process_files(
         save_metadata: Whether to save metadata YAML sidecars
         output_extension: Additional extension to add before .tif
         dry_run: Only print planned actions without executing
+        standard_tif: If True, save as standard TIFF instead of OME-TIFF
     """
     # Find files
     search_subfolders = '**' in input_pattern
@@ -287,7 +296,7 @@ def process_files(
     if no_parallel or len(file_pairs) == 1:
         # Sequential processing
         for src, dst in file_pairs:
-            convert_single_file(src, dst, projection_method, save_metadata)
+            convert_single_file(src, dst, projection_method, save_metadata, standard_tif)
     else:
         # Parallel processing
         max_workers = min(os.cpu_count() or 4, len(file_pairs))
@@ -295,7 +304,7 @@ def process_files(
         
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(convert_single_file, src, dst, projection_method, save_metadata): (src, dst)
+                executor.submit(convert_single_file, src, dst, projection_method, save_metadata, standard_tif): (src, dst)
                 for src, dst in file_pairs
             }
             
@@ -385,6 +394,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--standard-tif",
+        action="store_true",
+        help="Save as standard TIFF instead of OME-TIFF (better NIS-Elements compatibility)"
+    )
+    
+    parser.add_argument(
         "--version",
         action="store_true",
         help="Print version and exit"
@@ -417,7 +432,8 @@ Examples:
         no_parallel=args.no_parallel,
         save_metadata=not args.no_metadata,
         output_extension=args.output_file_name_extension,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        standard_tif=args.standard_tif
     )
 
 
