@@ -178,6 +178,10 @@ int main() {
             // Build full path
             strcpy(full_path, folder_path);
             
+            // Debug: Show folder_path
+            SetCommandText(folder_path);
+            WaitText(0, folder_path);
+            
             // Only add separator if folder_path doesn't already end with one
             folder_len = strlen(folder_path);
             if (folder_len > 0) {
@@ -188,6 +192,10 @@ int main() {
             
             strcat(full_path, current_file);
             strcpy(selected_file, full_path);
+            
+            // Debug: Show selected_file before normalization
+            SetCommandText(selected_file);
+            WaitText(0, selected_file);
             
             current_file_num = current_file_num + 1;
             
@@ -228,6 +236,10 @@ int main() {
                     selected_file[idx] = 47;
                 }
             }
+            
+            // Debug: Show selected_file after normalization
+            SetCommandText(selected_file);
+            WaitText(0, selected_file);
             
             // Verify input file exists
             if (!ExistFile(selected_file)) {
