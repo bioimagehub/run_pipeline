@@ -172,19 +172,18 @@ int main() {
             }
             current_file[name_len] = 0;
             
-            // Debug: Show current_file
-            SetCommandText(current_file);
-            WaitText(0, current_file);
-            
             // Build full path: folder_path is already clean (no trailing slash)
             strcpy(full_path, folder_path);
             strcat(full_path, "/");
             strcat(full_path, current_file);
             strcpy(selected_file, full_path);
             
-            // Debug: Show selected_file before normalization
-            SetCommandText(selected_file);
-            WaitText(0, selected_file);
+            // Normalize all backslashes to forward slashes for consistency
+            for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
+                if (selected_file[idx] == 92) {
+                    selected_file[idx] = 47;
+                }
+            }
             
             current_file_num = current_file_num + 1;
             
@@ -219,13 +218,11 @@ int main() {
             // CONVERSION LOGIC USING run_pipeline.exe
             // ==========================================
             
-            // Debug: Show selected_file
-            SetCommandText(selected_file);
-            WaitText(0, selected_file);
-            
             // Verify input file exists
             if (!ExistFile(selected_file)) {
-                WaitText(0, "  ERROR: File does not exist, skipping");
+                SetCommandText("ERROR: File does not exist");
+                WaitText(0, selected_file);
+                WaitText(0, "Skipping this file");
             } else {
                 // Create basename: full path without extension
                 path_len = strlen(selected_file);
@@ -403,12 +400,14 @@ int main() {
                         // Clean up temp files
                         DeleteFile(temp_launcher_path);
                     } else {
-                        WaitText(0, "  ERROR: Failed to create launcher script");
+                        SetCommandText("ERROR: Failed to create launcher script");
+                        WaitText(0, "Could not create pipeline launcher");
                     }
                     
                     DeleteFile(temp_yaml_path);
                 } else {
-                    WaitText(0, "  ERROR: Failed to create YAML config");
+                    SetCommandText("ERROR: Failed to create YAML config");
+                    WaitText(0, "Could not create configuration file");
                 }
             }
         } else {
@@ -429,7 +428,9 @@ int main() {
         display_msg[12] = 0;
     }
     strcat(display_msg, " file(s)");
-    WaitText(2, "All conversions complete!");
+    
+    SetCommandText("Multi-file conversion completed!");
+    WaitText(2, display_msg);
 }
 
  
