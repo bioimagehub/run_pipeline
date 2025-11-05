@@ -1,0 +1,31 @@
+name: convert_to_mp4
+channels:
+  - conda-forge
+
+dependencies:
+  # Core
+  - python=3.11
+  - numpy
+  
+  # Image I/O
+  - tifffile
+  
+  # Video processing
+  - imageio
+  - imageio-ffmpeg
+  - ffmpeg
+  
+  # Image processing (for contrast enhancement)
+  - scikit-image
+  
+  # Pip dependencies
+  - pip
+  - pip:
+      - opencv-python
+      - bioio
+      - bioio-ome-tiff
+      - bioio-tifffile
+      - bioio-nd2
+      - bioio_lif
+      - bioio_czi
+      - bioio_dv
