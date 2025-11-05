@@ -147,7 +147,8 @@ def convert_single_file(
                 if hasattr(img, 'physical_pixel_sizes'):
                     physical_pixel_sizes = img.physical_pixel_sizes
                 if hasattr(img, 'channel_names'):
-                    channel_names = img.channel_names
+                    # Convert channel names to regular Python strings to avoid np.str_ issues
+                    channel_names = [str(name) for name in img.channel_names]
                 logger.info(f"Extracted metadata - Pixel sizes: {physical_pixel_sizes}, Channels: {channel_names}")
             except Exception as e:
                 logger.warning(f"Could not extract metadata: {e}")
