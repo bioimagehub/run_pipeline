@@ -1,6 +1,7 @@
 // BiPHub Multi-File Image Converter V2
 // Converts multiple image files to OME-TIFF format using run_pipeline orchestrator
 // Uses YAML config + run_pipeline.exe for robust environment management
+// This is a working version please do not edit it make a v3 instead
 
 import("NkWindow.dll");
 import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
