@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
+import tifffile
 
 from bioio import BioImage
 import yaml
@@ -73,7 +74,8 @@ def convert_single_file(
     output_path: str,
     projection_method: Optional[str] = None,
     save_metadata: bool = True,
-    standard_tif: bool = False
+    standard_tif: bool = False,
+    split: bool = False
 ) -> bool:
     """
     Convert a single image file to OME-TIFF or standard TIFF.
@@ -85,6 +87,7 @@ def convert_single_file(
         projection_method: Optional Z-projection method
         save_metadata: Whether to save metadata YAML sidecar
         standard_tif: If True, save as standard TIFF instead of OME-TIFF (better NIS-Elements compatibility)
+        split: If True, save each T, C, Z slice as individual file in a folder
     
     Returns:
         True if successful, False otherwise
@@ -180,21 +183,49 @@ def convert_single_file(
             # Save scene data with metadata preservation
             os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
             
-            # Build kwargs for saving with metadata
-            save_kwargs = {}
-            if physical_pixel_sizes is not None:
-                save_kwargs['physical_pixel_sizes'] = physical_pixel_sizes
-            if channel_names is not None:
-                save_kwargs['channel_names'] = channel_names
-            
-            # Add standard_tif flag for NIS-Elements compatibility
-            if standard_tif:
-                save_kwargs['ome_tiff'] = False
-                logger.info("Saving as standard TIFF (NIS-Elements compatible)")
-            
-            # Save with metadata
-            rp.save_tczyx_image(data, scene_output_path, **save_kwargs)
-            logger.info(f"Saved: {scene_output_path}")
+            # Check if split mode is enabled
+            if split:
+                # Save each T, C, Z slice as individual file
+                # Create folder named after the output file (without extension)
+                split_folder = os.path.splitext(scene_output_path)[0]
+                os.makedirs(split_folder, exist_ok=True)
+                logger.info(f"Split mode: Saving individual slices to {split_folder}")
+                
+                T, C, Z, Y, X = data.shape
+                logger.info(f"Dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
+                
+                for t in range(T):
+                    for c in range(C):
+                        for z in range(Z):
+                            # Extract single YX slice
+                            slice_data = data[t, c, z, :, :]
+                            
+                            # Build filename: T0001_C0001_Z0001.tif
+                            slice_filename = f"T{t:04d}_C{c:04d}_Z{z:04d}.tif"
+                            slice_path = os.path.join(split_folder, slice_filename)
+                            
+                            # Save as simple 2D TIFF using tifffile for maximum compatibility
+                            tifffile.imwrite(slice_path, slice_data, photometric='minisblack')
+                
+                logger.info(f"Saved {T * C * Z} individual slice files")
+                
+            else:
+                # Standard save mode (single file)
+                # Build kwargs for saving with metadata
+                save_kwargs = {}
+                if physical_pixel_sizes is not None:
+                    save_kwargs['physical_pixel_sizes'] = physical_pixel_sizes
+                if channel_names is not None:
+                    save_kwargs['channel_names'] = channel_names
+                
+                # Add standard_tif flag for NIS-Elements compatibility
+                if standard_tif:
+                    save_kwargs['ome_tiff'] = False
+                    logger.info("Saving as standard TIFF (NIS-Elements compatible)")
+                
+                # Save with metadata
+                rp.save_tczyx_image(data, scene_output_path, **save_kwargs)
+                logger.info(f"Saved: {scene_output_path}")
             
             # Save metadata if requested
             if save_metadata:
@@ -233,7 +264,8 @@ def process_files(
     save_metadata: bool = True,
     output_extension: str = "",
     dry_run: bool = False,
-    standard_tif: bool = False
+    standard_tif: bool = False,
+    split: bool = False
 ) -> None:
     """
     Process multiple files matching a pattern.
@@ -248,6 +280,7 @@ def process_files(
         output_extension: Additional extension to add before .tif
         dry_run: Only print planned actions without executing
         standard_tif: If True, save as standard TIFF instead of OME-TIFF
+        split: If True, save each T, C, Z slice as individual file in a folder
     """
     # Find files
     search_subfolders = '**' in input_pattern
@@ -296,7 +329,7 @@ def process_files(
     if no_parallel or len(file_pairs) == 1:
         # Sequential processing
         for src, dst in file_pairs:
-            convert_single_file(src, dst, projection_method, save_metadata, standard_tif)
+            convert_single_file(src, dst, projection_method, save_metadata, standard_tif, split)
     else:
         # Parallel processing
         max_workers = min(os.cpu_count() or 4, len(file_pairs))
@@ -304,7 +337,7 @@ def process_files(
         
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(convert_single_file, src, dst, projection_method, save_metadata, standard_tif): (src, dst)
+                executor.submit(convert_single_file, src, dst, projection_method, save_metadata, standard_tif, split): (src, dst)
                 for src, dst in file_pairs
             }
             
@@ -400,6 +433,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--split",
+        action="store_true",
+        help="Save each T, C, Z slice as individual file in a folder (maximum compatibility)"
+    )
+    
+    parser.add_argument(
         "--version",
         action="store_true",
         help="Print version and exit"
@@ -433,7 +472,8 @@ Examples:
         save_metadata=not args.no_metadata,
         output_extension=args.output_file_name_extension,
         dry_run=args.dry_run,
-        standard_tif=args.standard_tif
+        standard_tif=args.standard_tif,
+        split=args.split
     )
 
 
