@@ -17,6 +17,7 @@ int main() {
     char ome_tif_file[1000];
     char ome_tif_file_scene[1000];
     char nd2_file[1000];
+    char nd2_file_scene[1000];
     char temp_folder_path[1000];
     char yaml_content[3000];
     char temp_yaml_path[300];
@@ -380,10 +381,35 @@ int main() {
                             
                             // Check if this scene file exists
                             if (ExistFile(ome_tif_file_scene)) {
+                                // Build ND2 filename matching the TIF pattern: base_nd2_name + "_X.nd2"
+                                // Extract base ND2 name (without .nd2 extension)
+                                path_len = strlen(nd2_file);
+                                for (idx = 0; idx < path_len - 4; idx = idx + 1) {  // -4 to remove ".nd2"
+                                    nd2_file_scene[idx] = nd2_file[idx];
+                                }
+                                nd2_file_scene[path_len - 4] = 0;
+                                
+                                // Add "_X" suffix (same as TIF file)
+                                strcat(nd2_file_scene, "_");
+                                
+                                // Add scene number
+                                if (scene_num < 10) {
+                                    idx = strlen(nd2_file_scene);
+                                    nd2_file_scene[idx] = 48 + scene_num;
+                                    nd2_file_scene[idx + 1] = 0;
+                                } else {
+                                    idx = strlen(nd2_file_scene);
+                                    nd2_file_scene[idx] = 48 + (scene_num / 10);
+                                    nd2_file_scene[idx + 1] = 48 + (scene_num % 10);
+                                    nd2_file_scene[idx + 2] = 0;
+                                }
+                                
+                                strcat(nd2_file_scene, ".nd2");
+                                
                                 // Process this scene
                                 OpenDocument(ome_tif_file_scene, 0);
                                 Wait(0.1);
-                                ImageSaveAs(nd2_file, 14, 0);
+                                ImageSaveAs(nd2_file_scene, 14, 0);
                                 
                                 // Delete scene .tif file
                                 DeleteFile(ome_tif_file_scene);
