@@ -66,8 +66,8 @@ int main() {
     }
     
     // Parse selected files
-    folder_len = strlen(file_paths);
     strcpy(folder_path, file_paths);
+    folder_len = strlen(folder_path);
     
     // Remove trailing slash from folder_path if present (prevents double slashes)
     if (folder_len > 0) {
