@@ -247,6 +247,21 @@ int main() {
                 // Write YAML directly with Python multiline string
                 strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
                 
+                // Extract just the folder path (not including filename)
+                strcpy(ome_tif_file, selected_file);
+                for (idx = 0; idx < last_period; idx = idx + 1) {
+                    ome_tif_file[idx] = selected_file[idx];
+                }
+                ome_tif_file[last_period] = 0;
+                
+                // Find the last slash to get the folder path
+                last_period = -1;
+                for (idx = 0; idx < strlen(ome_tif_file); idx = idx + 1) {
+                    if (ome_tif_file[idx] == 47) {
+                        last_period = idx;
+                    }
+                }
+                
                 strcpy(write_yaml_command, "with open('");
                 strcat(write_yaml_command, temp_yaml_path);
                 strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: convert_to_tif\n    environment: uv:convert-to-tif\n    commands:\n      - python: '%REPO%/standard_code/python/convert_to_tif.py'\n      - --input-search-pattern: ");
@@ -254,9 +269,9 @@ int main() {
                 strcat(write_yaml_command, selected_file);
                 strcat(write_yaml_command, "'\n      - --output-folder: ");
                 strcat(write_yaml_command, "'");
-                // Add output folder path (same as input folder)
+                // Add just the folder path (up to last slash)
                 for (idx = 0; idx < last_period; idx = idx + 1) {
-                    write_yaml_command[strlen(write_yaml_command)] = selected_file[idx];
+                    write_yaml_command[strlen(write_yaml_command)] = ome_tif_file[idx];
                     write_yaml_command[strlen(write_yaml_command) + 1] = 0;
                 }
                 strcat(write_yaml_command, "'\n      - --output-file-name-extension: ");
