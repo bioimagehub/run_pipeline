@@ -25,6 +25,9 @@ int main() {
     char python_launcher_script[2000];
     char temp_launcher_path[300];
     char write_launcher_command[2500];
+    char metadata_yaml_path[1000];
+    char base_path_no_ext[1000];
+    int scene_idx;
     int folder_len;
     int file_count;
     int current_file_num;
@@ -212,7 +215,7 @@ int main() {
             if (!ExistFile(selected_file)) {
                 WaitText(0, "  ERROR: File does not exist, skipping");
             } else {
-                // Build output filenames
+                // Build base path without extension for metadata check
                 path_len = strlen(selected_file);
                 last_period = -1;
                 
@@ -222,66 +225,50 @@ int main() {
                     }
                 }
                 
-                // Build ome.tif output filename
+                // Build base path (without extension)
                 if (last_period >= 0) {
                     for (idx = 0; idx < last_period; idx = idx + 1) {
-                        ome_tif_file[idx] = selected_file[idx];
+                        base_path_no_ext[idx] = selected_file[idx];
                     }
-                    ome_tif_file[last_period] = 0;
-                    strcat(ome_tif_file, ".ome.tif");
+                    base_path_no_ext[last_period] = 0;
                 } else {
-                    strcpy(ome_tif_file, selected_file);
-                    strcat(ome_tif_file, ".ome.tif");
+                    strcpy(base_path_no_ext, selected_file);
                 }
                 
-                // Build nd2 file path
-                if (last_period >= 0) {
+                // Check if already processed by looking for metadata YAML
+                strcpy(metadata_yaml_path, base_path_no_ext);
+                strcat(metadata_yaml_path, "_metadata.yaml");
+                
+                if (ExistFile(metadata_yaml_path)) {
+                    WaitText(0, "  SKIPPING: Already processed (metadata.yaml exists)");
+                } else {
+                    // Build YAML configuration for run_pipeline
+                    strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+                    
+                    // Find the folder path (up to last slash)
+                    last_period = -1;
+                    for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
+                        if (selected_file[idx] == 47) {
+                            last_period = idx;
+                        }
+                    }
+                    
+                    strcpy(write_yaml_command, "with open('");
+                    strcat(write_yaml_command, temp_yaml_path);
+                    strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: convert_to_tif\n    environment: uv:convert-to-tif\n    commands:\n      - python: '%REPO%/standard_code/python/convert_to_tif.py'\n      - --input-search-pattern: ");
+                    strcat(write_yaml_command, "'");
+                    strcat(write_yaml_command, selected_file);
+                    strcat(write_yaml_command, "'\n      - --output-folder: ");
+                    strcat(write_yaml_command, "'");
+                    // Add just the folder path (up to last slash)
                     for (idx = 0; idx < last_period; idx = idx + 1) {
-                        nd2_file[idx] = selected_file[idx];
+                        write_yaml_command[strlen(write_yaml_command)] = selected_file[idx];
+                        write_yaml_command[strlen(write_yaml_command) + 1] = 0;
                     }
-                    nd2_file[last_period] = 0;
-                    strcat(nd2_file, ".nd2");
-                } else {
-                    strcpy(nd2_file, selected_file);
-                    strcat(nd2_file, ".nd2");
-                }
-                
-                // Build YAML configuration for run_pipeline
-                // Write YAML directly with Python multiline string
-                strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
-                
-                // Extract just the folder path (not including filename)
-                strcpy(ome_tif_file, selected_file);
-                for (idx = 0; idx < last_period; idx = idx + 1) {
-                    ome_tif_file[idx] = selected_file[idx];
-                }
-                ome_tif_file[last_period] = 0;
-                
-                // Find the last slash to get the folder path
-                last_period = -1;
-                for (idx = 0; idx < strlen(ome_tif_file); idx = idx + 1) {
-                    if (ome_tif_file[idx] == 47) {
-                        last_period = idx;
-                    }
-                }
-                
-                strcpy(write_yaml_command, "with open('");
-                strcat(write_yaml_command, temp_yaml_path);
-                strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: convert_to_tif\n    environment: uv:convert-to-tif\n    commands:\n      - python: '%REPO%/standard_code/python/convert_to_tif.py'\n      - --input-search-pattern: ");
-                strcat(write_yaml_command, "'");
-                strcat(write_yaml_command, selected_file);
-                strcat(write_yaml_command, "'\n      - --output-folder: ");
-                strcat(write_yaml_command, "'");
-                // Add just the folder path (up to last slash)
-                for (idx = 0; idx < last_period; idx = idx + 1) {
-                    write_yaml_command[strlen(write_yaml_command)] = ome_tif_file[idx];
-                    write_yaml_command[strlen(write_yaml_command) + 1] = 0;
-                }
-                strcat(write_yaml_command, "'\n      - --output-file-name-extension: ");
-                strcat(write_yaml_command, "'.ome'\n      - --no-parallel\n''')");
-                
-                Python_RunString(write_yaml_command);
-                Wait(0.2);
+                    strcat(write_yaml_command, "'\n      - --no-parallel\n''')");
+                    
+                    Python_RunString(write_yaml_command);
+                    Wait(0.2);
                 
                 // Create Python launcher script that shows console output
                 if (ExistFile(temp_yaml_path)) {
@@ -322,25 +309,78 @@ int main() {
                     if (ExistFile(temp_launcher_path)) {
                         Python_RunFile(temp_launcher_path);
                         
-                        // Wait a bit for processing
-                        Wait(2.0);
-                        
-                        // Check if output file was created
+                        // Wait for metadata YAML to appear (indicates completion)
                         wait_cycles = 0;
-                        while ((!ExistFile(ome_tif_file)) && (wait_cycles < 300)) {
-                            Wait(0.1);
+                        while ((!ExistFile(metadata_yaml_path)) && (wait_cycles < 600)) {
+                            Wait(0.5);
                             wait_cycles = wait_cycles + 1;
                         }
                         
-                        if (ExistFile(ome_tif_file)) {
-                            OpenDocument(ome_tif_file, 0);
-                            Wait(0.1);
-                            ImageSaveAs(nd2_file, 14, 0);
+                        if (ExistFile(metadata_yaml_path)) {
+                            WaitText(0, "  Conversion complete! Processing output files...");
                             
-                            // Delete .ome.tif file
-                            DeleteFile(ome_tif_file);
+                            // Handle multi-scene outputs: check for _1.tif, _2.tif, etc.
+                            scene_idx = 1;
+                            
+                            // Try scene 1 first
+                            strcpy(ome_tif_file, base_path_no_ext);
+                            strcat(ome_tif_file, "_1.tif");
+                            
+                            if (ExistFile(ome_tif_file)) {
+                                // Multi-scene file - process each scene
+                                while (ExistFile(ome_tif_file) && (scene_idx < 100)) {
+                                    // Build nd2 output path
+                                    strcpy(nd2_file, base_path_no_ext);
+                                    if (scene_idx < 10) {
+                                        strcat(nd2_file, "_");
+                                        nd2_file[strlen(nd2_file)] = 48 + scene_idx;
+                                        nd2_file[strlen(nd2_file) + 1] = 0;
+                                    } else {
+                                        strcat(nd2_file, "_");
+                                        nd2_file[strlen(nd2_file)] = 48 + (scene_idx / 10);
+                                        nd2_file[strlen(nd2_file) + 1] = 48 + (scene_idx % 10);
+                                        nd2_file[strlen(nd2_file) + 2] = 0;
+                                    }
+                                    strcat(nd2_file, ".nd2");
+                                    
+                                    OpenDocument(ome_tif_file, 0);
+                                    Wait(0.1);
+                                    ImageSaveAs(nd2_file, 14, 0);
+                                    DeleteFile(ome_tif_file);
+                                    
+                                    // Check for next scene
+                                    scene_idx = scene_idx + 1;
+                                    strcpy(ome_tif_file, base_path_no_ext);
+                                    strcat(ome_tif_file, "_");
+                                    if (scene_idx < 10) {
+                                        ome_tif_file[strlen(ome_tif_file)] = 48 + scene_idx;
+                                        ome_tif_file[strlen(ome_tif_file) + 1] = 0;
+                                    } else {
+                                        ome_tif_file[strlen(ome_tif_file)] = 48 + (scene_idx / 10);
+                                        ome_tif_file[strlen(ome_tif_file) + 1] = 48 + (scene_idx % 10);
+                                        ome_tif_file[strlen(ome_tif_file) + 2] = 0;
+                                    }
+                                    strcat(ome_tif_file, ".tif");
+                                }
+                            } else {
+                                // Single scene file - check for .tif without scene number
+                                strcpy(ome_tif_file, base_path_no_ext);
+                                strcat(ome_tif_file, ".tif");
+                                
+                                if (ExistFile(ome_tif_file)) {
+                                    strcpy(nd2_file, base_path_no_ext);
+                                    strcat(nd2_file, ".nd2");
+                                    
+                                    OpenDocument(ome_tif_file, 0);
+                                    Wait(0.1);
+                                    ImageSaveAs(nd2_file, 14, 0);
+                                    DeleteFile(ome_tif_file);
+                                } else {
+                                    WaitText(0, "  WARNING: No output .tif file found");
+                                }
+                            }
                         } else {
-                            WaitText(0, "  ERROR: Conversion failed - no output file");
+                            WaitText(0, "  ERROR: Conversion timeout - metadata.yaml not created");
                         }
                         
                         // Clean up temp files
@@ -350,8 +390,6 @@ int main() {
                     }
                     
                     DeleteFile(temp_yaml_path);
-                } else {
-                    WaitText(0, "  ERROR: Failed to create YAML config");
                 }
             }
         } else {
