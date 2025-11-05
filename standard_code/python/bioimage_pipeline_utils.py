@@ -150,7 +150,7 @@ def load_tczyx_image(path: str) -> BioImage:
     elif path.endswith(".ims"):
         # Try custom bioio_imaris reader first (faster, pure Python)
         try:
-            from bioio_imaris import Reader as ImarisReader
+            from standard_code.python.bioio_imaris import Reader as ImarisReader
             img = BioImage(path, reader=ImarisReader)
             return img
         except Exception:

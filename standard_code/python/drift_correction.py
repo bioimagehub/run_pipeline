@@ -283,12 +283,14 @@ if __name__ == "__main__":
         default=10,
         help="Subpixel accuracy for phase_cross_correlation (10 = 0.1 pixel, default: 10)"
     )
+
     parser.add_argument(
         "--max-shift",
         type=float,
         default=50.0,
         help="Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)"
     )
+
     # parser.add_argument(
     #     "--bandpass-low-sigma",
     #     type=float,
@@ -301,7 +303,6 @@ if __name__ == "__main__":
     #     default=None,
     #     help="Upper sigma for DoG bandpass filter (preserves structures larger than this, e.g., 100 for cells). Must be used with --bandpass-low-sigma"
     # )
-
 
     args = parser.parse_args()
     
