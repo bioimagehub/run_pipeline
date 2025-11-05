@@ -169,7 +169,15 @@ int main() {
             
             // Build full path
             strcpy(full_path, folder_path);
-            strcat(full_path, "\\");
+            
+            // Only add separator if folder_path doesn't already end with one
+            folder_len = strlen(folder_path);
+            if (folder_len > 0) {
+                if ((folder_path[folder_len - 1] != 92) && (folder_path[folder_len - 1] != 47)) {
+                    strcat(full_path, "\\");
+                }
+            }
+            
             strcat(full_path, current_file);
             strcpy(selected_file, full_path);
             
