@@ -618,9 +618,22 @@ int main() {
 ### System Integration Functions
 
 **Process Management**
-- `CreateProcess(command_line, flags)` - Execute external program
+- **NOTE**: There is NO `Exec()` function in NIS Elements macro language
+- To execute external programs, use Python's subprocess module via `Python_RunString()`
 - `GetCurrentProcessId()` - Get current process ID
 - `WaitForSingleObject(handle, timeout_ms)` - Wait for process completion
+
+**Executing External Programs via Python:**
+```c
+// Example: Execute run_pipeline.exe with a config file
+char python_command[800];
+strcpy(python_command, "import subprocess; subprocess.run(['");
+strcat(python_command, "C:/git/run_pipeline/run_pipeline.exe");
+strcat(python_command, "', '");
+strcat(python_command, "C:/temp/config.yaml");
+strcat(python_command, "'])");
+Python_RunString(python_command);
+```
 
 **Memory Management** 
 - `GlobalAlloc(flags, size)` - Allocate memory (use `GMEM_ZEROINIT` flag)

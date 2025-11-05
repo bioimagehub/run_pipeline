@@ -280,13 +280,16 @@ int main() {
                 Python_RunString(write_yaml_command);
                 Wait(0.2);
                 
-                // Execute run_pipeline.exe
+                // Execute run_pipeline.exe via Python subprocess
                 if (ExistFile(temp_yaml_path)) {
-                    strcpy(pipeline_command, run_pipeline_path);
-                    strcat(pipeline_command, " ");
+                    strcpy(pipeline_command, "import subprocess; subprocess.run(['");
+                    strcat(pipeline_command, run_pipeline_path);
+                    strcat(pipeline_command, "', '");
                     strcat(pipeline_command, temp_yaml_path);
+                    strcat(pipeline_command, "'])");
                     
-                    Exec(pipeline_command, 1);  // 1 = wait for completion
+                    Python_RunString(pipeline_command);
+                    Wait(0.5);
                     
                     // Check if output file was created
                     if (ExistFile(ome_tif_file)) {

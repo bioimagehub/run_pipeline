@@ -1,6 +1,6 @@
 // Test Macro: Call run_pipeline.exe
 // Tests ability to execute run_pipeline.exe with a YAML config file
-// Based on NIS Elements macro language documentation
+// Uses Python subprocess since Exec() function does not exist in NIS Elements
 
 int main() {
     // ALL variable declarations at top (critical requirement)
@@ -8,8 +8,7 @@ int main() {
     char run_pipeline_path[300];
     char yaml_content[1000];
     char write_yaml_command[1500];
-    char exec_command[400];
-    int exec_result;
+    char python_exec_command[800];
     
     SetCommandText("Testing run_pipeline.exe execution");
     
@@ -29,7 +28,7 @@ int main() {
     // Create a simple test YAML config
     strcpy(write_yaml_command, "with open('");
     strcat(write_yaml_command, temp_yaml_path);
-    strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: test_step\n    type: pause\n    message: Pipeline test successful!\n''')");
+    strcat(write_yaml_command, "', 'w') as f: f.write('''pipeline_name: Test Pipeline\\ngroup: test\\nsteps:\\n  - type: pause\\n    message: Pipeline test successful!\\n''')");
     
     WaitText(0, "Creating test YAML config...");
     Python_RunString(write_yaml_command);
@@ -42,25 +41,21 @@ int main() {
     }
     
     WaitText(0, "YAML config created successfully");
+    WaitText(0, "Executing run_pipeline.exe via Python subprocess...");
     
-    // Build command to execute run_pipeline.exe
-    strcpy(exec_command, run_pipeline_path);
-    strcat(exec_command, " ");
-    strcat(exec_command, temp_yaml_path);
+    // Execute run_pipeline.exe via Python subprocess
+    strcpy(python_exec_command, "import subprocess; result = subprocess.run(['");
+    strcat(python_exec_command, run_pipeline_path);
+    strcat(python_exec_command, "', '");
+    strcat(python_exec_command, temp_yaml_path);
+    strcat(python_exec_command, "']); print(f'Exit code: {result.returncode}')");
     
-    WaitText(0, "Executing command:");
-    WaitText(0, exec_command);
+    Python_RunString(python_exec_command);
     
-    // Execute run_pipeline.exe (1 = wait for completion)
-    exec_result = Exec(exec_command, 1);
-    
-    if (exec_result == 0) {
-        WaitText(0, "SUCCESS: run_pipeline.exe executed successfully!");
-    } else {
-        WaitText(0, "WARNING: Exec returned non-zero result");
-    }
+    WaitText(0, "Command executed - check console output above");
     
     // Clean up
+    Wait(1.0);
     if (ExistFile(temp_yaml_path)) {
         DeleteFile(temp_yaml_path);
         WaitText(0, "Cleaned up temporary YAML file");
