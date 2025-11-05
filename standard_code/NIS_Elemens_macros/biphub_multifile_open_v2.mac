@@ -45,7 +45,7 @@ int main() {
     SetCommandText("BiPHub Multi-File Converter V2 - Select files to convert");
     
     // Build file filter using string literal (confirmed working)
-    strcpy(filter_string, "Image Files|*.czi;*.nd2;*.ims;*.tif;*.tiff;*.lsm;*.lif;|All Files|*.*|");
+    strcpy(filter_string, "Image Files|*.czi;*.nd2;*.ims;*.tif;*.tiff;*.lsm;*.dv;*.lif;|All Files|*.*|");
     
     // Show multi-file selection dialog
     // OFN_ALLOWMULTISELECT = 0x200 (512) + OFN_EXPLORER = 0x80000 (524288) = 524800
@@ -341,6 +341,10 @@ int main() {
 
                         
                         // Check for base file (no scene suffix) first
+                        SetCommandText(ome_tif_file);
+                        WaitText(0, ome_tif_file);
+
+
                         if (ExistFile(ome_tif_file)) {
                             OpenDocument(ome_tif_file, 0);
                             Wait(0.1);
@@ -348,6 +352,7 @@ int main() {
                             
                             // Delete .ome.tif file
                             DeleteFile(ome_tif_file);
+                            CloseAllDocuments(2);
                         } 
                         
                         // Now check for multi-scene files (_1.tif, _2.tif, _3.tif, etc.)
@@ -455,5 +460,5 @@ int main() {
     strcat(display_msg, " file(s)");
     WaitText(2, "All conversions complete!");
 }
- 
+
  
