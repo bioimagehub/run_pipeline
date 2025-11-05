@@ -249,18 +249,18 @@ int main() {
                 
                 strcpy(write_yaml_command, "with open('");
                 strcat(write_yaml_command, temp_yaml_path);
-                strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: convert_to_tif\n    environment: uv:convert-to-tif\n    commands:\n      - python: %REPO%/standard_code/python/convert_to_tif.py\n        --input-search-pattern: ");
+                strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: convert_to_tif\n    environment: uv:convert-to-tif\n    commands:\n      - python: '%REPO%/standard_code/python/convert_to_tif.py'\n      - --input-search-pattern: ");
                 strcat(write_yaml_command, "'");
                 strcat(write_yaml_command, selected_file);
-                strcat(write_yaml_command, "'\n        --output-folder: ");
+                strcat(write_yaml_command, "'\n      - --output-folder: ");
                 strcat(write_yaml_command, "'");
                 // Add output folder path (same as input folder)
                 for (idx = 0; idx < last_period; idx = idx + 1) {
                     write_yaml_command[strlen(write_yaml_command)] = selected_file[idx];
                     write_yaml_command[strlen(write_yaml_command) + 1] = 0;
                 }
-                strcat(write_yaml_command, "'\n        --output-file-name-extension: ");
-                strcat(write_yaml_command, "'.ome'\n        --no-parallel\n''')");
+                strcat(write_yaml_command, "'\n      - --output-file-name-extension: ");
+                strcat(write_yaml_command, "'.ome'\n      - --no-parallel\n''')");
                 
                 Python_RunString(write_yaml_command);
                 Wait(0.2);
