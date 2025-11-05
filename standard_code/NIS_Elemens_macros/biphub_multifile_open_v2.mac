@@ -244,30 +244,30 @@ int main() {
                 }
                 
                 // Build YAML configuration for run_pipeline
-                strcpy(yaml_content, "run:\\n");
-                strcat(yaml_content, "  - name: convert_to_tif\\n");
-                strcat(yaml_content, "    environment: uv:convert-to-tif\\n");
-                strcat(yaml_content, "    commands:\\n");
-                strcat(yaml_content, "      - python: %REPO%/standard_code/python/convert_to_tif.py\\n");
+                strcpy(yaml_content, "run:\n");
+                strcat(yaml_content, "  - name: convert_to_tif\n");
+                strcat(yaml_content, "    environment: uv:convert-to-tif\n");
+                strcat(yaml_content, "    commands:\n");
+                strcat(yaml_content, "      - python: %REPO%/standard_code/python/convert_to_tif.py\n");
                 strcat(yaml_content, "        --input-search-pattern: '");
                 strcat(yaml_content, selected_file);
-                strcat(yaml_content, "'\\n");
+                strcat(yaml_content, "'\n");
                 strcat(yaml_content, "        --output-folder: '");
                 // Use same folder as input
                 for (idx = 0; idx < last_period; idx = idx + 1) {
                     yaml_content[strlen(yaml_content)] = selected_file[idx];
                     yaml_content[strlen(yaml_content) + 1] = 0;
                 }
-                strcat(yaml_content, "'\\n");
-                strcat(yaml_content, "        --output-file-name-extension: '.ome'\\n");
-                strcat(yaml_content, "        --no-parallel\\n");
+                strcat(yaml_content, "'\n");
+                strcat(yaml_content, "        --output-file-name-extension: '.ome'\n");
+                strcat(yaml_content, "        --no-parallel\n");
                 
                 // Write YAML file
                 strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
                 
                 strcpy(write_yaml_command, "with open('");
                 strcat(write_yaml_command, temp_yaml_path);
-                strcat(write_yaml_command, "', 'w') as f: f.write('''");
+                strcat(write_yaml_command, "', 'w') as f: f.write(r'''");
                 strcat(write_yaml_command, yaml_content);
                 strcat(write_yaml_command, "''')");
                 
