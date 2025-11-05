@@ -343,32 +343,37 @@ int main() {
                         // Now check for multi-scene files (_1.tif, _2.tif, _3.tif, etc.)
                         // Build base filename without .ome.tif extension
                         base_name_len = strlen(ome_tif_file) - 8;  // Remove ".ome.tif" (8 chars)
-                        scene_num = 1;
                         
-                        // Loop through scene numbers starting at _1.tif
-                        while (scene_num < 1000) {
+                        // Copy base name to temp buffer
+                        for (idx = 0; idx < base_name_len; idx = idx + 1) {
+                            ome_tif_file_scene[idx] = ome_tif_file[idx];
+                        }
+                        ome_tif_file_scene[base_name_len] = 0;  // Null terminate
+                        
+                        // Loop through scene numbers 1-100
+                        for (scene_num = 1; scene_num <= 100; scene_num = scene_num + 1) {
                             // Build scene filename: base_name + "_" + scene_num + ".tif"
+                            // Reset to base name
                             for (idx = 0; idx < base_name_len; idx = idx + 1) {
                                 ome_tif_file_scene[idx] = ome_tif_file[idx];
                             }
-                            ome_tif_file_scene[base_name_len] = 95;  // "_" character
+                            ome_tif_file_scene[base_name_len] = 0;
                             
-                            // Convert scene_num to string and append
+                            // Add "_X.tif" suffix
+                            strcat(ome_tif_file_scene, "_");
+                            
+                            // Convert scene number to string and append
                             if (scene_num < 10) {
-                                ome_tif_file_scene[base_name_len + 1] = 48 + scene_num;
-                                ome_tif_file_scene[base_name_len + 2] = 0;
-                            } else if (scene_num < 100) {
-                                ome_tif_file_scene[base_name_len + 1] = 48 + (scene_num / 10);
-                                ome_tif_file_scene[base_name_len + 2] = 48 + (scene_num % 10);
-                                ome_tif_file_scene[base_name_len + 3] = 0;
+                                idx = strlen(ome_tif_file_scene);
+                                ome_tif_file_scene[idx] = 48 + scene_num;  // Single digit
+                                ome_tif_file_scene[idx + 1] = 0;
                             } else {
-                                ome_tif_file_scene[base_name_len + 1] = 48 + (scene_num / 100);
-                                ome_tif_file_scene[base_name_len + 2] = 48 + ((scene_num / 10) % 10);
-                                ome_tif_file_scene[base_name_len + 3] = 48 + (scene_num % 10);
-                                ome_tif_file_scene[base_name_len + 4] = 0;
+                                idx = strlen(ome_tif_file_scene);
+                                ome_tif_file_scene[idx] = 48 + (scene_num / 10);      // Tens digit
+                                ome_tif_file_scene[idx + 1] = 48 + (scene_num % 10);  // Ones digit
+                                ome_tif_file_scene[idx + 2] = 0;
                             }
                             
-                            // Append ".tif"
                             strcat(ome_tif_file_scene, ".tif");
                             
                             // Check if this scene file exists
@@ -380,18 +385,7 @@ int main() {
                                 
                                 // Delete scene .tif file
                                 DeleteFile(ome_tif_file_scene);
-                                
-                                // Increment scene counter and continue
-                                scene_num = scene_num + 1;
-                            } else {
-                                // No more scenes found, exit loop
-                                scene_num = 1000;
                             }
-                        }
-                        
-                        // Check if we processed anything at all
-                        if (!ExistFile(ome_tif_file) && scene_num == 1) {
-                            WaitText(0, "  ERROR: Conversion failed - no output file");
                         }
                         
                         // Clean up temp files
