@@ -282,9 +282,8 @@ int main() {
                     write_yaml_command[strlen(write_yaml_command)] = temp_folder_path[idx];
                     write_yaml_command[strlen(write_yaml_command) + 1] = 0;
                 }
-                strcat(write_yaml_command, "/");  // Add single forward slash
-                strcat(write_yaml_command, "'\n      - --output-file-name-extension: ");
-                strcat(write_yaml_command, "'.ome'\n      - --no-parallel\n''')");
+                //strcat(write_yaml_command, "/");  // Add single forward slash
+                strcat(write_yaml_command, "'\n      - --no-parallel\n''')");
                 
                 Python_RunString(write_yaml_command);
                 Wait(0.2);
@@ -329,7 +328,7 @@ int main() {
                         Python_RunFile(temp_launcher_path);
                         
                         // Wait a bit for processing
-                        Wait(2.0);
+                        Wait(0.1);
                         
 
                         
@@ -447,4 +446,4 @@ int main() {
     strcat(display_msg, " file(s)");
     WaitText(2, "All conversions complete!");
 }
- 
+  
