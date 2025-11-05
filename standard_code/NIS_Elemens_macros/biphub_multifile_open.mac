@@ -1,0 +1,363 @@
+// BiPHub Multi-File Image Converter
+// Converts multiple image files to OME-TIFF format using Python bioio library
+// Based on confirmed working patterns from biphub_converter.mac and test_multifile_dialog.mac
+
+import("NkWindow.dll");
+import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
+
+int main() {
+    // ALL variable declarations at top (NIS Elements requirement)
+    char file_paths[4000];
+    char filter_string[200];
+    char folder_path[800];
+    char current_file[300];
+    char full_path[1000];
+    char selected_file[1000];
+    char completion_file[900];
+    char ome_tif_file[1000];
+    char nd2_file[1000];
+    char python_script_content[2000];
+    char temp_script_path[300];
+    char write_file_command[2500];
+    char display_msg[500];
+    char *python_path = "C:/git/NIS-Elements-Python-Analysis-Servers/bf2ometif/.venv/Scripts/python.exe";
+    char *python_script_path = "C:/git/NIS-Elements-Python-Analysis-Servers/bf2ometif/src/bf2ometif/cli.py";
+    int folder_len;
+    int file_count;
+    int current_file_num;
+    int pos;
+    int name_start;
+    int name_len;
+    int last_period;
+    int wait_cycles;
+    int idx;
+    int path_len;
+    long dialog_result;
+    
+    SetCommandText("BiPHub Multi-File Converter - Select files to convert");
+    
+    // Build file filter using string literal (confirmed working)
+    strcpy(filter_string, "Image Files|*.czi;*.nd2;*.ims;*.tif;*.tiff;*.lsm;|All Files|*.*|");
+    
+    // Show multi-file selection dialog
+    // OFN_ALLOWMULTISELECT = 0x200 (512) + OFN_EXPLORER = 0x80000 (524288) = 524800
+    dialog_result = NkFile_GetOpenFileName("", file_paths, 4000, filter_string, 1, "Select Multiple Image Files for OME-TIFF Conversion", 524800);
+    
+    if (dialog_result == 0) {
+        SetCommandText("Conversion cancelled by user");
+        return;
+    }
+    
+    // Verify required files exist before processing any files
+    if (!ExistFile(python_path)) {
+        SetCommandText("ERROR: Python executable not found!");
+        WaitText(0, "Python executable not found:");
+        WaitText(0, python_path);
+        return;
+    }
+    
+    if (!ExistFile(python_script_path)) {
+        SetCommandText("ERROR: Conversion script not found!");
+        WaitText(0, "Conversion script not found:");
+        WaitText(0, python_script_path);
+        return;
+    }
+    
+    // Parse selected files
+    folder_len = strlen(file_paths);
+    strcpy(folder_path, file_paths);
+    
+    // Check if single or multiple files selected
+    pos = folder_len + 1;
+    
+    if (file_paths[pos] == 0) {
+        // Single file selected - treat as one file in folder
+        // Extract just the folder path and filename
+        path_len = strlen(file_paths);
+        last_period = -1;
+        
+        // Find last slash
+        for (idx = 0; idx < path_len; idx = idx + 1) {
+            if (file_paths[idx] == 92) {
+                last_period = idx;
+            }
+            if (file_paths[idx] == 47) {
+                last_period = idx;
+            }
+        }
+        
+        if (last_period >= 0) {
+            // Extract folder
+            for (idx = 0; idx < last_period; idx = idx + 1) {
+                folder_path[idx] = file_paths[idx];
+            }
+            folder_path[last_period] = 0;
+            
+            // Extract filename (skip the slash)
+            idx = last_period + 1;
+            name_len = 0;
+            while (idx < path_len) {
+                file_paths[folder_len + 1 + name_len] = file_paths[idx];
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            file_paths[folder_len + 1 + name_len] = 0;
+            file_paths[folder_len] = 0;  // Terminate folder path
+        }
+        
+        file_count = 1;
+        pos = folder_len + 1;
+    } else {
+        // Multiple files - folder_path is set, now count files
+        file_count = 0;
+        
+        // Count files first
+        idx = folder_len + 1;
+        while (idx < 3990) {
+            name_start = idx;
+            name_len = 0;
+            
+            while ((file_paths[idx] != 0) && (idx < 3990)) {
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            
+            if (name_len > 0) {
+                file_count = file_count + 1;
+                idx = idx + 1;
+            } else {
+                idx = 4000;
+            }
+        }
+        
+        strcpy(display_msg, "Processing ");
+        if (file_count < 10) {
+            display_msg[11] = 48 + file_count;
+            display_msg[12] = 0;
+        } else {
+            display_msg[11] = 48 + (file_count / 10);
+            display_msg[12] = 48 + (file_count % 10);
+            display_msg[13] = 0;
+        }
+        strcat(display_msg, " files...");
+        
+        // Reset pos for actual processing loop
+        pos = folder_len + 1;
+    }
+    
+    // Process each file in the loop (works for both single and multiple)
+    current_file_num = 0;
+    
+    // Process multiple files or skip if single file already handled
+    while ((pos > 0) && (pos < 3990)) {
+        // Extract filename
+        name_start = pos;
+        name_len = 0;
+        
+        while ((file_paths[pos] != 0) && (pos < 3990)) {
+            name_len = name_len + 1;
+            pos = pos + 1;
+        }
+        
+        if (name_len > 0) {
+            // Copy filename
+            for (idx = 0; idx < name_len; idx = idx + 1) {
+                current_file[idx] = file_paths[name_start + idx];
+            }
+            current_file[name_len] = 0;
+            
+            // Build full path: folder + backslash + filename
+            strcpy(full_path, folder_path);
+            strcat(full_path, "\\");
+            strcat(full_path, current_file);
+            strcpy(selected_file, full_path);
+            
+            current_file_num = current_file_num + 1;
+            
+            // Display progress
+            strcpy(display_msg, "Converting file ");
+            if (current_file_num < 10) {
+                display_msg[16] = 48 + current_file_num;
+                display_msg[17] = 0;
+            } else {
+                display_msg[16] = 48 + (current_file_num / 10);
+                display_msg[17] = 48 + (current_file_num % 10);
+                display_msg[18] = 0;
+            }
+            strcat(display_msg, " of ");
+            if (file_count < 10) {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + file_count;
+                display_msg[idx + 1] = 0;
+            } else {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + (file_count / 10);
+                display_msg[idx + 1] = 48 + (file_count % 10);
+                display_msg[idx + 2] = 0;
+            }
+            strcat(display_msg, ": ");
+            strcat(display_msg, current_file);
+            SetCommandText(display_msg);
+            
+            pos = pos + 1;
+        
+            // ==========================================
+            // CONVERSION LOGIC FOR CURRENT FILE
+            // ==========================================
+            
+            // Normalize backslashes to forward slashes
+            for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
+                if (selected_file[idx] == 92) {
+                    selected_file[idx] = 47;
+                }
+            }
+            
+            // Verify input file exists
+            if (!ExistFile(selected_file)) {
+                WaitText(0, "  ERROR: File does not exist, skipping");
+                WaitText(0, "");
+            } else {
+                // Build output filenames
+                path_len = strlen(selected_file);
+                last_period = -1;
+                
+                for (idx = 0; idx < path_len; idx = idx + 1) {
+                    if (selected_file[idx] == 46) {
+                        last_period = idx;
+                    }
+                }
+                
+                // Build ome.tif output filename
+                if (last_period >= 0) {
+                    for (idx = 0; idx < last_period; idx = idx + 1) {
+                        ome_tif_file[idx] = selected_file[idx];
+                    }
+                    ome_tif_file[last_period] = 0;
+                    strcat(ome_tif_file, ".ome.tif");
+                } else {
+                    strcpy(ome_tif_file, selected_file);
+                    strcat(ome_tif_file, ".ome.tif");
+                }
+                
+                // Build completion file path
+                if (last_period >= 0) {
+                    for (idx = 0; idx < last_period; idx = idx + 1) {
+                        completion_file[idx] = selected_file[idx];
+                    }
+                    completion_file[last_period] = 0;
+                    strcat(completion_file, "_done.txt");
+                } else {
+                    strcpy(completion_file, selected_file);
+                    strcat(completion_file, "_done.txt");
+                }
+                
+                // Build nd2 file path
+                if (last_period >= 0) {
+                    for (idx = 0; idx < last_period; idx = idx + 1) {
+                        nd2_file[idx] = selected_file[idx];
+                    }
+                    nd2_file[last_period] = 0;
+                    strcat(nd2_file, ".nd2");
+                } else {
+                    strcpy(nd2_file, selected_file);
+                    strcat(nd2_file, ".nd2");
+                }
+                
+                // Clean up existing completion file
+                if (ExistFile(completion_file)) {
+                    DeleteFile(completion_file);
+                }
+                
+                // Normalize completion file path
+                for (idx = 0; idx < strlen(completion_file); idx = idx + 1) {
+                    if (completion_file[idx] == 92) {
+                        completion_file[idx] = 47;
+                    }
+                }
+                
+                // Build Python launcher script
+                strcpy(python_script_content, "import subprocess\nimport sys\nimport os\n\n");
+                strcat(python_script_content, "# Configuration\n");
+                strcat(python_script_content, "python_exe = '");
+                strcat(python_script_content, python_path);
+                strcat(python_script_content, "'\n");
+                strcat(python_script_content, "script_path = '");
+                strcat(python_script_content, python_script_path);
+                strcat(python_script_content, "'\n");
+                strcat(python_script_content, "input_file = '");
+                strcat(python_script_content, selected_file);
+                strcat(python_script_content, "'\n");
+                strcat(python_script_content, "completion_file = '");
+                strcat(python_script_content, completion_file);
+                strcat(python_script_content, "'\n\n");
+                strcat(python_script_content, "# Run conversion\n");
+                strcat(python_script_content, "result = subprocess.run([python_exe, script_path, input_file, '--completion-file-path', completion_file])\n");
+                strcat(python_script_content, "print(f'Conversion completed with return code: {result.returncode}')\n");
+                
+                // Write launcher script
+                strcpy(temp_script_path, "C:/temp/nis_converter_launcher.py");
+                
+                strcpy(write_file_command, "with open('");
+                strcat(write_file_command, temp_script_path);
+                strcat(write_file_command, "', 'w') as f: f.write('''");
+                strcat(write_file_command, python_script_content);
+                strcat(write_file_command, "''')");
+                
+                Python_RunString(write_file_command);
+                Wait(0.3);
+                
+                // Execute conversion
+                if (ExistFile(temp_script_path)) {
+                    Python_RunFile(temp_script_path);
+                    
+                    // Wait for completion (30 second timeout)
+                    wait_cycles = 0;
+                    while ((!ExistFile(completion_file)) && (wait_cycles < 300)) {
+                        Wait(0.1);
+                        wait_cycles = wait_cycles + 1;
+                    }
+                    
+                    if (ExistFile(completion_file)) {
+                        DeleteFile(completion_file);
+                        
+                        // Open and save as nd2
+                        if (ExistFile(ome_tif_file)) {
+                            OpenDocument(ome_tif_file, 0);
+                            Wait(0.1);
+                            ImageSaveAs(nd2_file, 14, 0);
+                            
+                             // Delete .ome.tif file
+                            DeleteFile(ome_tif_file);
+							
+							// delete ome_tif_file
+                        }
+                    } else {
+                        WaitText(0, "  ERROR: Conversion failed or timed out");
+                    }
+                } else {
+                    WaitText(0, "  ERROR: Failed to create launcher script");
+                }
+                
+                // WaitText(0, "");
+            }
+        } else {
+            // No more files - exit loop
+            pos = 4000;
+        }
+    }
+    
+    // Final summary
+    SetCommandText("Multi-file conversion completed!");
+    strcpy(display_msg, "Processed ");
+    if (file_count < 10) {
+        display_msg[10] = 48 + file_count;
+        display_msg[11] = 0;
+    } else {
+        display_msg[10] = 48 + (file_count / 10);
+        display_msg[11] = 48 + (file_count % 10);
+        display_msg[12] = 0;
+    }
+    strcat(display_msg, " file(s)");
+    WaitText(2, "All conversions complete!");
+}
+  
