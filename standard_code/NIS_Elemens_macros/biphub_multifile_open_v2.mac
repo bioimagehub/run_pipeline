@@ -72,6 +72,14 @@ int main() {
     folder_len = strlen(file_paths);
     strcpy(folder_path, file_paths);
     
+    // Remove trailing slash from folder_path if present (prevents double slashes)
+    if (folder_len > 0) {
+        if ((folder_path[folder_len - 1] == 92) || (folder_path[folder_len - 1] == 47)) {
+            folder_path[folder_len - 1] = 0;
+            folder_len = folder_len - 1;
+        }
+    }
+    
     // Check if single or multiple files selected
     pos = folder_len + 1;
     
