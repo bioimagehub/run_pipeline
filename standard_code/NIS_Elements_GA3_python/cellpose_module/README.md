@@ -23,92 +23,120 @@ Cellpose Library
 
 ## Quick Start
 
-### 1. Installation
+### 1. Test the Module (Recommended)
 
-The environment is **auto-created on first use** using the bundled UV package manager (located in `external/UV/uv.exe`).
-
-**No manual installation required!** The system will automatically:
-- Use the bundled UV executable (no PATH setup needed)
-- Create an isolated `.venv` directory
-- Install Cellpose and dependencies
-
-### 2. Testing (Recommended)
-
-Before using in GA3, test the module:
+Before using in GA3, verify everything works:
 
 ```powershell
-cd standard_code/NIS_Elements_GA3_python/cellpose_module
+cd c:\git\run_pipeline\standard_code\NIS_Elements_GA3_python\cellpose_module
 python test_cellpose_module.py
 ```
 
-This will verify the bundled UV works and create the environment.
+This will:
+- ✅ Initialize the GA3Adapter
+- ✅ Auto-create the UV environment (first time only, ~1-2 minutes)
+- ✅ Run a test segmentation
+- ✅ Verify everything is ready for GA3
 
-### 3. Usage in GA3
+### 2. Use in NIS-Elements GA3
 
-1. Open NIS-Elements and go to GA3 editor
-2. Insert a Python node: `ND Processing & Conversions > Python Scripting > Python`
-3. Configure node:
-   - Add 1 **Channel input** (your microscopy image)
-   - Add 1 **Binary output** (segmentation masks)
-4. Open node settings (`...` button)
-5. Paste contents of `ga3_cellpose_node.py`
-6. **Important:** Enable "Run out of process"
-7. Connect to your workflow and run!
+**Step 1:** Open GA3 editor and add Python node
+- `ND Processing & Conversions > Python Scripting > Python`
 
-On first run, the node will:
-- Detect no environment exists
-- Use UV to create `.venv/`
-- Install Cellpose (1-2 minutes)
-- Run segmentation
+**Step 2:** Configure inputs/outputs
+- Add 1 **Channel input** (your microscopy image)
+- Add 1 **Binary output** (segmentation masks)
 
-Subsequent runs use the cached environment and start instantly!
+**Step 3:** Copy the code
+- Open `ga3_cellpose_node.py`
+- Copy **entire contents** (Ctrl+A, Ctrl+C)
+- Paste into GA3 Python node
 
-### 3. Configuration
-
-Edit these parameters in `ga3_cellpose_node.py`:
-
+**Step 4:** Update the path
 ```python
-CELLPOSE_MODEL = "cyto3"  # cyto, cyto2, cyto3, nuclei
-CELL_DIAMETER = None      # None for auto, or specify pixels
+ADAPTER_PATH = r'C:\git\run_pipeline\standard_code\NIS_Elements_GA3_python'
+```
+Change to your actual installation location.
+
+**Step 5:** Adjust parameters (optional)
+```python
+MODEL = "cyto3"          # cyto, cyto2, cyto3, nuclei
+DIAMETER = None          # None for auto, or specify pixels
 FLOW_THRESHOLD = 0.4
 CELLPROB_THRESHOLD = 0.0
 ```
 
+**Step 6:** Enable "Run out of process"
+- Check this option in the node settings
+
+**Step 7:** Run!
+- Connect your workflow and execute
+- First run may take 1-2 minutes (environment setup)
+- Subsequent runs are instant
+
 ## File Structure
 
 ```
-cellpose_module/
-├── pyproject.toml              # UV dependencies
-├── uv.lock                     # Locked versions (generated)
-├── .venv/                      # Virtual environment (auto-created)
-├── cellpose_worker.py          # Worker script (runs in .venv)
-├── ga3_cellpose_node.py        # GA3 node (runs in NIS Python)
-└── README.md                   # This file
+NIS_Elements_GA3_python/
+├── ga3adapter.py                    # Universal adapter (reusable)
+└── cellpose_module/
+    ├── pyproject.toml               # UV dependencies
+    ├── .venv/                       # Virtual environment (auto-created)
+    ├── cellpose_worker.py           # Cellpose-specific logic
+    ├── ga3_cellpose_node.py         # Code to paste into GA3 (~30 lines)
+    ├── test_cellpose_module.py      # Test script
+    └── README.md                    # This file
 ```
 
 ## How It Works
 
-### Data Flow
+### The Pattern
 
-1. **GA3 Input**: User connects microscopy image to node
-2. **Serialization**: `ga3_cellpose_node.py` saves image to temp `.npy` file
-3. **Subprocess Call**: Spawns `.venv/Scripts/python.exe cellpose_worker.py`
-4. **Worker Process**: Loads image, runs Cellpose, saves masks
-5. **Deserialization**: `ga3_cellpose_node.py` loads masks back
-6. **GA3 Output**: Masks appear in workflow for measurement/analysis
+```python
+# User pastes this simple code into GA3:
+from ga3adapter import GA3Adapter
+
+adapter = GA3Adapter(
+    module_dir="cellpose_module",
+    worker_script="cellpose_worker.py"
+)
+
+def run(inp, out, ctx):
+    image = inp[0].data[0, :, :, 0]
+    masks = adapter.process(image, model="cyto3", diameter=None)
+    out[0].data[0, :, :, 0] = masks.astype('int32')
+```
+
+### Behind the Scenes
+
+1. **GA3Adapter** handles all orchestration:
+   - Environment management (UV, .venv)
+   - Subprocess coordination
+   - Temp file handling
+   - Error logging
+
+2. **Worker script** does the actual work:
+   - Loads Cellpose in isolated environment
+   - Runs segmentation
+   - Returns results
+
+3. **Data exchange** via temporary numpy files:
+   - Clean, simple interface
+   - Easy to debug
+   - Language-agnostic
 
 ### Why This Pattern?
 
-**Problem:** Cellpose has dependencies (PyTorch, etc.) that conflict with NIS-Elements' built-in Python.
+**Problem:** NIS-Elements Python can't install Cellpose (numpy compatibility issues)
 
-**Solution:** Run Cellpose in isolated environment, exchange data via files.
+**Solution:** Run in isolated UV environment, coordinate via subprocess
 
 **Benefits:**
-- ✅ No dependency conflicts
-- ✅ Reproducible (UV lock file)
-- ✅ Fast environment creation
-- ✅ Easy to debug (inspect temp files)
-- ✅ Works with any external Python library
+- ✅ **Simple GA3 code** (~30 lines vs ~200 lines)
+- ✅ **Reusable adapter** for any external Python package
+- ✅ **No dependency conflicts** (isolated environment)
+- ✅ **Reproducible** (UV lock files)
+- ✅ **Easy to maintain** (code in git, not copy-pasted)
 
 ## Advanced Usage
 
@@ -222,26 +250,41 @@ pip install uv
 
 ## Extending to Other Modules
 
-This pattern works for any Python package! To create a new module:
+The **GA3Adapter is universal** - reuse it for any external Python package!
 
-1. Copy this directory structure:
+### Example: Adding StarDist
+
+1. Create new module directory:
 ```
-new_module/
-├── pyproject.toml           # Change dependencies
-├── worker_script.py         # Change processing logic
-└── ga3_node_script.py       # Change GA3 interface
+stardist_module/
+├── pyproject.toml           # StarDist dependencies
+├── stardist_worker.py       # StarDist segmentation logic
+└── ga3_stardist_node.py     # ~30 lines for GA3
 ```
 
 2. Update `pyproject.toml`:
 ```toml
 [project]
-name = "ga3-your-module"
-dependencies = [
-    "your-package>=1.0",
-]
+name = "ga3-stardist"
+dependencies = ["stardist>=0.8.0", "tensorflow>=2.0"]
 ```
 
-3. Follow the same data exchange pattern (numpy files + subprocess)
+3. GA3 code stays simple:
+```python
+from ga3adapter import GA3Adapter
+
+adapter = GA3Adapter(
+    module_dir="stardist_module",
+    worker_script="stardist_worker.py"
+)
+
+def run(inp, out, ctx):
+    image = inp[0].data[0, :, :, 0]
+    masks = adapter.process(image, model="2D_versatile_fluo")
+    out[0].data[0, :, :, 0] = masks.astype('int32')
+```
+
+**That's it!** The adapter handles everything else.
 
 ## References
 

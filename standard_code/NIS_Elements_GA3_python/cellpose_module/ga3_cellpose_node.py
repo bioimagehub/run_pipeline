@@ -1,237 +1,79 @@
 """
-GA3 Cellpose Node - Coordinator for UV-managed Cellpose environment
+GA3 Cellpose Node - Minimal wrapper using GA3Adapter
 
-This script runs inside NIS-Elements' built-in Python and coordinates
-calls to the external UV-managed Cellpose worker process.
+PASTE THIS INTO NIS-ELEMENTS GA3 PYTHON NODE
 
-Usage in GA3:
-1. Add this as a Python node in GA3 editor
-2. Configure input (1 channel) and output (1 binary)
-3. Set "Run out of process" to avoid conflicts
-4. The node will auto-bootstrap the Cellpose environment on first use
+Instructions:
+1. Open NIS-Elements GA3 editor
+2. Add Python node (ND Processing & Conversions > Python Scripting > Python)
+3. Configure: 1 Channel input, 1 Binary output
+4. Paste this entire script
+5. Update ADAPTER_PATH to your installation location
+6. Enable "Run out of process"
+7. Run your workflow!
 
 Author: BIPHUB Team
 License: MIT
 """
 
-# IMPORTANT: 'limnode' must be imported like this (not from nor as)
 import limnode
-import numpy as np
-import subprocess
-import tempfile
-import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - GA3-Cellpose - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# ============================================================================
+# CONFIGURATION - Update this path to your installation
+# ============================================================================
+ADAPTER_PATH = r'C:\git\run_pipeline\standard_code\NIS_Elements_GA3_python'
 
-# Configuration
-MODULE_DIR = Path(__file__).parent
-VENV_DIR = MODULE_DIR / ".venv"
-WORKER_SCRIPT = MODULE_DIR / "cellpose_worker.py"
-
-# Cellpose parameters (can be exposed to GA3 UI)
-CELLPOSE_MODEL = "cyto3"  # Options: cyto, cyto2, cyto3, nuclei
-CELL_DIAMETER = None  # None for auto-estimate, or specify in pixels
+# Cellpose parameters (adjust as needed)
+MODEL = "cyto3"          # Options: cyto, cyto2, cyto3, nuclei
+DIAMETER = None          # None for auto-detect, or specify in pixels (e.g., 30)
 FLOW_THRESHOLD = 0.4
 CELLPROB_THRESHOLD = 0.0
 
+# ============================================================================
+# Setup adapter (runs once on first import)
+# ============================================================================
+sys.path.insert(0, ADAPTER_PATH)
+from ga3adapter import GA3Adapter
 
-def ensure_cellpose_environment() -> Path:
-    """
-    Ensure UV-managed Cellpose environment exists.
-    
-    Creates the environment on first use using UV for fast, reproducible setup.
-    
-    Returns:
-        Path to Python executable in the virtual environment
-    """
-    python_exe = VENV_DIR / "Scripts" / "python.exe"
-    
-    if python_exe.exists():
-        logger.info(f"Cellpose environment found: {VENV_DIR}")
-        return python_exe
-    
-    logger.info("=" * 60)
-    logger.info("FIRST-TIME SETUP: Creating Cellpose environment...")
-    logger.info("This will take 1-2 minutes. Subsequent runs will be instant.")
-    logger.info("=" * 60)
-    
-    try:
-        # Check if UV is available
-        uv_check = subprocess.run(
-            ["uv", "--version"],
-            capture_output=True,
-            text=True
-        )
-        
-        if uv_check.returncode != 0:
-            raise RuntimeError(
-                "UV package manager not found! Please install from: https://github.com/astral-sh/uv\n"
-                "Or use: pip install uv"
-            )
-        
-        logger.info(f"UV version: {uv_check.stdout.strip()}")
-        
-        # Create virtual environment
-        logger.info(f"Creating virtual environment at: {VENV_DIR}")
-        subprocess.run(
-            ["uv", "venv", str(VENV_DIR)],
-            check=True,
-            cwd=MODULE_DIR
-        )
-        
-        # Install dependencies from pyproject.toml
-        logger.info("Installing Cellpose and dependencies (this may take a minute)...")
-        subprocess.run(
-            ["uv", "pip", "install", "-e", str(MODULE_DIR)],
-            check=True,
-            cwd=MODULE_DIR
-        )
-        
-        logger.info("=" * 60)
-        logger.info("✓ Cellpose environment ready!")
-        logger.info("=" * 60)
-        
-        return python_exe
-        
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to create Cellpose environment: {e}")
-        raise RuntimeError(
-            f"Environment setup failed. Please check the logs above.\n"
-            f"Manual setup: cd {MODULE_DIR} && uv venv && uv pip install -e ."
-        )
-
-
-def call_cellpose_worker(
-    image: np.ndarray,
-    model_type: str = "cyto3",
-    diameter: Optional[float] = None,
-) -> np.ndarray:
-    """
-    Call external Cellpose worker process with image data.
-    
-    Args:
-        image: 2D numpy array (single channel image)
-        model_type: Cellpose model to use
-        diameter: Expected cell diameter (None for auto)
-        
-    Returns:
-        Segmentation masks as 2D numpy array
-    """
-    python_exe = ensure_cellpose_environment()
-    
-    with tempfile.TemporaryDirectory(prefix="ga3_cellpose_") as tmpdir:
-        tmpdir = Path(tmpdir)
-        input_path = tmpdir / "input.npy"
-        output_path = tmpdir / "output.npy"
-        
-        # Save input image
-        logger.info(f"Saving input image (shape={image.shape}) to temp file...")
-        np.save(input_path, image)
-        
-        # Prepare command
-        cmd = [
-            str(python_exe),
-            str(WORKER_SCRIPT),
-            "--input", str(input_path),
-            "--output", str(output_path),
-            "--model", model_type,
-            "--flow-threshold", str(FLOW_THRESHOLD),
-            "--cellprob-threshold", str(CELLPROB_THRESHOLD),
-        ]
-        
-        if diameter is not None:
-            cmd.extend(["--diameter", str(diameter)])
-        
-        # Call worker
-        logger.info(f"Calling Cellpose worker with model: {model_type}")
-        logger.info(f"Command: {' '.join(cmd)}")
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300  # 5 minute timeout
-        )
-        
-        # Log output
-        if result.stdout:
-            logger.info(f"Worker stdout:\n{result.stdout}")
-        
-        if result.returncode != 0:
-            error_msg = f"Cellpose worker failed with code {result.returncode}"
-            if result.stderr:
-                error_msg += f"\nError: {result.stderr}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-        
-        # Load result
-        if not output_path.exists():
-            raise RuntimeError(f"Worker did not create output file: {output_path}")
-        
-        logger.info("Loading segmentation masks...")
-        masks = np.load(output_path)
-        logger.info(f"Masks loaded. Shape: {masks.shape}, max ID: {masks.max()}")
-        
-        return masks
-
+adapter = GA3Adapter(
+    module_dir="cellpose_module",
+    worker_script="cellpose_worker.py"
+)
 
 # ============================================================================
-# GA3 Node Interface (limnode)
+# GA3 Node Interface
 # ============================================================================
 
-def output(inp: tuple[limnode.AnyInDef], out: tuple[limnode.AnyOutDef]) -> None:
-    """Define output parameter properties."""
-    # Output will be a binary mask with cell IDs
+def output(inp, out):
+    """Define output properties."""
     out[0].makeNew("Cellpose Masks", (0, 255, 255)).makeInt32()
 
 
-def build(loops: list[limnode.LoopDef]) -> limnode.Program | None:
-    """Define how run() is called (default: once per frame)."""
+def build(loops):
+    """Define execution strategy (default: once per frame)."""
     return None
 
 
-def run(inp: tuple[limnode.AnyInData], out: tuple[limnode.AnyOutData], ctx: limnode.RunContext) -> None:
-    """
-    Process each frame/volume.
+def run(inp, out, ctx):
+    """Process each frame through Cellpose."""
+    # Extract 2D image from GA3's 4D structure (z, y, x, channels)
+    image = inp[0].data[0, :, :, 0]
     
-    Called by GA3 for each frame. Extracts image, calls external worker,
-    and loads results back into GA3's data structures.
-    """
-    try:
-        # Extract 2D image from GA3's 4D structure (z, y, x, channels)
-        # For 2D images: z=1, channels=1
-        image = inp[0].data[0, :, :, 0]  # Take first z-plane, first channel
-        
-        logger.info(f"Processing frame: {ctx.outCoordinates}")
-        logger.info(f"Image shape: {image.shape}, dtype: {image.dtype}, "
-                   f"range: [{image.min()}, {image.max()}]")
-        
-        # Call external Cellpose worker
-        masks = call_cellpose_worker(
-            image=image,
-            model_type=CELLPOSE_MODEL,
-            diameter=CELL_DIAMETER,
-        )
-        
-        # Write result back to GA3
-        out[0].data[0, :, :, 0] = masks.astype(np.int32)
-        
-        logger.info(f"✓ Frame processed successfully. Found {masks.max()} cells.")
-        
-    except Exception as e:
-        logger.error(f"✗ Frame processing failed: {str(e)}", exc_info=True)
-        # Re-raise to let GA3 know something went wrong
-        raise
+    # Call Cellpose via adapter
+    masks = adapter.process(
+        image,
+        model=MODEL,
+        diameter=DIAMETER,
+        flow_threshold=FLOW_THRESHOLD,
+        cellprob_threshold=CELLPROB_THRESHOLD
+    )
+    
+    # Write result back to GA3
+    out[0].data[0, :, :, 0] = masks.astype('int32')
 
 
-# Child process initialization (when GA3 runs this out-of-process)
+# Required for out-of-process execution
 if __name__ == '__main__':
     limnode.child_main(run, output, build)
