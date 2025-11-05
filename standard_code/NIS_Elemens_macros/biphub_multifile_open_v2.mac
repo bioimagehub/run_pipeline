@@ -1,0 +1,322 @@
+// BiPHub Multi-File Image Converter V2
+// Converts multiple image files to OME-TIFF format using run_pipeline orchestrator
+// Uses YAML config + run_pipeline.exe for robust environment management
+
+import("NkWindow.dll");
+import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
+
+int main() {
+    // ALL variable declarations at top (NIS Elements requirement)
+    char file_paths[4000];
+    char filter_string[200];
+    char folder_path[800];
+    char current_file[300];
+    char full_path[1000];
+    char selected_file[1000];
+    char completion_file[900];
+    char ome_tif_file[1000];
+    char nd2_file[1000];
+    char yaml_content[3000];
+    char temp_yaml_path[300];
+    char write_yaml_command[3500];
+    char run_pipeline_path[300];
+    char pipeline_command[400];
+    char display_msg[500];
+    int folder_len;
+    int file_count;
+    int current_file_num;
+    int pos;
+    int name_start;
+    int name_len;
+    int last_period;
+    int wait_cycles;
+    int idx;
+    int path_len;
+    long dialog_result;
+    
+    SetCommandText("BiPHub Multi-File Converter V2 - Select files to convert");
+    
+    // Build file filter using string literal (confirmed working)
+    strcpy(filter_string, "Image Files|*.czi;*.nd2;*.ims;*.tif;*.tiff;*.lsm;*.lif;|All Files|*.*|");
+    
+    // Show multi-file selection dialog
+    // OFN_ALLOWMULTISELECT = 0x200 (512) + OFN_EXPLORER = 0x80000 (524288) = 524800
+    dialog_result = NkFile_GetOpenFileName("", file_paths, 4000, filter_string, 1, "Select Multiple Image Files for OME-TIFF Conversion", 524800);
+    
+    if (dialog_result == 0) {
+        SetCommandText("Conversion cancelled by user");
+        return;
+    }
+    
+    // Set run_pipeline.exe path (adjust if needed)
+    strcpy(run_pipeline_path, "C:/git/run_pipeline/run_pipeline.exe");
+    
+    // Verify run_pipeline.exe exists
+    if (!ExistFile(run_pipeline_path)) {
+        SetCommandText("ERROR: run_pipeline.exe not found!");
+        WaitText(0, "run_pipeline.exe not found at:");
+        WaitText(0, run_pipeline_path);
+        WaitText(0, "Please update the path in the macro");
+        return;
+    }
+    
+    // Parse selected files
+    folder_len = strlen(file_paths);
+    strcpy(folder_path, file_paths);
+    
+    // Check if single or multiple files selected
+    pos = folder_len + 1;
+    
+    if (file_paths[pos] == 0) {
+        // Single file selected - extract folder and filename
+        path_len = strlen(file_paths);
+        last_period = -1;
+        
+        // Find last slash
+        for (idx = 0; idx < path_len; idx = idx + 1) {
+            if (file_paths[idx] == 92) {
+                last_period = idx;
+            }
+            if (file_paths[idx] == 47) {
+                last_period = idx;
+            }
+        }
+        
+        if (last_period >= 0) {
+            // Extract folder
+            for (idx = 0; idx < last_period; idx = idx + 1) {
+                folder_path[idx] = file_paths[idx];
+            }
+            folder_path[last_period] = 0;
+            
+            // Extract filename (skip the slash)
+            idx = last_period + 1;
+            name_len = 0;
+            while (idx < path_len) {
+                file_paths[folder_len + 1 + name_len] = file_paths[idx];
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            file_paths[folder_len + 1 + name_len] = 0;
+            file_paths[folder_len] = 0;
+        }
+        
+        file_count = 1;
+        pos = folder_len + 1;
+    } else {
+        // Multiple files - count them
+        file_count = 0;
+        idx = folder_len + 1;
+        while (idx < 3990) {
+            name_start = idx;
+            name_len = 0;
+            
+            while ((file_paths[idx] != 0) && (idx < 3990)) {
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            
+            if (name_len > 0) {
+                file_count = file_count + 1;
+                idx = idx + 1;
+            } else {
+                idx = 4000;
+            }
+        }
+        
+        pos = folder_len + 1;
+    }
+    
+    strcpy(display_msg, "Processing ");
+    if (file_count < 10) {
+        display_msg[11] = 48 + file_count;
+        display_msg[12] = 0;
+    } else {
+        display_msg[11] = 48 + (file_count / 10);
+        display_msg[12] = 48 + (file_count % 10);
+        display_msg[13] = 0;
+    }
+    strcat(display_msg, " files...");
+    SetCommandText(display_msg);
+    
+    // Process each file
+    current_file_num = 0;
+    
+    while ((pos > 0) && (pos < 3990)) {
+        // Extract filename
+        name_start = pos;
+        name_len = 0;
+        
+        while ((file_paths[pos] != 0) && (pos < 3990)) {
+            name_len = name_len + 1;
+            pos = pos + 1;
+        }
+        
+        if (name_len > 0) {
+            // Copy filename
+            for (idx = 0; idx < name_len; idx = idx + 1) {
+                current_file[idx] = file_paths[name_start + idx];
+            }
+            current_file[name_len] = 0;
+            
+            // Build full path
+            strcpy(full_path, folder_path);
+            strcat(full_path, "\\");
+            strcat(full_path, current_file);
+            strcpy(selected_file, full_path);
+            
+            current_file_num = current_file_num + 1;
+            
+            // Display progress
+            strcpy(display_msg, "Converting file ");
+            if (current_file_num < 10) {
+                display_msg[16] = 48 + current_file_num;
+                display_msg[17] = 0;
+            } else {
+                display_msg[16] = 48 + (current_file_num / 10);
+                display_msg[17] = 48 + (current_file_num % 10);
+                display_msg[18] = 0;
+            }
+            strcat(display_msg, " of ");
+            if (file_count < 10) {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + file_count;
+                display_msg[idx + 1] = 0;
+            } else {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + (file_count / 10);
+                display_msg[idx + 1] = 48 + (file_count % 10);
+                display_msg[idx + 2] = 0;
+            }
+            strcat(display_msg, ": ");
+            strcat(display_msg, current_file);
+            SetCommandText(display_msg);
+            
+            pos = pos + 1;
+        
+            // ==========================================
+            // CONVERSION LOGIC USING run_pipeline.exe
+            // ==========================================
+            
+            // Normalize backslashes to forward slashes
+            for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
+                if (selected_file[idx] == 92) {
+                    selected_file[idx] = 47;
+                }
+            }
+            
+            // Verify input file exists
+            if (!ExistFile(selected_file)) {
+                WaitText(0, "  ERROR: File does not exist, skipping");
+            } else {
+                // Build output filenames
+                path_len = strlen(selected_file);
+                last_period = -1;
+                
+                for (idx = 0; idx < path_len; idx = idx + 1) {
+                    if (selected_file[idx] == 46) {
+                        last_period = idx;
+                    }
+                }
+                
+                // Build ome.tif output filename
+                if (last_period >= 0) {
+                    for (idx = 0; idx < last_period; idx = idx + 1) {
+                        ome_tif_file[idx] = selected_file[idx];
+                    }
+                    ome_tif_file[last_period] = 0;
+                    strcat(ome_tif_file, ".ome.tif");
+                } else {
+                    strcpy(ome_tif_file, selected_file);
+                    strcat(ome_tif_file, ".ome.tif");
+                }
+                
+                // Build nd2 file path
+                if (last_period >= 0) {
+                    for (idx = 0; idx < last_period; idx = idx + 1) {
+                        nd2_file[idx] = selected_file[idx];
+                    }
+                    nd2_file[last_period] = 0;
+                    strcat(nd2_file, ".nd2");
+                } else {
+                    strcpy(nd2_file, selected_file);
+                    strcat(nd2_file, ".nd2");
+                }
+                
+                // Build YAML configuration for run_pipeline
+                strcpy(yaml_content, "run:\\n");
+                strcat(yaml_content, "  - name: convert_to_tif\\n");
+                strcat(yaml_content, "    environment: uv:convert-to-tif\\n");
+                strcat(yaml_content, "    commands:\\n");
+                strcat(yaml_content, "      - python: %REPO%/standard_code/python/convert_to_tif.py\\n");
+                strcat(yaml_content, "        --input-search-pattern: '");
+                strcat(yaml_content, selected_file);
+                strcat(yaml_content, "'\\n");
+                strcat(yaml_content, "        --output-folder: '");
+                // Use same folder as input
+                for (idx = 0; idx < last_period; idx = idx + 1) {
+                    yaml_content[strlen(yaml_content)] = selected_file[idx];
+                    yaml_content[strlen(yaml_content) + 1] = 0;
+                }
+                strcat(yaml_content, "'\\n");
+                strcat(yaml_content, "        --output-file-name-extension: '.ome'\\n");
+                strcat(yaml_content, "        --no-parallel\\n");
+                
+                // Write YAML file
+                strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+                
+                strcpy(write_yaml_command, "with open('");
+                strcat(write_yaml_command, temp_yaml_path);
+                strcat(write_yaml_command, "', 'w') as f: f.write('''");
+                strcat(write_yaml_command, yaml_content);
+                strcat(write_yaml_command, "''')");
+                
+                Python_RunString(write_yaml_command);
+                Wait(0.2);
+                
+                // Execute run_pipeline.exe
+                if (ExistFile(temp_yaml_path)) {
+                    strcpy(pipeline_command, run_pipeline_path);
+                    strcat(pipeline_command, " ");
+                    strcat(pipeline_command, temp_yaml_path);
+                    
+                    Exec(pipeline_command, 1);  // 1 = wait for completion
+                    
+                    // Check if output file was created
+                    if (ExistFile(ome_tif_file)) {
+                        OpenDocument(ome_tif_file, 0);
+                        Wait(0.1);
+                        ImageSaveAs(nd2_file, 14, 0);
+                        
+                        // Delete .ome.tif file
+                        DeleteFile(ome_tif_file);
+                    } else {
+                        WaitText(0, "  ERROR: Conversion failed - no output file");
+                    }
+                    
+                    // Clean up temp YAML
+                    DeleteFile(temp_yaml_path);
+                } else {
+                    WaitText(0, "  ERROR: Failed to create YAML config");
+                }
+            }
+        } else {
+            // No more files
+            pos = 4000;
+        }
+    }
+    
+    // Final summary
+    SetCommandText("Multi-file conversion completed!");
+    strcpy(display_msg, "Processed ");
+    if (file_count < 10) {
+        display_msg[10] = 48 + file_count;
+        display_msg[11] = 0;
+    } else {
+        display_msg[10] = 48 + (file_count / 10);
+        display_msg[11] = 48 + (file_count % 10);
+        display_msg[12] = 0;
+    }
+    strcat(display_msg, " file(s)");
+    WaitText(2, "All conversions complete!");
+}
