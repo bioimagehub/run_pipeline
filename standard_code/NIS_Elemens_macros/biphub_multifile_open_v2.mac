@@ -182,17 +182,20 @@ int main() {
             // Build full path
             strcpy(full_path, folder_path);
             
+            // Remove any trailing slash from full_path before adding separator
+            folder_len = strlen(full_path);
+            if (folder_len > 0) {
+                if ((full_path[folder_len - 1] == 92) || (full_path[folder_len - 1] == 47)) {
+                    full_path[folder_len - 1] = 0;
+                }
+            }
+            
             // Debug: Show folder_path
             SetCommandText(folder_path);
             WaitText(0, folder_path);
             
-            // Only add separator if folder_path doesn't already end with one
-            folder_len = strlen(folder_path);
-            if (folder_len > 0) {
-                if ((folder_path[folder_len - 1] != 92) && (folder_path[folder_len - 1] != 47)) {
-                    strcat(full_path, "\\");
-                }
-            }
+            // Always add exactly one separator
+            strcat(full_path, "\\");
             
             strcat(full_path, current_file);
             strcpy(selected_file, full_path);
