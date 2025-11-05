@@ -186,13 +186,18 @@ def convert_single_file(
             # Check if split mode is enabled
             if split:
                 # Save each T, C, Z slice as individual file
-                # Create folder named after the output file (without extension)
-                split_folder = os.path.splitext(scene_output_path)[0]
+                # Use the base output path (not scene-specific) to create one folder for all scenes
+                if len(scenes_to_process) > 1:
+                    # Remove the scene suffix to get base path
+                    split_folder = os.path.splitext(output_path)[0]
+                else:
+                    split_folder = os.path.splitext(scene_output_path)[0]
+                
                 os.makedirs(split_folder, exist_ok=True)
                 logger.info(f"Split mode: Saving individual slices to {split_folder}")
                 
                 T, C, Z, Y, X = data.shape
-                logger.info(f"Dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
+                logger.info(f"Scene {scene_idx}, Dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
                 
                 for t in range(T):
                     for c in range(C):
@@ -200,14 +205,14 @@ def convert_single_file(
                             # Extract single YX slice
                             slice_data = data[t, c, z, :, :]
                             
-                            # Build filename: T0001_C0001_Z0001.tif
-                            slice_filename = f"T{t:04d}_C{c:04d}_Z{z:04d}.tif"
+                            # Build filename: T0001_C0001_Z0001_S0001.tif
+                            slice_filename = f"T{t:04d}_C{c:04d}_Z{z:04d}_S{scene_idx:04d}.tif"
                             slice_path = os.path.join(split_folder, slice_filename)
                             
                             # Save as simple 2D TIFF using tifffile for maximum compatibility
                             tifffile.imwrite(slice_path, slice_data, photometric='minisblack')
                 
-                logger.info(f"Saved {T * C * Z} individual slice files")
+                logger.info(f"Saved {T * C * Z} individual slice files for scene {scene_idx}")
                 
             else:
                 # Standard save mode (single file)
