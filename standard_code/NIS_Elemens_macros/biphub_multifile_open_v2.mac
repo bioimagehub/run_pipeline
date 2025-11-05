@@ -176,24 +176,9 @@ int main() {
             SetCommandText(current_file);
             WaitText(0, current_file);
             
-            // Build full path
+            // Build full path: folder_path is already clean (no trailing slash)
             strcpy(full_path, folder_path);
-            
-            // Remove any trailing slash from full_path before adding separator
-            folder_len = strlen(full_path);
-            if (folder_len > 0) {
-                if ((full_path[folder_len - 1] == 92) || (full_path[folder_len - 1] == 47)) {
-                    full_path[folder_len - 1] = 0;
-                }
-            }
-            
-            // Debug: Show folder_path
-            SetCommandText(folder_path);
-            WaitText(0, folder_path);
-            
-            // Always add exactly one separator
-            strcat(full_path, "\\");
-            
+            strcat(full_path, "/");
             strcat(full_path, current_file);
             strcpy(selected_file, full_path);
             
@@ -234,14 +219,7 @@ int main() {
             // CONVERSION LOGIC USING run_pipeline.exe
             // ==========================================
             
-            // Normalize backslashes to forward slashes
-            for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
-                if (selected_file[idx] == 92) {
-                    selected_file[idx] = 47;
-                }
-            }
-            
-            // Debug: Show selected_file after normalization
+            // Debug: Show selected_file
             SetCommandText(selected_file);
             WaitText(0, selected_file);
             
