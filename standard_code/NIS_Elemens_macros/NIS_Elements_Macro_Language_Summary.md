@@ -329,6 +329,59 @@ int MyFunction(int a, LPSTR str, double d) {
 10. **Test string operations thoroughly using the test macro suite**
 11. **Define functions before using them - no forward declarations allowed**
 12. **⚠️ CRITICAL: Avoid problematic variable names** that conflict with internal system variables
+13. **⚠️ CRITICAL: Balance braces carefully** - NIS Elements compiler provides minimal error messages
+14. **✅ Use proper indentation** - While not required by the compiler, consistent indentation prevents brace-matching errors
+
+## ⚠️ Critical Debugging Tips
+
+### Brace Balance Verification
+The NIS Elements macro compiler does not provide helpful error messages for brace mismatches. If your macro fails to compile with generic errors:
+
+**Quick verification method (PowerShell):**
+```powershell
+$content = Get-Content "your_macro.mac" -Raw
+$openBraces = ($content -split '\{').Count - 1
+$closeBraces = ($content -split '\}').Count - 1
+Write-Host "Open braces: $openBraces"
+Write-Host "Close braces: $closeBraces"
+Write-Host "Difference: $($openBraces - $closeBraces)"
+```
+
+If the difference is not 0, you have a brace mismatch.
+
+### Common Brace Mistakes
+1. **Forgetting to close `if` blocks when nesting conditions**
+   ```c
+   // ❌ WRONG - Missing closing brace
+   if (condition1) {
+       if (condition2) {
+           // code
+       }
+   // Missing } here for condition1!
+   }
+   
+   // ✅ CORRECT
+   if (condition1) {
+       if (condition2) {
+           // code
+       }
+   }  // Closes condition1
+   ```
+
+2. **Indentation doesn't match brace levels**
+   - While the compiler ignores indentation, incorrect indentation makes it impossible to spot brace errors
+   - Always use consistent indentation (4 spaces per level recommended)
+
+3. **Long if-else chains**
+   - Each `if` and `else` block needs proper closing
+   - Use comments to mark closing braces: `}  // End if condition1`
+
+### Function Call Issues
+
+**Python_RunFile vs Python_RunString:**
+- `Python_RunFile(path)` - Opens visible console window, great for debugging
+- `Python_RunString(code)` - Executes silently, no output visible
+- Use `Python_RunFile` when you need to see subprocess output
 
 ## ⚠️ CRITICAL: Reserved/Problematic Variable Names
 
