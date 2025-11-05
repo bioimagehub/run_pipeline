@@ -1,6 +1,6 @@
 // BiPHub Multi-File Image Converter V2
 // Converts multiple image files to OME-TIFF format using run_pipeline orchestrator
-// Uses YAML config + run_pipeline.exe for robust environment management
+// Uses Python script to launch run_pipeline.exe for robust environment management
 
 import("NkWindow.dll");
 import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
@@ -13,20 +13,15 @@ int main() {
     char current_file[300];
     char full_path[1000];
     char selected_file[1000];
-    char completion_file[900];
     char ome_tif_file[1000];
     char nd2_file[1000];
-    char yaml_content[3000];
-    char temp_yaml_path[300];
-    char write_yaml_command[3500];
-    char run_pipeline_path[300];
-    char pipeline_command[400];
-    char display_msg[500];
     char python_launcher_script[2000];
     char temp_launcher_path[300];
     char write_launcher_command[2500];
     char metadata_yaml_path[1000];
     char base_path_no_ext[1000];
+    char run_pipeline_path[300];
+    char display_msg[500];
     int scene_idx;
     int folder_len;
     int file_count;
@@ -35,12 +30,23 @@ int main() {
     int name_start;
     int name_len;
     int last_period;
-    int wait_cycles;
     int idx;
     int path_len;
     long dialog_result;
     
     SetCommandText("BiPHub Multi-File Converter V2 - Select files to convert");
+    
+    // Set run_pipeline.exe path
+    strcpy(run_pipeline_path, "C:/biphub/git/run_pipeline/run_pipeline.exe");
+    
+    // Verify run_pipeline.exe exists
+    if (!ExistFile(run_pipeline_path)) {
+        SetCommandText("ERROR: run_pipeline.exe not found!");
+        WaitText(0, "run_pipeline.exe not found at:");
+        WaitText(0, run_pipeline_path);
+        WaitText(0, "Please update the path in the macro");
+        return;
+    }
     
     // Build file filter using string literal (confirmed working)
     strcpy(filter_string, "Image Files|*.czi;*.nd2;*.ims;*.tif;*.tiff;*.lsm;*.lif;|All Files|*.*|");
@@ -51,18 +57,6 @@ int main() {
     
     if (dialog_result == 0) {
         SetCommandText("Conversion cancelled by user");
-        return;
-    }
-    
-    // Set run_pipeline.exe path (adjust if needed)
-    strcpy(run_pipeline_path, "C:/biphub/git/run_pipeline/run_pipeline.exe");
-    
-    // Verify run_pipeline.exe exists
-    if (!ExistFile(run_pipeline_path)) {
-        SetCommandText("ERROR: run_pipeline.exe not found!");
-        WaitText(0, "run_pipeline.exe not found at:");
-        WaitText(0, run_pipeline_path);
-        WaitText(0, "Please update the path in the macro");
         return;
     }
     
@@ -201,7 +195,7 @@ int main() {
             pos = pos + 1;
         
             // ==========================================
-            // CONVERSION LOGIC USING run_pipeline.exe
+            // CONVERSION LOGIC
             // ==========================================
             
             // Normalize backslashes to forward slashes
@@ -215,7 +209,7 @@ int main() {
             if (!ExistFile(selected_file)) {
                 WaitText(0, "  ERROR: File does not exist, skipping");
             } else {
-                // Build base path without extension for metadata check
+                // Build base path without extension
                 path_len = strlen(selected_file);
                 last_period = -1;
                 
@@ -235,102 +229,71 @@ int main() {
                     strcpy(base_path_no_ext, selected_file);
                 }
                 
-                // Check if already processed by looking for metadata YAML
+                // Check if already processed
                 strcpy(metadata_yaml_path, base_path_no_ext);
                 strcat(metadata_yaml_path, "_metadata.yaml");
                 
                 if (ExistFile(metadata_yaml_path)) {
-                    WaitText(0, "  SKIPPING: Already processed (metadata.yaml exists)");
+                    WaitText(0, "  SKIPPING: Already processed");
                 } else {
-                    // Build YAML configuration for run_pipeline
-                    strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+                    // Create Python launcher script
+                    strcpy(temp_launcher_path, "C:/temp/nis_pipeline_launcher.py");
                     
-                    // Find the folder path (up to last slash)
-                    last_period = -1;
-                    for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
+                    // Build Python script
+                    strcpy(python_launcher_script, "import subprocess\nimport sys\n\n");
+                    strcat(python_launcher_script, "result = subprocess.run(['");
+                    strcat(python_launcher_script, run_pipeline_path);
+                    strcat(python_launcher_script, "', 'pipeline_configs/convert_to_tif_uv.yaml', '--input-search-pattern', '");
+                    strcat(python_launcher_script, selected_file);
+                    strcat(python_launcher_script, "', '--output-folder', '");
+                    
+                    // Extract folder from selected_file
+                    for (idx = strlen(selected_file) - 1; idx >= 0; idx = idx - 1) {
                         if (selected_file[idx] == 47) {
                             last_period = idx;
+                            idx = -1;
                         }
                     }
-                    
-                    strcpy(write_yaml_command, "with open('");
-                    strcat(write_yaml_command, temp_yaml_path);
-                    strcat(write_yaml_command, "', 'w') as f: f.write('''run:\n  - name: convert_to_tif\n    environment: uv:convert-to-tif\n    commands:\n      - python: '%REPO%/standard_code/python/convert_to_tif.py'\n      - --input-search-pattern: ");
-                    strcat(write_yaml_command, "'");
-                    strcat(write_yaml_command, selected_file);
-                    strcat(write_yaml_command, "'\n      - --output-folder: ");
-                    strcat(write_yaml_command, "'");
-                    // Add just the folder path (up to last slash)
                     for (idx = 0; idx < last_period; idx = idx + 1) {
-                        write_yaml_command[strlen(write_yaml_command)] = selected_file[idx];
-                        write_yaml_command[strlen(write_yaml_command) + 1] = 0;
+                        python_launcher_script[strlen(python_launcher_script)] = selected_file[idx];
+                        python_launcher_script[strlen(python_launcher_script) + 1] = 0;
                     }
-                    strcat(write_yaml_command, "'\n      - --no-parallel\n''')");
                     
-                    Python_RunString(write_yaml_command);
+                    strcat(python_launcher_script, "', '--no-parallel'])\n");
+                    strcat(python_launcher_script, "sys.exit(result.returncode)");
+                    
+                    // Write launcher script
+                    strcpy(write_launcher_command, "with open('");
+                    strcat(write_launcher_command, temp_launcher_path);
+                    strcat(write_launcher_command, "', 'w') as f: f.write('''");
+                    strcat(write_launcher_command, python_launcher_script);
+                    strcat(write_launcher_command, "''')");
+                    
+                    Python_RunString(write_launcher_command);
                     Wait(0.2);
                     
-                    // Create Python launcher script that shows console output
-                    if (ExistFile(temp_yaml_path)) {
-                        strcpy(temp_launcher_path, "C:/temp/nis_pipeline_launcher.py");
+                    // Execute conversion
+                    if (ExistFile(temp_launcher_path)) {
+                        Python_RunFile(temp_launcher_path);
                         
-                        // Build Python launcher script with subprocess output visible
-                        strcpy(python_launcher_script, "import subprocess\nimport sys\n\n");
-                        strcat(python_launcher_script, "print('=' * 60)\n");
-                        strcat(python_launcher_script, "print('BiPHub Pipeline Converter')\n");
-                        strcat(python_launcher_script, "print('=' * 60)\n");
-                        strcat(python_launcher_script, "print('Executing run_pipeline.exe...')\n");
-                        strcat(python_launcher_script, "print('Config: ");
-                        strcat(python_launcher_script, temp_yaml_path);
-                        strcat(python_launcher_script, "')\n");
-                        strcat(python_launcher_script, "print('\\n')\n\n");
-                        strcat(python_launcher_script, "result = subprocess.run(['");
-                        strcat(python_launcher_script, run_pipeline_path);
-                        strcat(python_launcher_script, "', '");
-                        strcat(python_launcher_script, temp_yaml_path);
-                        strcat(python_launcher_script, "'])\n\n");
-                        strcat(python_launcher_script, "print('\\n')\n");
-                        strcat(python_launcher_script, "print('=' * 60)\n");
-                        strcat(python_launcher_script, "print(f'Pipeline finished with exit code: {result.returncode}')\n");
-                        strcat(python_launcher_script, "print('=' * 60)\n");
-                        strcat(python_launcher_script, "sys.exit(result.returncode)");
-                        
-                        // Write launcher script using Python
-                        strcpy(write_launcher_command, "with open('");
-                        strcat(write_launcher_command, temp_launcher_path);
-                        strcat(write_launcher_command, "', 'w') as f: f.write('''");
-                        strcat(write_launcher_command, python_launcher_script);
-                        strcat(write_launcher_command, "''')");
-                        
-                        Python_RunString(write_launcher_command);
-                        Wait(0.2);
-                        
-                        // Execute launcher script (this opens in a visible console)
-                        if (ExistFile(temp_launcher_path)) {
-                            Python_RunFile(temp_launcher_path);
+                        // Check if conversion succeeded
+                        if (ExistFile(metadata_yaml_path)) {
+                            WaitText(0, "  Conversion complete! Processing output...");
                             
-                            // Python_RunFile blocks until completion - check result immediately
-                            if (ExistFile(metadata_yaml_path)) {
-                                WaitText(0, "  Conversion complete! Processing output files...");
-                            
-                            // Handle multi-scene outputs: check for _1.tif, _2.tif, etc.
+                            // Handle multi-scene: check for _1.tif, _2.tif, etc.
                             scene_idx = 1;
-                            
-                            // Try scene 1 first
                             strcpy(ome_tif_file, base_path_no_ext);
                             strcat(ome_tif_file, "_1.tif");
                             
                             if (ExistFile(ome_tif_file)) {
-                                // Multi-scene file - process each scene
+                                // Multi-scene file
                                 while (ExistFile(ome_tif_file) && (scene_idx < 100)) {
-                                    // Build nd2 output path
                                     strcpy(nd2_file, base_path_no_ext);
+                                    strcat(nd2_file, "_");
                                     if (scene_idx < 10) {
-                                        strcat(nd2_file, "_");
                                         nd2_file[strlen(nd2_file)] = 48 + scene_idx;
                                         nd2_file[strlen(nd2_file) + 1] = 0;
                                     } else {
-                                        strcat(nd2_file, "_");
                                         nd2_file[strlen(nd2_file)] = 48 + (scene_idx / 10);
                                         nd2_file[strlen(nd2_file) + 1] = 48 + (scene_idx % 10);
                                         nd2_file[strlen(nd2_file) + 2] = 0;
@@ -342,7 +305,6 @@ int main() {
                                     ImageSaveAs(nd2_file, 14, 0);
                                     DeleteFile(ome_tif_file);
                                     
-                                    // Check for next scene
                                     scene_idx = scene_idx + 1;
                                     strcpy(ome_tif_file, base_path_no_ext);
                                     strcat(ome_tif_file, "_");
@@ -357,7 +319,7 @@ int main() {
                                     strcat(ome_tif_file, ".tif");
                                 }
                             } else {
-                                // Single scene file - check for .tif without scene number
+                                // Single scene file
                                 strcpy(ome_tif_file, base_path_no_ext);
                                 strcat(ome_tif_file, ".tif");
                                 
@@ -370,20 +332,16 @@ int main() {
                                     ImageSaveAs(nd2_file, 14, 0);
                                     DeleteFile(ome_tif_file);
                                 } else {
-                                    WaitText(0, "  WARNING: No output .tif file found");
+                                    WaitText(0, "  WARNING: No output file found");
                                 }
                             }
                         } else {
-                            WaitText(0, "  ERROR: Conversion timeout - metadata.yaml not created");
+                            WaitText(0, "  ERROR: Conversion failed");
                         }
                         
-                        // Clean up temp files
                         DeleteFile(temp_launcher_path);
-                        } else {
-                            WaitText(0, "  ERROR: Failed to create launcher script");
-                        }
-                    
-                    DeleteFile(temp_yaml_path);
+                    } else {
+                        WaitText(0, "  ERROR: Failed to create launcher");
                     }
                 }
             }
