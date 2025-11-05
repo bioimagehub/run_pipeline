@@ -134,14 +134,27 @@ def convert_single_file(
             
             logger.info(f"Processing scene '{scene_id}' -> {os.path.basename(scene_output_path)}")
             
+            # Get data for this scene using Dask for better performance
+            # Dask provides lazy loading and is ~38% faster for large files
+            dask_data = img.dask_data
+            data = dask_data.compute()
+            
+            # Extract metadata for this scene before projection
+            # This includes physical pixel sizes, channel names, and other OME metadata
+            physical_pixel_sizes = None
+            channel_names = None
+            try:
+                if hasattr(img, 'physical_pixel_sizes'):
+                    physical_pixel_sizes = img.physical_pixel_sizes
+                if hasattr(img, 'channel_names'):
+                    channel_names = img.channel_names
+                logger.info(f"Extracted metadata - Pixel sizes: {physical_pixel_sizes}, Channels: {channel_names}")
+            except Exception as e:
+                logger.warning(f"Could not extract metadata: {e}")
+            
             # Apply projection if requested
             if projection_method:
                 logger.info(f"Applying {projection_method} projection")
-                
-                # Get data for this scene using Dask for better performance
-                # Dask provides lazy loading and is ~38% faster for large files
-                dask_data = img.dask_data
-                data = dask_data.compute()
                 
                 # Check if Z dimension exists and is > 1
                 if data.ndim >= 3:
@@ -160,16 +173,20 @@ def convert_single_file(
                             z_axis,
                             data
                         )
-                
-                # Save projected data using save_tczyx_image for consistency
-                os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
-                rp.save_tczyx_image(data, scene_output_path)
-                logger.info(f"Saved: {scene_output_path}")
-            else:
-                # No projection - use direct img.save() for best performance and metadata preservation
-                os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
-                img.save(scene_output_path)
-                logger.info(f"Saved: {scene_output_path}")
+            
+            # Save scene data with metadata preservation
+            os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
+            
+            # Build kwargs for saving with metadata
+            save_kwargs = {}
+            if physical_pixel_sizes is not None:
+                save_kwargs['physical_pixel_sizes'] = physical_pixel_sizes
+            if channel_names is not None:
+                save_kwargs['channel_names'] = channel_names
+            
+            # Save with metadata
+            rp.save_tczyx_image(data, scene_output_path, **save_kwargs)
+            logger.info(f"Saved: {scene_output_path}")
             
             # Save metadata if requested
             if save_metadata:
