@@ -26,6 +26,38 @@ AVAILABLE_MODELS = [
 
 # Select model by changing the index (0 = first model = 'cyto3')
 SELECTED_MODEL = AVAILABLE_MODELS[0]  # Currently: 'cyto3'
+
+# ============================================================================
+# SEGMENTATION PARAMETERS
+# ============================================================================
+# Cell diameter in pixels (most important parameter!)
+# Set to None to use automatic diameter estimation
+# Typical values: 30 (default), 15-100 depending on cell size
+DIAMETER = 30.0  # Set to None for automatic estimation
+
+# Cell probability threshold (0.0 to 1.0)
+# All pixels with value above threshold kept for masks
+# Decrease to find more and larger masks
+CELLPROB_THRESHOLD = 0.0  # Default: 0.0
+
+# Flow error threshold (0.0 to 1.0) - not used for 3D
+# All cells with errors below threshold are kept
+# Increase to be more lenient, decrease to be more strict
+FLOW_THRESHOLD = 0.4  # Default: 0.4
+
+# Minimum mask size in pixels
+# All ROIs below this size will be discarded
+MIN_SIZE = 15  # Default: 15
+
+# GPU acceleration (True/False)
+# Set to True if GPU is available for faster processing
+USE_GPU = False  # Set to True if you have CUDA-capable GPU
+
+# Additional parameters (advanced)
+DO_3D = False  # Set to True for 3D segmentation
+NORMALIZE = True  # Normalize image intensities
+INVERT = False  # Invert image (if cells are dark instead of bright)
+RESAMPLE = True  # Run dynamics at original image size (slower but more accurate)
 # ============================================================================
 
 model = None
@@ -45,9 +77,20 @@ def run(inp: tuple[limnode.AnyInData], out: tuple[limnode.AnyOutData], ctx: limn
     
     global model
     if model is None:
-        model = models.Cellpose(model_type=SELECTED_MODEL)
+        model = models.Cellpose(model_type=SELECTED_MODEL, gpu=USE_GPU)
     
-    masks, flows, styles, diams = model.eval(inp[0].data[0, :, :, 0])
+    # Run Cellpose segmentation with configured parameters
+    masks, flows, styles, diams = model.eval(
+        inp[0].data[0, :, :, 0],
+        diameter=DIAMETER,
+        cellprob_threshold=CELLPROB_THRESHOLD,
+        flow_threshold=FLOW_THRESHOLD,
+        min_size=MIN_SIZE,
+        do_3D=DO_3D,
+        normalize=NORMALIZE,
+        invert=INVERT,
+        resample=RESAMPLE
+    )
     out[0].data[0, :, :, 0] = masks.astype(numpy.uint8)
 
 # child process initialization (when outproc is set) 
