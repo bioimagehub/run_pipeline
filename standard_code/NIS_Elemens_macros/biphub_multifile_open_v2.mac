@@ -293,7 +293,7 @@ int main() {
                         strcat(python_launcher_script, "print('=' * 60)\n");
                         strcat(python_launcher_script, "print(f'Pipeline finished with exit code: {result.returncode}')\n");
                         strcat(python_launcher_script, "print('=' * 60)\n");
-                        strcat(python_launcher_script, "input('Press Enter to close...')");
+                        strcat(python_launcher_script, "sys.exit(result.returncode)");
                         
                         // Write launcher script using Python
                         strcpy(write_launcher_command, "with open('");
@@ -309,13 +309,7 @@ int main() {
                         if (ExistFile(temp_launcher_path)) {
                         Python_RunFile(temp_launcher_path);
                         
-                        // Wait for metadata YAML to appear (indicates completion)
-                        wait_cycles = 0;
-                        while ((!ExistFile(metadata_yaml_path)) && (wait_cycles < 600)) {
-                            Wait(0.5);
-                            wait_cycles = wait_cycles + 1;
-                        }
-                        
+                        // Python_RunFile blocks until completion - check result immediately
                         if (ExistFile(metadata_yaml_path)) {
                             WaitText(0, "  Conversion complete! Processing output files...");
                             

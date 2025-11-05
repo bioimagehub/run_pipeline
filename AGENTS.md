@@ -36,13 +36,21 @@ The BIPHUB Pipeline Manager is a robust, reproducible pipeline orchestration sys
 - **Modular Design**: Pluggable components allow easy extension and customization
 - **Error Handling**: Robust error handling and logging for production-ready deployments
 
+### Environment Management Status (2025)
+- **Primary**: UV package manager (fast, modern, lock file support via `uv.lock`)
+- **Backup**: Conda environments (for complex dependencies, legacy support)
+- **Active Migration**: Converting existing pipelines from Conda to UV (in progress)
+- **Hybrid Approach**: Both systems supported for maximum compatibility
+- **Virtual Environment**: `.venv/` directory managed by UV for isolated Python dependencies
+- **Development Policy**: All new pipelines and modules must use UV unless there are specific technical reasons requiring Conda
+
 ## Supported Analysis Types
 
 - **Segmentation**: ERnet, Cellpose, threshold-based, and Ilastik integration
 - **Image Processing**: Format conversion, metadata extraction, channel merging
 - **Measurement**: Mask analysis, distance calculations, edge detection
 - **Tracking**: Time-series analysis with indexed mask tracking
-- **Visualization**: ROI generation for ImageJ integration
+- **Visualization & QC**: ROI generation for ImageJ integration, mask quality control, tracking validation, segmentation contour overlays, distance heatmaps, group-wise summary plots
 
 ## Usage
 
@@ -124,12 +132,27 @@ SOFTWARE.
 
 ```
 ├── run_pipeline.go            # Main Go orchestrator
-├── standard_code/              # Reusable Python modules
-│   └── python/                # Python analysis functions
-├── pipeline_configs/           # YAML pipeline definitions
-├── conda_envs/                # Environment specifications
-├── external/                  # Third-party tools (ERnet, UV)
-└── assets/                    # Documentation and logos
+├── run_pipeline.exe           # Compiled Windows executable
+├── .venv/                     # UV-managed virtual environment
+├── uv.lock                    # UV dependency lock file
+├── go.sum                     # Go module checksums
+├── pyproject.toml             # Python project configuration
+├── TODO.txt                   # Active development task list
+├── VERSION                    # Version tracking
+├── standard_code/             # Reusable modules
+│   ├── python/               # Python analysis functions
+│   │   ├── plots/           # Visualization and QC modules
+│   │   ├── drift_correction_utils/  # Drift correction algorithms
+│   │   ├── bioio_imaris/    # Imaris file format support
+│   │   └── Test_code/       # Development test scripts
+│   └── NIS_Elemens_macros/  # NIS-Elements automation scripts
+├── pipeline_configs/          # YAML pipeline definitions
+├── conda_envs/               # Environment specifications (legacy/backup)
+├── external/                 # Third-party tools (UV bundled)
+│   └── UV/                  # UV package manager executables
+├── go/                       # Go utility modules
+│   └── find_anaconda_path/  # Anaconda detection utility
+└── assets/                   # Documentation and logos
 ```
 
 ## Dependencies
