@@ -269,54 +269,54 @@ int main() {
                     
                     Python_RunString(write_yaml_command);
                     Wait(0.2);
-                
-                // Create Python launcher script that shows console output
-                if (ExistFile(temp_yaml_path)) {
-                    strcpy(temp_launcher_path, "C:/temp/nis_pipeline_launcher.py");
                     
-                    // Build Python launcher script with subprocess output visible
-                    strcpy(python_launcher_script, "import subprocess\nimport sys\n\n");
-                    strcat(python_launcher_script, "print('=' * 60)\n");
-                    strcat(python_launcher_script, "print('BiPHub Pipeline Converter')\n");
-                    strcat(python_launcher_script, "print('=' * 60)\n");
-                    strcat(python_launcher_script, "print('Executing run_pipeline.exe...')\n");
-                    strcat(python_launcher_script, "print('Config: ");
-                    strcat(python_launcher_script, temp_yaml_path);
-                    strcat(python_launcher_script, "')\n");
-                    strcat(python_launcher_script, "print('\\n')\n\n");
-                    strcat(python_launcher_script, "result = subprocess.run(['");
-                    strcat(python_launcher_script, run_pipeline_path);
-                    strcat(python_launcher_script, "', '");
-                    strcat(python_launcher_script, temp_yaml_path);
-                    strcat(python_launcher_script, "'])\n\n");
-                    strcat(python_launcher_script, "print('\\n')\n");
-                    strcat(python_launcher_script, "print('=' * 60)\n");
-                    strcat(python_launcher_script, "print(f'Pipeline finished with exit code: {result.returncode}')\n");
-                    strcat(python_launcher_script, "print('=' * 60)\n");
-                    strcat(python_launcher_script, "input('Press Enter to close...')");
-                    
-                    // Write launcher script using Python
-                    strcpy(write_launcher_command, "with open('");
-                    strcat(write_launcher_command, temp_launcher_path);
-                    strcat(write_launcher_command, "', 'w') as f: f.write('''");
-                    strcat(write_launcher_command, python_launcher_script);
-                    strcat(write_launcher_command, "''')");
-                    
-                    Python_RunString(write_launcher_command);
-                    Wait(0.2);
-                    
-                    // Execute launcher script (this opens in a visible console)
-                    if (ExistFile(temp_launcher_path)) {
-                        Python_RunFile(temp_launcher_path);
+                    // Create Python launcher script that shows console output
+                    if (ExistFile(temp_yaml_path)) {
+                        strcpy(temp_launcher_path, "C:/temp/nis_pipeline_launcher.py");
                         
-                        // Wait for metadata YAML to appear (indicates completion)
-                        wait_cycles = 0;
-                        while ((!ExistFile(metadata_yaml_path)) && (wait_cycles < 600)) {
-                            Wait(0.5);
-                            wait_cycles = wait_cycles + 1;
-                        }
+                        // Build Python launcher script with subprocess output visible
+                        strcpy(python_launcher_script, "import subprocess\nimport sys\n\n");
+                        strcat(python_launcher_script, "print('=' * 60)\n");
+                        strcat(python_launcher_script, "print('BiPHub Pipeline Converter')\n");
+                        strcat(python_launcher_script, "print('=' * 60)\n");
+                        strcat(python_launcher_script, "print('Executing run_pipeline.exe...')\n");
+                        strcat(python_launcher_script, "print('Config: ");
+                        strcat(python_launcher_script, temp_yaml_path);
+                        strcat(python_launcher_script, "')\n");
+                        strcat(python_launcher_script, "print('\\n')\n\n");
+                        strcat(python_launcher_script, "result = subprocess.run(['");
+                        strcat(python_launcher_script, run_pipeline_path);
+                        strcat(python_launcher_script, "', '");
+                        strcat(python_launcher_script, temp_yaml_path);
+                        strcat(python_launcher_script, "'])\n\n");
+                        strcat(python_launcher_script, "print('\\n')\n");
+                        strcat(python_launcher_script, "print('=' * 60)\n");
+                        strcat(python_launcher_script, "print(f'Pipeline finished with exit code: {result.returncode}')\n");
+                        strcat(python_launcher_script, "print('=' * 60)\n");
+                        strcat(python_launcher_script, "input('Press Enter to close...')");
                         
-                        if (ExistFile(metadata_yaml_path)) {
+                        // Write launcher script using Python
+                        strcpy(write_launcher_command, "with open('");
+                        strcat(write_launcher_command, temp_launcher_path);
+                        strcat(write_launcher_command, "', 'w') as f: f.write('''");
+                        strcat(write_launcher_command, python_launcher_script);
+                        strcat(write_launcher_command, "''')");
+                        
+                        Python_RunString(write_launcher_command);
+                        Wait(0.2);
+                        
+                        // Execute launcher script (this opens in a visible console)
+                        if (ExistFile(temp_launcher_path)) {
+                            Python_RunFile(temp_launcher_path);
+                            
+                            // Wait for metadata YAML to appear (indicates completion)
+                            wait_cycles = 0;
+                            while ((!ExistFile(metadata_yaml_path)) && (wait_cycles < 600)) {
+                                Wait(0.5);
+                                wait_cycles = wait_cycles + 1;
+                            }
+                            
+                            if (ExistFile(metadata_yaml_path)) {
                             WaitText(0, "  Conversion complete! Processing output files...");
                             
                             // Handle multi-scene outputs: check for _1.tif, _2.tif, etc.
