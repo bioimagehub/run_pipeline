@@ -49,7 +49,7 @@ int main() {
     }
     
     // Set run_pipeline.exe path (adjust if needed)
-    strcpy(run_pipeline_path, "C:/git/run_pipeline/run_pipeline.exe");
+    strcpy(run_pipeline_path, "C:/biphub/git/run_pipeline/run_pipeline.exe");
     
     // Verify run_pipeline.exe exists
     if (!ExistFile(run_pipeline_path)) {
@@ -311,3 +311,4 @@ int main() {
     strcat(display_msg, " file(s)");
     WaitText(2, "All conversions complete!");
 }
+ 
