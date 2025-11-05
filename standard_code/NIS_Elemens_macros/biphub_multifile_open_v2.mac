@@ -13,11 +13,9 @@ int main() {
     char current_file[300];
     char full_path[1000];
     char selected_file[1000];
-    char completion_file[900];
-    char ome_tif_file[1000];
-    char ome_tif_file_scene[1000];
-    char nd2_file[1000];
-    char nd2_file_scene[1000];
+    char basename[1000];
+    char tmp_ome_tif[1000];
+    char tmp_nd2[1000];
     char temp_folder_path[1000];
     char yaml_content[3000];
     char temp_yaml_path[300];
@@ -39,7 +37,6 @@ int main() {
     int idx;
     int path_len;
     int scene_num;
-    int base_name_len;
     long dialog_result;
     
     SetCommandText("BiPHub Multi-File Converter V2 - Select files to convert");
@@ -252,38 +249,26 @@ int main() {
             if (!ExistFile(selected_file)) {
                 WaitText(0, "  ERROR: File does not exist, skipping");
             } else {
-                // Build output filenames
+                // Create basename: full path without extension
                 path_len = strlen(selected_file);
                 last_period = -1;
                 
+                // Find last period in filename
                 for (idx = 0; idx < path_len; idx = idx + 1) {
                     if (selected_file[idx] == 46) {
                         last_period = idx;
                     }
                 }
                 
-                // Build ome.tif output filename
+                // Copy everything up to (but not including) the last period
                 if (last_period >= 0) {
                     for (idx = 0; idx < last_period; idx = idx + 1) {
-                        ome_tif_file[idx] = selected_file[idx];
+                        basename[idx] = selected_file[idx];
                     }
-                    ome_tif_file[last_period] = 0;
-                    strcat(ome_tif_file, ".ome.tif");
+                    basename[last_period] = 0;
                 } else {
-                    strcpy(ome_tif_file, selected_file);
-                    strcat(ome_tif_file, ".ome.tif");
-                }
-                
-                // Build nd2 file path
-                if (last_period >= 0) {
-                    for (idx = 0; idx < last_period; idx = idx + 1) {
-                        nd2_file[idx] = selected_file[idx];
-                    }
-                    nd2_file[last_period] = 0;
-                    strcat(nd2_file, ".nd2");
-                } else {
-                    strcpy(nd2_file, selected_file);
-                    strcat(nd2_file, ".nd2");
+                    // No period found, use entire filename
+                    strcpy(basename, selected_file);
                 }
                 
                 // Build YAML configuration for run_pipeline
@@ -365,94 +350,75 @@ int main() {
                         // Wait a bit for processing
                         Wait(0.1);
                         
-
+                        // Try basename.tif first (single scene/simple file)
+                        strcpy(tmp_ome_tif, basename);
+                        strcat(tmp_ome_tif, ".tif");
                         
-                        // Check for base file (no scene suffix) first
-                        SetCommandText(ome_tif_file);
-                        WaitText(0, ome_tif_file);
-
-
-                        if (ExistFile(ome_tif_file)) {
-                            OpenDocument(ome_tif_file, 0);
+                        if (ExistFile(tmp_ome_tif)) {
+                            // Found single scene file
+                            strcpy(tmp_nd2, basename);
+                            strcat(tmp_nd2, ".nd2");
+                            
+                            OpenDocument(tmp_ome_tif, 0);
                             Wait(0.1);
-                            ImageSaveAs(nd2_file, 14, 0);
-                            
-                            // Delete .ome.tif file
-                            DeleteFile(ome_tif_file);
+                            ImageSaveAs(tmp_nd2, 14, 0);
+                            DeleteFile(tmp_ome_tif);
                             CloseAllDocuments(2);
-                        } 
-                        
-                        // Now check for multi-scene files (_1.tif, _2.tif, _3.tif, etc.)
-                        // Build base filename without .ome.tif extension
-                        base_name_len = strlen(ome_tif_file) - 8;  // Remove ".ome.tif" (8 chars)
-                        
-                        // Copy base name to temp buffer
-                        for (idx = 0; idx < base_name_len; idx = idx + 1) {
-                            ome_tif_file_scene[idx] = ome_tif_file[idx];
-                        }
-                        ome_tif_file_scene[base_name_len] = 0;  // Null terminate
-                        
-                        // Loop through scene numbers 1-100
-                        for (scene_num = 1; scene_num <= 100; scene_num = scene_num + 1) {
-                            // Build scene filename: base_name + "_" + scene_num + ".tif"
-                            // Reset to base name
-                            for (idx = 0; idx < base_name_len; idx = idx + 1) {
-                                ome_tif_file_scene[idx] = ome_tif_file[idx];
-                            }
-                            ome_tif_file_scene[base_name_len] = 0;
+                        } else {
+                            // No base file found, try multi-scene files (_1.tif, _2.tif, etc.)
+                            scene_num = 1;
                             
-                            // Add "_X.tif" suffix
-                            strcat(ome_tif_file_scene, "_");
-                            
-                            // Convert scene number to string and append
-                            if (scene_num < 10) {
-                                idx = strlen(ome_tif_file_scene);
-                                ome_tif_file_scene[idx] = 48 + scene_num;  // Single digit
-                                ome_tif_file_scene[idx + 1] = 0;
-                            } else {
-                                idx = strlen(ome_tif_file_scene);
-                                ome_tif_file_scene[idx] = 48 + (scene_num / 10);      // Tens digit
-                                ome_tif_file_scene[idx + 1] = 48 + (scene_num % 10);  // Ones digit
-                                ome_tif_file_scene[idx + 2] = 0;
-                            }
-                            
-                            strcat(ome_tif_file_scene, ".tif");
-                            
-                            // Check if this scene file exists
-                            if (ExistFile(ome_tif_file_scene)) {
-                                // Build ND2 filename matching the TIF pattern: base_nd2_name + "_X.nd2"
-                                // Extract base ND2 name (without .nd2 extension)
-                                path_len = strlen(nd2_file);
-                                for (idx = 0; idx < path_len - 4; idx = idx + 1) {  // -4 to remove ".nd2"
-                                    nd2_file_scene[idx] = nd2_file[idx];
-                                }
-                                nd2_file_scene[path_len - 4] = 0;
-                                
-                                // Add "_X" suffix (same as TIF file)
-                                strcat(nd2_file_scene, "_");
+                            while (scene_num <= 100) {
+                                // Build scene filename: basename_X.tif
+                                strcpy(tmp_ome_tif, basename);
+                                strcat(tmp_ome_tif, "_");
                                 
                                 // Add scene number
                                 if (scene_num < 10) {
-                                    idx = strlen(nd2_file_scene);
-                                    nd2_file_scene[idx] = 48 + scene_num;
-                                    nd2_file_scene[idx + 1] = 0;
+                                    idx = strlen(tmp_ome_tif);
+                                    tmp_ome_tif[idx] = 48 + scene_num;
+                                    tmp_ome_tif[idx + 1] = 0;
                                 } else {
-                                    idx = strlen(nd2_file_scene);
-                                    nd2_file_scene[idx] = 48 + (scene_num / 10);
-                                    nd2_file_scene[idx + 1] = 48 + (scene_num % 10);
-                                    nd2_file_scene[idx + 2] = 0;
+                                    idx = strlen(tmp_ome_tif);
+                                    tmp_ome_tif[idx] = 48 + (scene_num / 10);
+                                    tmp_ome_tif[idx + 1] = 48 + (scene_num % 10);
+                                    tmp_ome_tif[idx + 2] = 0;
                                 }
                                 
-                                strcat(nd2_file_scene, ".nd2");
+                                strcat(tmp_ome_tif, ".tif");
                                 
-                                // Process this scene
-                                OpenDocument(ome_tif_file_scene, 0);
-                                Wait(0.1);
-                                ImageSaveAs(nd2_file_scene, 14, 0);
-                                
-                                // Delete scene .tif file
-                                DeleteFile(ome_tif_file_scene);
-                                CloseAllDocuments(2);
+                                // Check if this scene exists
+                                if (ExistFile(tmp_ome_tif)) {
+                                    // Build corresponding ND2 filename
+                                    strcpy(tmp_nd2, basename);
+                                    strcat(tmp_nd2, "_");
+                                    
+                                    // Add same scene number
+                                    if (scene_num < 10) {
+                                        idx = strlen(tmp_nd2);
+                                        tmp_nd2[idx] = 48 + scene_num;
+                                        tmp_nd2[idx + 1] = 0;
+                                    } else {
+                                        idx = strlen(tmp_nd2);
+                                        tmp_nd2[idx] = 48 + (scene_num / 10);
+                                        tmp_nd2[idx + 1] = 48 + (scene_num % 10);
+                                        tmp_nd2[idx + 2] = 0;
+                                    }
+                                    
+                                    strcat(tmp_nd2, ".nd2");
+                                    
+                                    // Process this scene
+                                    OpenDocument(tmp_ome_tif, 0);
+                                    Wait(0.1);
+                                    ImageSaveAs(tmp_nd2, 14, 0);
+                                    DeleteFile(tmp_ome_tif);
+                                    CloseAllDocuments(2);
+                                    
+                                    scene_num = scene_num + 1;
+                                } else {
+                                    // Scene not found, exit loop
+                                    scene_num = 101;
+                                }
                             }
                         }
                         
