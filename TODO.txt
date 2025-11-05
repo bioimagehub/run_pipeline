@@ -2,7 +2,18 @@
 
 ## Current Tasks  
 - make all standard code
-- ✅ Updated module name from run_python_pipeline to run_pipeline (reflects universal nature) 
+- ✅ Updated module name from run_python_pipeline to run_pipeline (reflects universal nature)
+- 🚧 **NEW: UV-based External Module Pattern for GA3**
+  - ✅ Created strategy document (STRATEGY_UV_MODULES.md)
+  - ✅ Implemented Cellpose proof-of-concept
+    - pyproject.toml with UV dependencies
+    - cellpose_worker.py (runs in isolated .venv)
+    - ga3_cellpose_node.py (coordinator for GA3)
+    - test_cellpose_module.py (validation script)
+    - README.md with full documentation
+  - ⏳ TODO: Test in actual GA3 environment
+  - ⏳ TODO: Generalize pattern to base class
+  - ⏳ TODO: Add more modules (StarDist, DeepImageJ, etc.) 
 
 ## Code Quality & Standards
 - Add MIT license headers to all Python files in standard_code/python/
@@ -43,9 +54,17 @@
 
 ## External Integrations
 - Update ERnet integration to latest version
-- Test and document Cellpose integration
+- ✅ NEW: UV-based Cellpose integration (see cellpose_module/)
+  - Isolated environment prevents dependency conflicts
+  - Auto-bootstrap on first use
+  - File-based data exchange (numpy .npy)
+  - Subprocess architecture for clean separation
 - Improve ImageJ ROI export functionality
-- Add support for additional segmentation tools
+- 🎯 NEXT: Apply UV pattern to additional tools:
+  - StarDist segmentation
+  - DeepImageJ integration
+  - Custom trained models
+  - Other conflicting packages
 
 ## Multi-Language Support (Universal Orchestration)
 - **R scripts** for statistical analysis - create test examples with YAML variable passing

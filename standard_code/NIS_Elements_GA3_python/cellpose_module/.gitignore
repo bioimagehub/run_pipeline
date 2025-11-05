@@ -1,0 +1,10 @@
+# UV-managed virtual environment
+.venv/
+__pycache__/
+
+# Lock file (should be committed for reproducibility)
+# uv.lock
+
+# Temporary files from testing
+*.npy
+test_*.tif
