@@ -1,0 +1,9 @@
+run:
+  - name: convert_to_tif
+    environment: uv:convert-to-tif
+    commands:
+      - python: %REPO%/standard_code/python/convert_to_tif.py
+        --input-search-pattern: 'F:/BIPHUB-OYVIND/BIPHUB_BACKUP//29102025_Apsana-04.czi'
+        --output-folder: 'F:/BIPHUB-OYVIND/BIPHUB_BACKUP//29102025_Apsana-04'
+        --output-file-name-extension: '.ome'
+        --no-parallel
