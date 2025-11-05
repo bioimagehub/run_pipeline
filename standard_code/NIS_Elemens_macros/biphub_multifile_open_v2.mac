@@ -175,6 +175,10 @@ int main() {
             }
             current_file[name_len] = 0;
             
+            // Debug: Show current_file
+            SetCommandText(current_file);
+            WaitText(0, current_file);
+            
             // Build full path
             strcpy(full_path, folder_path);
             
