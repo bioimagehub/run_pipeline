@@ -412,6 +412,7 @@ int main() {
                                 
                                 // Delete scene .tif file
                                 DeleteFile(ome_tif_file_scene);
+                                CloseAllDocuments(2);
                             }
                         }
                         
@@ -446,4 +447,5 @@ int main() {
     strcat(display_msg, " file(s)");
     WaitText(2, "All conversions complete!");
 }
-  
+ 
+ 
