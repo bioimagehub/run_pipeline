@@ -1,0 +1,331 @@
+// BiPHub 3D Deconvolution Batch Processing
+// Performs 3D Lucy-Richardson deconvolution on multiple selected image files
+// Based on recorded_core_commands.mac and biphub_multifile_open.mac patterns
+// Author: BiPHub Analysis Server
+// Version: 1.0
+
+import("NkWindow.dll");
+import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
+
+int main() {
+    // ALL variable declarations at top (NIS Elements requirement)
+    char file_paths[4000];
+    char filter_string[200];
+    char folder_path[800];
+    char current_file[300];
+    char full_path[1000];
+    char selected_file[1000];
+    char display_msg[500];
+    char output_file[1000];
+    char base_name[800];
+    char *decon_suffix = "_3Ddecon";
+    char *extension = ".nd2";
+    int folder_len;
+    int file_count;
+    int current_file_num;
+    int pos;
+    int name_start;
+    int name_len;
+    int last_period;
+    int idx;
+    int path_len;
+    int processing_success;
+    long dialog_result;
+    
+    SetCommandText("BiPHub 3D Deconvolution - Select files to process");
+    
+    // Build file filter using string literal (confirmed working)
+    strcpy(filter_string, "ND2 Files|*.nd2|CZI Files|*.czi|All Image Files|*.nd2;*.czi;*.ims;*.tif;*.tiff;*.lsm|All Files|*.*|");
+    
+    // Show multi-file selection dialog
+    // OFN_ALLOWMULTISELECT = 0x200 (512) + OFN_EXPLORER = 0x80000 (524288) = 524800
+    dialog_result = NkFile_GetOpenFileName("", file_paths, 4000, filter_string, 1, "Select Multiple Image Files for 3D Deconvolution", 524800);
+    
+    if (dialog_result == 0) {
+        SetCommandText("3D Deconvolution cancelled by user");
+        return;
+    }
+    
+    // Parse selected files
+    folder_len = strlen(file_paths);
+    strcpy(folder_path, file_paths);
+    
+    // Check if single or multiple files selected
+    pos = folder_len + 1;
+    
+    if (file_paths[pos] == 0) {
+        // Single file selected - treat as one file in folder
+        // Extract just the folder path and filename
+        path_len = strlen(file_paths);
+        last_period = -1;
+        
+        // Find last slash
+        for (idx = 0; idx < path_len; idx = idx + 1) {
+            if (file_paths[idx] == 92) {
+                last_period = idx;
+            }
+            if (file_paths[idx] == 47) {
+                last_period = idx;
+            }
+        }
+        
+        if (last_period >= 0) {
+            // Extract folder
+            for (idx = 0; idx < last_period; idx = idx + 1) {
+                folder_path[idx] = file_paths[idx];
+            }
+            folder_path[last_period] = 0;
+            
+            // Extract filename (skip the slash)
+            idx = last_period + 1;
+            name_len = 0;
+            while (idx < path_len) {
+                file_paths[folder_len + 1 + name_len] = file_paths[idx];
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            file_paths[folder_len + 1 + name_len] = 0;
+            file_paths[folder_len] = 0;  // Terminate folder path
+        }
+        
+        file_count = 1;
+        pos = folder_len + 1;
+    } else {
+        // Multiple files - folder_path is set, now count files
+        file_count = 0;
+        
+        // Count files first
+        idx = folder_len + 1;
+        while (idx < 3990) {
+            name_start = idx;
+            name_len = 0;
+            
+            while ((file_paths[idx] != 0) && (idx < 3990)) {
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            
+            if (name_len > 0) {
+                file_count = file_count + 1;
+                idx = idx + 1;
+            } else {
+                idx = 4000;
+            }
+        }
+        
+        // Display file count
+        strcpy(display_msg, "Processing ");
+        if (file_count < 10) {
+            display_msg[11] = 48 + file_count;
+            display_msg[12] = 0;
+        } else {
+            display_msg[11] = 48 + (file_count / 10);
+            display_msg[12] = 48 + (file_count % 10);
+            display_msg[13] = 0;
+        }
+        strcat(display_msg, " files for 3D deconvolution...");
+        SetCommandText(display_msg);
+        
+        // Reset pos for actual processing loop
+        pos = folder_len + 1;
+    }
+    
+    // Process each file in the loop (works for both single and multiple)
+    current_file_num = 0;
+    
+    while ((pos > 0) && (pos < 3990)) {
+        // Extract filename
+        name_start = pos;
+        name_len = 0;
+        
+        while ((file_paths[pos] != 0) && (pos < 3990)) {
+            name_len = name_len + 1;
+            pos = pos + 1;
+        }
+        
+        if (name_len > 0) {
+            // Copy filename
+            for (idx = 0; idx < name_len; idx = idx + 1) {
+                current_file[idx] = file_paths[name_start + idx];
+            }
+            current_file[name_len] = 0;
+            
+            // Build full path: folder + backslash + filename
+            strcpy(full_path, folder_path);
+            strcat(full_path, "\\");
+            strcat(full_path, current_file);
+            strcpy(selected_file, full_path);
+            
+            current_file_num = current_file_num + 1;
+            
+            // Display progress
+            strcpy(display_msg, "Deconvolving file ");
+            if (current_file_num < 10) {
+                display_msg[18] = 48 + current_file_num;
+                display_msg[19] = 0;
+            } else {
+                display_msg[18] = 48 + (current_file_num / 10);
+                display_msg[19] = 48 + (current_file_num % 10);
+                display_msg[20] = 0;
+            }
+            strcat(display_msg, " of ");
+            if (file_count < 10) {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + file_count;
+                display_msg[idx + 1] = 0;
+            } else {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + (file_count / 10);
+                display_msg[idx + 1] = 48 + (file_count % 10);
+                display_msg[idx + 2] = 0;
+            }
+            strcat(display_msg, ": ");
+            strcat(display_msg, current_file);
+            SetCommandText(display_msg);
+            
+            pos = pos + 1;
+        
+            // ==========================================
+            // 3D DECONVOLUTION PROCESSING FOR CURRENT FILE
+            // ==========================================
+            
+            // Verify input file exists
+            if (!ExistFile(selected_file)) {
+                WaitText(0, "  ERROR: File does not exist, skipping");
+                WaitText(0, "");
+            } else {
+                // Build output filename with decon suffix
+                path_len = strlen(selected_file);
+                last_period = -1;
+                
+                // Find last period for extension
+                for (idx = 0; idx < path_len; idx = idx + 1) {
+                    if (selected_file[idx] == 46) {
+                        last_period = idx;
+                    }
+                }
+                
+                // Build base filename without extension
+                if (last_period >= 0) {
+                    for (idx = 0; idx < last_period; idx = idx + 1) {
+                        base_name[idx] = selected_file[idx];
+                    }
+                    base_name[last_period] = 0;
+                } else {
+                    strcpy(base_name, selected_file);
+                }
+                
+                // Build output file with decon suffix
+                strcpy(output_file, base_name);
+                strcat(output_file, decon_suffix);
+                strcat(output_file, extension);
+                
+                // Process the file with 3D Lucy-Richardson deconvolution
+                processing_success = ProcessFile3DDeconvolution(selected_file, output_file);
+                
+                if (processing_success) {
+                    WaitText(1, "  SUCCESS: 3D deconvolution completed");
+                } else {
+                    WaitText(0, "  ERROR: 3D deconvolution failed");
+                }
+                
+                //WaitText(0, "");
+                //_CloseAllDocuments();
+                
+            }
+        } else {
+            // No more files - exit loop
+            pos = 4000;
+        }
+    }
+    
+    // Final summary
+    SetCommandText("3D Deconvolution batch processing completed!");
+    strcpy(display_msg, "Processed ");
+    if (file_count < 10) {
+        display_msg[10] = 48 + file_count;
+        display_msg[11] = 0;
+    } else {
+        display_msg[10] = 48 + (file_count / 10);
+        display_msg[11] = 48 + (file_count % 10);
+        display_msg[12] = 0;
+    }
+    strcat(display_msg, " file(s) with 3D deconvolution");
+    WaitText(2, display_msg);
+}
+
+// Function to process individual file with 3D Lucy-Richardson deconvolution
+// Must be defined before main() per NIS Elements requirements
+int ProcessFile3DDeconvolution(char *input_file, char *output_file) {
+    // ALL variable declarations at top
+    int success;
+    
+    success = 0;
+    
+    // Add undo support before processing
+    AddUndoImage();
+    
+    // Open the document for processing
+    // Using the exact syntax from recorded_core_commands.mac
+    OpenDocument(input_file, 0);
+    
+    // Show LUTs window if needed for visualization
+    // ShowLUTsWindow(1);
+    
+    // Activate the Color document view
+    ActivateDocument("Color");
+    
+    // Apply 3D Lucy-Richardson deconvolution with parameters from recorded macro
+    // Parameters explanation (from recorded command):
+    // Deconv_3DLucyRichardsonDeconvolution(
+    //   1,              // Enable/disable flag
+    //   -0.000000,      // Background offset
+    //   1.270000,       // Numerical aperture
+    //   1.333000,       // Refractive index
+    //   0.108300,       // Pixel size (micrometers)
+    //   1.000000,       // Z step (micrometers) 
+    //   "15",           // Number of iterations
+    //   "",             // PSF file (empty = generate automatically)
+    //   "01",           // Channel selection
+    //   "546.0:700.0:", // Wavelength range
+    //   "0.0:0.0:",     // Additional wavelength parameters
+    //   60.000000,      // Objective magnification
+    //   12,             // Additional parameter
+    //   -1,             // Parameter
+    //   "",             // Additional string parameter
+    //   "0.0:0.0:",     // Additional range parameters
+    //   1,              // Flag parameter
+    //   1,              // Flag parameter
+    //   0.000000,       // Float parameter
+    //   1.350000,       // Float parameter
+    //   0               // Final flag parameter
+    // )
+    
+    // TOOD make this automatic pixelsize etc.
+    // TODO wavelength should be set auto or manually
+    Deconv_3DLucyRichardsonDeconvolution(1, -0.000000, 1.270000, 1.333000, 0.108300, 1.000000, "15", "", "01", "546.0:700.0:", "0.0:0.0:", 60.000000, 12, -1, "", "0.0:0.0:", 1, 1, 0.000000, 1.350000, 0);
+    
+    // Update display after deconvolution
+    DisplayCurrentPicture();
+    
+    // Save the processed result with the specified filename
+    // Using ImageSaveAs with ND2 format (format code 14) - same as recorded macro
+    ImageSaveAs(output_file, 14, 0);
+    
+    // Small delay to allow save to complete
+    Wait(0.5);
+    
+    // Verify the file was saved successfully
+    if (ExistFile(output_file)) {
+        success = 1;
+        SetCommandText("File saved successfully");
+    } else {
+        success = 0;
+        SetCommandText("ERROR: File save failed");
+        WaitText(5, "ERROR: Failed to save deconvolved image");
+    }
+    
+    CloseAllDocuments(0);
+    return success;
+}
+ 
