@@ -15,6 +15,7 @@ int main() {
     char selected_file[1000];
     char completion_file[900];
     char ome_tif_file[1000];
+    char ome_tif_file_scene[1000];
     char nd2_file[1000];
     char yaml_content[3000];
     char temp_yaml_path[300];
@@ -325,15 +326,21 @@ int main() {
                         // Wait a bit for processing
                         Wait(2.0);
                         
-                        // Check if output file was created
-                        wait_cycles = 0;
-                        while ((!ExistFile(ome_tif_file)) && (wait_cycles < 300)) {
-                            Wait(0.1);
-                            wait_cycles = wait_cycles + 1;
-                        }
+
                         
                         if (ExistFile(ome_tif_file)) {
                             OpenDocument(ome_tif_file, 0);
+                            Wait(0.1);
+                            ImageSaveAs(nd2_file, 14, 0);
+                            
+                            // Delete .ome.tif file
+                            DeleteFile(ome_tif_file);
+                        } 
+                        
+                        ome_tif_file_scene = "F:/BIPHUB-OYVIND/test_data/different_fileformats/Apsana_large_czi/29102025_Apsana-04_1.tif";
+
+                        if (ExistFile(ome_tif_file_scene)) {
+                            OpenDocument(ome_tif_file_scene, 0);
                             Wait(0.1);
                             ImageSaveAs(nd2_file, 14, 0);
                             
@@ -374,3 +381,4 @@ int main() {
     strcat(display_msg, " file(s)");
     WaitText(2, "All conversions complete!");
 }
+ 
