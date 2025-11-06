@@ -186,13 +186,8 @@ def convert_single_file(
             # Check if split mode is enabled
             if split:
                 # Save each T, C, Z slice as individual file
-                # Use the base output path (not scene-specific) to create one folder for all scenes
-                if len(scenes_to_process) > 1:
-                    # Remove the scene suffix to get base path
-                    split_folder = os.path.splitext(output_path)[0]
-                else:
-                    split_folder = os.path.splitext(scene_output_path)[0]
-                
+                # Create folder named after the scene output file (keeps scenes separate)
+                split_folder = os.path.splitext(scene_output_path)[0]
                 os.makedirs(split_folder, exist_ok=True)
                 logger.info(f"Split mode: Saving individual slices to {split_folder}")
                 
@@ -206,6 +201,7 @@ def convert_single_file(
                             slice_data = data[t, c, z, :, :]
                             
                             # Build filename: T0001_C0001_Z0001_S0001.tif
+                            # Keep S tag for future flexibility even though scenes are in separate folders
                             slice_filename = f"T{t:04d}_C{c:04d}_Z{z:04d}_S{scene_idx:04d}.tif"
                             slice_path = os.path.join(split_folder, slice_filename)
                             
