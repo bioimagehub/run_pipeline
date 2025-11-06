@@ -210,6 +210,19 @@ def convert_single_file(
                 
                 logger.info(f"Saved {T * C * Z} individual slice files for scene {scene_idx}")
                 
+                # Generate NIS-Elements reassembly macro
+                try:
+                    import generate_nis_reassembly_macro
+                    output_nd2 = os.path.splitext(scene_output_path)[0] + ".nd2"
+                    macro_path = generate_nis_reassembly_macro.generate_macro(
+                        split_folder=split_folder,
+                        output_nd2=output_nd2,
+                        metadata_yaml=None  # Auto-detect
+                    )
+                    logger.info(f"Generated NIS reassembly macro: {macro_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to generate NIS reassembly macro: {e}")
+                
             else:
                 # Standard save mode (single file)
                 # Build kwargs for saving with metadata
