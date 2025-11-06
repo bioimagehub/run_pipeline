@@ -321,18 +321,18 @@ int main() {
                         Wait(0.1);
                         
                         // With --split mode, look for split folders and reassembly macros
-                        // Try single scene first
+                        // Try single scene first (no suffix)
                         strcpy(split_folder, basename);
                         strcpy(reassembly_macro, split_folder);
                         strcat(reassembly_macro, "/reassemble_to_nd2.mac");
                         
                         if (ExistFile(reassembly_macro)) {
-                            // Found reassembly macro - run it
+                            // Found reassembly macro for single scene - run it
                             SetCommandText("Running reassembly macro...");
                             RunMacroFile(reassembly_macro);
                             Wait(0.5);
                         } else {
-                            // Try multi-scene folders
+                            // No single scene, try multi-scene folders (_1, _2, etc.)
                             scene_num = 1;
                             while (scene_num <= 100) {
                                 strcpy(split_folder, basename);
@@ -353,11 +353,12 @@ int main() {
                                 strcat(reassembly_macro, "/reassemble_to_nd2.mac");
                                 
                                 if (ExistFile(reassembly_macro)) {
-                                    SetCommandText("Running reassembly macro...");
+                                    SetCommandText("Running reassembly macro for scene...");
                                     RunMacroFile(reassembly_macro);
                                     Wait(0.5);
                                     scene_num = scene_num + 1;
                                 } else {
+                                    // No more scenes found
                                     scene_num = 101;
                                 }
                             }

@@ -210,19 +210,6 @@ def convert_single_file(
                 
                 logger.info(f"Saved {T * C * Z} individual slice files for scene {scene_idx}")
                 
-                # Generate NIS-Elements reassembly macro
-                try:
-                    import generate_nis_reassembly_macro
-                    output_nd2 = os.path.splitext(scene_output_path)[0] + ".nd2"
-                    macro_path = generate_nis_reassembly_macro.generate_macro(
-                        split_folder=split_folder,
-                        output_nd2=output_nd2,
-                        metadata_yaml=None  # Auto-detect
-                    )
-                    logger.info(f"Generated NIS reassembly macro: {macro_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to generate NIS reassembly macro: {e}")
-                
             else:
                 # Standard save mode (single file)
                 # Build kwargs for saving with metadata
@@ -259,6 +246,22 @@ def convert_single_file(
                     with open(metadata_path, 'w', encoding='utf-8') as f:
                         yaml.safe_dump(metadata, f, sort_keys=False)
                     logger.info(f"Saved metadata: {metadata_path}")
+                    
+                    # Generate NIS-Elements reassembly macro (only for split mode)
+                    if split:
+                        try:
+                            import generate_nis_reassembly_macro
+                            split_folder = os.path.splitext(scene_output_path)[0]
+                            output_nd2 = split_folder + ".nd2"
+                            macro_path = generate_nis_reassembly_macro.generate_macro(
+                                split_folder=split_folder,
+                                output_nd2=output_nd2,
+                                metadata_yaml=metadata_path
+                            )
+                            logger.info(f"Generated NIS reassembly macro: {macro_path}")
+                        except Exception as e:
+                            logger.warning(f"Failed to generate NIS reassembly macro: {e}")
+                            
                 except Exception as e:
                     logger.warning(f"Failed to save metadata: {e}")
         
