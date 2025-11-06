@@ -18,3 +18,4 @@ pipeline_configs/*_status.yaml
 
 # Ignore all files and folders inside external/
 external/ERnet-v2/*
+/pipeline-designer
