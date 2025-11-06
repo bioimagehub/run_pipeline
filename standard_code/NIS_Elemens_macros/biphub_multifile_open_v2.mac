@@ -433,29 +433,4 @@ int main() {
     SetCommandText("Multi-file conversion completed!");
     WaitText(2, display_msg);
 }
-
- int64 iHandle;
-double *pXYCoords;
-iHandle = ND_ConvertInit("F:\BIPHUB-OYVIND\test_data\different_fileformats\Apsana_large_czi\29102025_Apsana-04\T0000_C0000_Z0000_S0000.tif", 0, 2, 3, 1);
-ND_ConvertSetTimeLoop(iHandle, 97, 900000);
-ND_ConvertSetZStackLoop(iHandle, 6, 1.000000);
-pXYCoords = ND_ConvertAllocXYCoors(12);
-pXYCoords[0] = 0;
-pXYCoords[1] = 0;
-pXYCoords[2] = 0;
-pXYCoords[3] = 0;
-pXYCoords[4] = 0;
-pXYCoords[5] = 0;
-pXYCoords[6] = 0;
-pXYCoords[7] = 0;
-pXYCoords[8] = 0;
-pXYCoords[9] = 0;
-pXYCoords[10] = 0;
-pXYCoords[11] = 0;
-ND_ConvertSetXYLoop(iHandle, 6, 0, pXYCoords);
-ND_ConvertAddWaveLength(iHandle,16777215,"Mono","");
-ND_ConvertAddWaveLength(iHandle,16777215,"Mono1","");
-ND_ConvertAddWaveLength(iHandle,16777215,"New","<no configuration>");
-ND_ConvertFinish(iHandle, "f:\biphub-oyvind\test_data\different_fileformats\apsana_large_czi\29102025_apsana-04\29102025_apsana-04.nd2");
-OpenDocument("f:\biphub-oyvind\test_data\different_fileformats\apsana_large_czi\29102025_apsana-04\29102025_apsana-04.nd2", 0);
- 
+  
