@@ -22,6 +22,10 @@ from skimage.transform import resize
 
 def process_file(input_file_path: str, output_tif_file_path: str, merge_channels: str, output_format: str = "tif", output_dim_order: str = "TCZYX", scale:float = 1) -> None:
     try:
+        # Load image first
+        img = rp.load_tczyx_image(input_file_path)
+        physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
+        
         # Define output file names
         input_metadata_file_path:str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
         output_metadata_file_path:str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"  
@@ -31,15 +35,11 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
             with open(input_metadata_file_path, 'r') as f:
                 metadata = yaml.safe_load(f)
         else:
-            metadata = get_all_metadata(img)
+            metadata = get_all_metadata(input_file_path, output_file=None)
             #TODO Prompt the user to fill in the channel names etc
             # This is the core metadata without drift correction info
             with open(input_metadata_file_path, 'w') as f:
                 yaml.dump(metadata, f)
-        
-        # Load image and metadata
-        img = rp.load_tczyx_image(input_file_path)
-        physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
 
         img_np = img.data  # TCZYX
         

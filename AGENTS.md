@@ -281,6 +281,50 @@ This will ensure consistent output and metadata handling across the pipeline.
 
 Never use other image I/O methods directly; always go through these helper functions for both reading and writing.
 
+### CLI Example Format
+
+When creating or documenting CLI tools (Python scripts in `standard_code/python/`), **ALWAYS** provide examples in YAML config format for `run_pipeline.exe`, not as bash/shell commands.
+
+**CORRECT format** (in argparse epilog):
+```python
+epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Process images (default settings)
+  environment: uv@3.11:module-name
+  commands:
+  - python
+  - '%REPO%/standard_code/python/module_name.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  
+- name: Process images (custom parameters)
+  environment: uv@3.11:module-name
+  commands:
+  - python
+  - '%REPO%/standard_code/python/module_name.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --parameter-name: value
+  - --dry-run
+"""
+```
+
+**INCORRECT format** (do not use):
+```python
+epilog="""
+Examples:
+  # Process images
+  python module_name.py --input-search-pattern "data/*.tif"
+  
+  # Custom parameters
+  python module_name.py --input-search-pattern "data/*.tif" --parameter value
+"""
+```
+
+This ensures users see how to integrate the module into the pipeline orchestration system. Use `%REPO%` for paths to repository files (like Python scripts) and `%YAML%` for data file paths that are relative to the YAML config file location. Reference existing YAML configs in `pipeline_configs/` for formatting consistency.
+
 ### Working with TODOs
 
 When asked to "work on the TODOs" or similar requests, AI agents should:
