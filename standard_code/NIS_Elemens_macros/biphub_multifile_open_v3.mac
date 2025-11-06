@@ -326,10 +326,14 @@ int main() {
                         strcpy(reassembly_macro, split_folder);
                         strcat(reassembly_macro, "/reassemble_to_nd2.mac");
                         
+                        SetCommandText(reassembly_macro);
+                        WaitText(0, "reassembly_macro"); 
+                        
                         if (ExistFile(reassembly_macro)) {
                             // Found reassembly macro for single scene - run it
                             SetCommandText("Running reassembly macro...");
-                            RunMacroFile(reassembly_macro);
+                            RunMacro(reassembly_macro);
+                            RunMacro
                             Wait(0.5);
                         } else {
                             // No single scene, try multi-scene folders (_1, _2, etc.)
@@ -352,9 +356,10 @@ int main() {
                                 strcpy(reassembly_macro, split_folder);
                                 strcat(reassembly_macro, "/reassemble_to_nd2.mac");
                                 
+                                
                                 if (ExistFile(reassembly_macro)) {
                                     SetCommandText("Running reassembly macro for scene...");
-                                    RunMacroFile(reassembly_macro);
+                                    RunMacro(reassembly_macro);
                                     Wait(0.5);
                                     scene_num = scene_num + 1;
                                 } else {
@@ -397,3 +402,5 @@ int main() {
     SetCommandText("Multi-file conversion completed!");
     WaitText(2, display_msg);
 }
+RunMacro("F:\BIPHUB-OYVIND\test_data\different_fileformats\Apsana_large_czi\29102025_Apsana-04_1\reassemble_to_nd2.mac");
+ 
