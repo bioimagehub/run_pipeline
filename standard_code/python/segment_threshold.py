@@ -1078,17 +1078,24 @@ def process_file(
 
 def process_folder(args: argparse.Namespace) -> None:     
     # Find files to process using glob-based helper
-    recursive = getattr(args, 'search_subfolders', False) or False
-    # If input_search_pattern looks like a directory, construct a pattern from extension
-    if os.path.isdir(args.input_search_pattern):
-        ext = getattr(args, 'extension', '') or '.tif'
-        pattern = os.path.join(args.input_search_pattern, '**', f'*{ext}') if recursive else os.path.join(args.input_search_pattern, f'*{ext}')
-        base_folder = args.input_search_pattern
+    search_subfolders = '**' in args.input_search_pattern
+    files_to_process = rp.get_files_to_process2(args.input_search_pattern, search_subfolders=search_subfolders)
+    
+    if not files_to_process:
+        print(f"No files found matching pattern: {args.input_search_pattern}")
+        return
+    
+    print(f"Found {len(files_to_process)} file(s) to process")
+    
+    # Determine base folder
+    if '**' in args.input_search_pattern:
+        base_folder = args.input_search_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:
+            base_folder = os.getcwd()
+        base_folder = os.path.abspath(base_folder)
     else:
-        pattern = args.input_search_pattern
-        # Derive base folder from pattern
-        base_folder = os.path.dirname(pattern) or '.'
-    files_to_process = rp.get_files_to_process2(pattern, recursive)
+        from pathlib import Path
+        base_folder = str(Path(files_to_process[0]).parent)
 
     # Make output folder
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
@@ -1126,41 +1133,12 @@ def process_folder(args: argparse.Namespace) -> None:
             process_single_file(input_file_path)
 
 def main(parsed_args: argparse.Namespace):
-    # -------------------------------------------------------------------------
-    # Check if its a file or a folder and process accordingly
-    # -----------------------------------
-
-    # Check if the input is a file or a folder
-    if os.path.isfile(parsed_args.input_file_or_folder):
-        print(f"Processing single file: {parsed_args.input_file_or_folder}")
-        output_file_name = os.path.splitext(os.path.basename(parsed_args.input_folder))[0] + "_mask"  # Example output naming
-        output_file_path = os.path.join(parsed_args.output_folder, output_file_name)
-        process_file(input_path = parsed_args.input_file_or_folder,
-                 output_name = output_file_path,
-                 channels = parsed_args.channels,
-                 tracking_channel = parsed_args.tracking_channel, 
-                 median_filter_sizes = parsed_args.median_filter_sizes,
-                 background_median_filter= parsed_args.background_median_filter_sizes,
-                 threshold_methods = parsed_args.threshold_methods,   
-                 min_sizes= parsed_args.min_sizes, max_sizes = parsed_args.max_size, watershed_large_labels = parsed_args.watershed_large_labels,
-                 remove_xy_edges = parsed_args.remove_xy_edges, remove_z_edges = parsed_args.remove_z_edges,
-                 tmp_output_folder = parsed_args.mp_output_folder,
-                 yaml_file_extension = parsed_args.yaml_file_extension,
-                 sys_exit_after_step = parsed_args.sys_exit_after_step)
-        
-    elif os.path.isdir(parsed_args.input_file_or_folder):
-        print(f"Processing folder: {parsed_args.input_file_or_folder}")
-        process_folder(parsed_args)
-        
-    else:
-        print("Error: The specified path is neither a file nor a folder.")
-        return
+    """Main entry point - processes files matching the input pattern."""
+    process_folder(parsed_args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern to search for input files (e.g. './data/*.tif')")
-    parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for.")
-    parser.add_argument("--search-subfolders", action="store_true", help="Search recursively in subfolders.")
+    parser.add_argument("--input-search-pattern", type=str, required=True, help="Input file pattern (supports wildcards, use '**' for recursive search)")
     parser.add_argument("--output-folder", type=str, help="Output folder for processed files")
     parser.add_argument("--channels", type=split_comma_separated_intstring, default=[0], help="List of channels to process (comma-separated, e.g., 0,1,2)")
     parser.add_argument("--tracking-channel", type=int, default=None, help="Channel used for tracking if frames > 1. Must be one of the --channels. default None -> channels[0], -1 skips tracking")

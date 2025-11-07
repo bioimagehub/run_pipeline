@@ -87,43 +87,61 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 	//   %REPO%/path -> resolved relative to mainProgramDir (repo/program root)
 	//   %YAML%/path -> resolved relative to folder containing the YAML file
 	//   %VAR%/path  -> resolved using variable VAR from .env file
-	// These take precedence when present at the start of the string.
-	if strings.HasPrefix(v, "%REPO%") {
-		sub := strings.TrimPrefix(v, "%REPO%")
-		sub = strings.TrimLeft(sub, "/\\")
-		return filepath.Join(mainProgramDir, filepath.FromSlash(sub))
-	}
-	if strings.HasPrefix(v, "%YAML%") {
-		sub := strings.TrimPrefix(v, "%YAML%")
-		sub = strings.TrimLeft(sub, "/\\")
-		return filepath.Join(yamlDir, filepath.FromSlash(sub))
-	}
+	// These tokens can appear anywhere in the string and will be replaced
 
-	// Check for custom environment variables from .env file
-	if strings.HasPrefix(v, "%") && strings.Contains(v[1:], "%") {
-		// Extract variable name between % signs
-		endIdx := strings.Index(v[1:], "%")
-		if endIdx != -1 {
-			varName := v[1 : endIdx+1]
-			envValue := getEnvValue(varName)
-			if envValue != "" {
-				sub := v[endIdx+2:] // Everything after the second %
-				sub = strings.TrimLeft(sub, "/\\")
-				if sub == "" {
-					return envValue // Just return the env value if no path follows
-				}
-				return filepath.Join(envValue, filepath.FromSlash(sub))
-			}
+	result := v
+
+	// Replace %REPO% tokens anywhere in the string
+	result = strings.ReplaceAll(result, "%REPO%/", filepath.FromSlash(mainProgramDir+"/"))
+	result = strings.ReplaceAll(result, "%REPO%\\", filepath.FromSlash(mainProgramDir+"\\"))
+	result = strings.ReplaceAll(result, "%REPO%", mainProgramDir)
+
+	// Replace %YAML% tokens anywhere in the string
+	result = strings.ReplaceAll(result, "%YAML%/", filepath.FromSlash(yamlDir+"/"))
+	result = strings.ReplaceAll(result, "%YAML%\\", filepath.FromSlash(yamlDir+"\\"))
+	result = strings.ReplaceAll(result, "%YAML%", yamlDir)
+
+	// Replace custom environment variables from .env file
+	// Find all %VAR% patterns and replace them
+	for {
+		start := strings.Index(result, "%")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(result[start+1:], "%")
+		if end == -1 {
+			break
+		}
+		end += start + 1
+
+		varName := result[start+1 : end]
+		// Skip if it's one of the reserved tokens we already handled
+		if varName == "REPO" || varName == "YAML" {
+			// Move past this token to avoid infinite loop
+			result = result[:start] + "<<" + varName + ">>" + result[end+1:]
+			continue
+		}
+
+		envValue := getEnvValue(varName)
+		if envValue != "" {
+			result = result[:start] + envValue + result[end+1:]
+		} else {
+			// Move past this unknown token to avoid infinite loop
+			result = result[:start] + "<<" + varName + ">>" + result[end+1:]
 		}
 	}
 
+	// Restore the placeholder tokens (in case they were valid but unknown)
+	result = strings.ReplaceAll(result, "<<REPO>>", "%REPO%")
+	result = strings.ReplaceAll(result, "<<YAML>>", "%YAML%")
+
 	// Backward-compatible behavior for leading ./
-	if strings.HasPrefix(v, "./") {
+	if strings.HasPrefix(result, "./") {
 		if !warnedDotSlash {
 			fmt.Println("[deprecated] Use %REPO%/ or %YAML%/ instead of './'")
 			warnedDotSlash = true
 		}
-		vTrim := strings.TrimPrefix(v, "./")
+		vTrim := strings.TrimPrefix(result, "./")
 		if strings.HasSuffix(vTrim, ".py") || strings.HasSuffix(vTrim, ".ijm") || strings.HasSuffix(vTrim, ".exe") {
 			return filepath.Join(mainProgramDir, vTrim)
 		}
@@ -131,7 +149,7 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 	}
 
 	// No changes for other paths (absolute or bare)
-	return v
+	return result
 }
 
 // askForAnacondaPath prompts the user for the Anaconda installation path and validates it.
@@ -1072,6 +1090,27 @@ func main() {
 			fmt.Println("")
 			fmt.Println("")
 			continue
+		} else if segment.Environment == "" {
+			// No environment specified - execute directly
+			// Build command args from segment commands
+			for _, cmd := range segment.Commands {
+				switch v := cmd.(type) {
+				case string:
+					resolved := resolvePath(v, mainProgramDir, yamlDir)
+					cmdArgs = append(cmdArgs, resolved)
+				case map[interface{}]interface{}:
+					for flag, value := range v {
+						cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
+						if value != nil && value != "null" {
+							valStr := fmt.Sprintf("%v", value)
+							resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+							cmdArgs = append(cmdArgs, resolved)
+						}
+					}
+				default:
+					log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+				}
+			}
 		} else {
 			anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 			if err != nil {

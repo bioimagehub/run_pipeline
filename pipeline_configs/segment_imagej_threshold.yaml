@@ -1,0 +1,41 @@
+---
+# ImageJ Simple Threshold Segmentation Pipeline
+# This pipeline uses the ImageJ macro for simple threshold-based segmentation
+# 
+# Prerequisites:
+# - ImageJ/Fiji installed with Bio-Formats plugin
+# - ImageJ executable path configured in .env file (IMAGEJ_PATH=C:\path\to\ImageJ-win64.exe)
+#
+# Usage:
+#   run_pipeline.exe pipeline_configs/segment_imagej_threshold.yaml
+
+run:
+  - name: Segment images using ImageJ threshold macro
+    environment: imagej
+    commands:
+      - '%REPO%/standard_code/imagej/simple_treshold.ijm'
+      - 'input=%YAML%/cellprofiler_input,suffix=.tif,minsize=35000,maxsize=120000'
+
+# Alternative: Using full absolute paths instead of %REPO% and %YAML% tokens
+# run:
+#   - name: Segment images using ImageJ threshold macro (absolute paths)
+#     environment: imagej
+#     commands:
+#       - E:\Oyvind\OF_git\run_pipeline\standard_code\imagej\simple_treshold.ijm
+#       - 'input=E:\Coen\Sarah\6849908-IMB-Coen-Sarah-Photoconv_global\cellprofiler_input,suffix=.tif,minsize=35000,maxsize=120000'
+
+# Notes:
+# - Output will be saved to: {input}_threshold/
+# - Arguments format: "key=value,key=value,..."
+# - Available parameters:
+#   - input: Input directory path (required)
+#   - suffix: File extension to process (default: .tif)
+#   - minsize: Minimum object size in pixels (default: 35000)
+#   - maxsize: Maximum object size in pixels (default: 120000)
+# - The macro will:
+#   1. Apply median filter (8x8 XY, 2 Z)
+#   2. Auto threshold using Mean method
+#   3. Fill holes
+#   4. Filter by size
+#   5. Apply watershed if needed (when nPixels > maxsize)
+#   6. Save masks and ROIs

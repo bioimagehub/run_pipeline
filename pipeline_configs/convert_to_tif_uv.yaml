@@ -1,10 +1,10 @@
 run:
-- name: Convert to tif (UV)
-  environment: uv@3.11:convert-to-tif
-  commands:
-  - python
-  - ./standard_code/python/convert_to_tif.py
-  - --input-search-pattern: '%REPO%/input_town/*.ims'
-  last_processed: "2025-09-19"
-  code_version: 0.0.9
-  run_duration: 48.108462s
+  - name: Segment images using ImageJ threshold macro
+    environment: imagej  # or remove this line - ImageJ doesn't need UV environment
+    commands:
+      - 'C:\Program_Files\fiji-win64\Fiji.app\ImageJ-win64.exe'
+      - '--headless'
+      - '--console'
+      - '-macro'
+      - '%REPO%/standard_code/imagej/simple_treshold.ijm'
+      - 'input=%YAML%/input_images,suffix=.tif,minsize=35000,maxsize=120000'
