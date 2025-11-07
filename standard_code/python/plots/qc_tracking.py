@@ -339,14 +339,21 @@ def plot_mask_count_heatmap(
         height = max(8, df_counts.shape[0] * 0.3)
         figsize = (width, height)
     
-    # Create heatmap - color by max object size, annotate with count
+    # Determine if annotations should be shown (disable for >50 files)
+    n_files = len(grouped_files)
+    show_annotations = n_files <= 50
+    
+    if not show_annotations:
+        logging.info(f"Disabling text annotations due to large number of files ({n_files} > 50)")
+    
+    # Create heatmap - color by max object size, annotate with count (if enabled)
     fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
     
     # Use max object sizes for coloring
     sns.heatmap(
         df_sizes,  # Color based on max object size
-        annot=df_counts,  # Show counts as annotations
-        fmt='g',
+        annot=df_counts if show_annotations else False,  # Show counts only if ≤50 files
+        fmt='g' if show_annotations else '',
         cmap='YlGnBu',
         cbar_kws={'label': 'Max Object Size (pixels)'},
         linewidths=0.5,
@@ -357,8 +364,11 @@ def plot_mask_count_heatmap(
     
     ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
     ax.set_ylabel('Image File', fontsize=12, fontweight='bold')
+    
+    # Adjust title based on whether annotations are shown
+    title_suffix = "(Color = Max Object Size, Number = Object Count)" if show_annotations else "(Color = Max Object Size)"
     ax.set_title(f'Track Completeness QC - {qc_key}\n'
-                 f'(Color = Max Object Size, Number = Object Count)\n'
+                 f'{title_suffix}\n'
                  f'PASSED: {passed_count} | FAILED: {failed_count}', 
                  fontsize=14, fontweight='bold', pad=20)
     

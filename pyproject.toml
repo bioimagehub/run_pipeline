@@ -165,7 +165,8 @@ segmentation = [
 	"bioio_czi",
 	"bioio_dv",
 	"joblib",
-	"nd2reader"
+	"nd2reader",
+	"seaborn",
 ]
 denoise = [
 	"numpy",
