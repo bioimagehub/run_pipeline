@@ -793,30 +793,77 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 
 // Function to prepare command arguments for ImageJ execution
 func makeImageJCommand(segment Segment, imageJPath, mainProgramDir, yamlDir string) []string {
-	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"} // Initialize command arguments
+	// ImageJ2 scripts (.py, .js, .groovy) need: ImageJ-win64.exe --ij2 --headless --console --run script.py "key='value',key='value'"
+	// Note: Values must be quoted with single quotes for ImageJ2 parser
+	// Legacy macros (.ijm) need: ImageJ-win64.exe --headless --console -macro macro.ijm "key=value,key=value"
+
+	var scriptPath string
+	var argPairs []string
+	var isImageJ2Script bool
 
 	// Loop through each command in the segment's command list
-	for _, cmd := range segment.Commands {
+	for i, cmd := range segment.Commands {
 		switch v := cmd.(type) {
 		case string:
-			// Resolve paths for string commands and add to cmdArgs with proper encapsulation
-			resolved := resolvePath(v, mainProgramDir, yamlDir)
-			cmdArgs = append(cmdArgs, "--run", fmt.Sprintf("\"%s\"", resolved))
+			// First string is always the script/macro path
+			if i == 0 {
+				resolved := resolvePath(v, mainProgramDir, yamlDir)
+				// Convert backslashes to forward slashes for ImageJ compatibility
+				scriptPath = filepath.ToSlash(resolved)
+
+				// Detect if this is an ImageJ2 script (Python, JavaScript, Groovy, etc) or legacy macro
+				lowerPath := strings.ToLower(scriptPath)
+				isImageJ2Script = strings.HasSuffix(lowerPath, ".py") ||
+					strings.HasSuffix(lowerPath, ".js") ||
+					strings.HasSuffix(lowerPath, ".groovy") ||
+					strings.HasSuffix(lowerPath, ".clj")
+			} else {
+				// Additional strings are passed as-is (legacy support)
+				resolved := resolvePath(v, mainProgramDir, yamlDir)
+				resolved = filepath.ToSlash(resolved)
+				if isImageJ2Script {
+					argPairs = append(argPairs, fmt.Sprintf("'%s'", resolved))
+				} else {
+					argPairs = append(argPairs, resolved)
+				}
+			}
 
 		case map[interface{}]interface{}:
-			// For map commands, loop through entries
+			// For map commands, convert to "key=value" pairs
 			for flag, value := range v {
-				// Append the flag in the required format
 				if value != nil && value != "null" {
-					valStr := fmt.Sprintf("%v", value) // Convert value to string
-					// Append it in the required format as "key='value'"
-					cmdArgs = append(cmdArgs, fmt.Sprintf("\"%s='%s'\"", flag, valStr))
+					flagStr := fmt.Sprintf("%v", flag)
+					valStr := fmt.Sprintf("%v", value)
+					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+					// Convert backslashes to forward slashes to avoid parse errors
+					resolved = filepath.ToSlash(resolved)
+					// Build key=value pair - ImageJ2 needs values quoted
+					if isImageJ2Script {
+						argPairs = append(argPairs, fmt.Sprintf("%s='%s'", flagStr, resolved))
+					} else {
+						argPairs = append(argPairs, fmt.Sprintf("%s=%s", flagStr, resolved))
+					}
 				}
 			}
 
 		default:
 			log.Fatalf("unexpected type %v", reflect.TypeOf(v)) // Handle unexpected command types
 		}
+	}
+
+	// Build command based on script type
+	var cmdArgs []string
+	if isImageJ2Script {
+		// ImageJ2 script: use --ij2 and --run
+		cmdArgs = []string{imageJPath, "--ij2", "--headless", "--console", "--run", scriptPath}
+	} else {
+		// Legacy macro: use -macro
+		cmdArgs = []string{imageJPath, "--headless", "--console", "-macro", scriptPath}
+	}
+
+	// Join all argument pairs with commas and add as single argument
+	if len(argPairs) > 0 {
+		cmdArgs = append(cmdArgs, strings.Join(argPairs, ","))
 	}
 
 	return cmdArgs

@@ -13,8 +13,13 @@ from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 from scipy import ndimage
+# from scipy.ndimage import median_filter, 
+
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_max
 from skimage import filters, measure
 
+import tifffile
 import bioimage_pipeline_utils as rp
 
 # Module-level logger
@@ -33,11 +38,144 @@ def median_filter_3d(data: np.ndarray, xy_size: int = 8, z_size: int = 2) -> np.
     Returns:
         Filtered image array
     """
-    from scipy.ndimage import median_filter
     
     # Create footprint: (z, y, x)
     footprint = np.ones((z_size, xy_size, xy_size), dtype=bool)
-    return median_filter(data, footprint=footprint)
+    return ndimage.median_filter(data, footprint=footprint)
+
+
+def apply_watershed_segmentation(
+    binary_mask: np.ndarray,
+    minsize: int,
+    maxsize: int,
+    min_distance: int = 1,
+    tolerance: float = 0.5
+) -> tuple[np.ndarray, list[int]]:
+    """
+    Apply watershed segmentation to separate touching objects in a binary mask.
+    Implements ImageJ's Watershed algorithm using EDM (Euclidean Distance Map).
+    
+    ImageJ watershed algorithm:
+    1. Compute EDM of foreground
+    2. Find maxima with tolerance (like ImageJ's MaximumFinder with tolerance=0.5)
+    3. Use maxima as seeds/markers for watershed
+    4. Apply watershed on inverted EDM (-EDM) to segment from peaks
+    
+    Args:
+        binary_mask: 2D binary mask (YX) with objects to segment
+        minsize: Minimum object size in pixels
+        maxsize: Maximum object size in pixels
+        min_distance: Minimum distance between watershed peaks in pixels (default: 1).
+                     ImageJ default is effectively 1 (all local maxima above tolerance).
+                     Increase to reduce over-segmentation (e.g., 5-10 for touching cells).
+        tolerance: EDM value tolerance for peak detection (default: 0.5, matching ImageJ).
+                  Only peaks with EDM values >= (max_edm - tolerance) are considered.
+                  Lower values = more aggressive splitting. Range: 0.3-0.8 recommended.
+    
+    Returns:
+        Tuple of:
+        - labeled_mask: Labeled watershed result (2D array)
+        - valid_labels: List of label IDs that meet size criteria
+    """
+    if binary_mask.sum() == 0:
+        # Empty mask - return zeros and empty list
+        return np.zeros_like(binary_mask, dtype=np.int32), []
+    
+    # Step 1: Compute EDM (Euclidean Distance Map) - like ImageJ
+    distance = ndimage.distance_transform_edt(binary_mask)
+    
+    if distance is None or not isinstance(distance, np.ndarray):
+        raise ValueError("Distance transform failed to compute a valid NumPy array.")
+    
+    # Step 2: Find maxima with tolerance (ImageJ MaximumFinder approach)
+    # ImageJ uses tolerance=0.5 by default - only peaks significantly above neighbors
+    max_edm = distance.max()
+    
+    # Apply tolerance threshold: only consider peaks in top range of EDM values
+    # This prevents watershed from splitting at insignificant local maxima
+    threshold_value = max(max_edm - tolerance, 0)
+    
+    # Find local maxima above tolerance threshold
+    coords = peak_local_max(
+        distance, 
+        min_distance=min_distance,
+        threshold_abs=threshold_value,  # Key difference: tolerance-based threshold
+        labels=binary_mask,
+        exclude_border=False  # ImageJ includes border maxima
+    )
+    
+    if len(coords) == 0:
+        # No peaks found above tolerance - return original labeled mask without watershed
+        labeled_no_ws = measure.label(binary_mask)
+        props = measure.regionprops(labeled_no_ws)
+        valid_labels = [p.label for p in props if minsize <= p.area <= maxsize]
+        return labeled_no_ws, valid_labels  # type: ignore[return-value]
+    
+    # Step 3: Create markers from peaks (seeds for watershed)
+    markers = np.zeros(distance.shape, dtype=np.int32)
+    for i, coord in enumerate(coords, start=1):
+        markers[tuple(coord)] = i
+    
+    # Step 4: Apply watershed on inverted EDM (like ImageJ)
+    # Watershed floods from markers along gradient of -EDM
+    labeled = watershed(-distance, markers, mask=binary_mask)
+    
+    # Step 5: Filter by size criteria
+    props = measure.regionprops(labeled)
+    valid_labels = []
+    for prop in props:
+        if minsize <= prop.area <= maxsize:
+            valid_labels.append(prop.label)
+    
+    return labeled, valid_labels
+
+
+def select_primary_object(
+    labeled_mask: np.ndarray,
+    valid_labels: list[int],
+    selection_method: str = "largest"
+) -> int | None:
+    """
+    Select the primary object from multiple candidates.
+    
+    Useful when you expect 1 main object but may have touching contaminants
+    after watershed splitting.
+    
+    Args:
+        labeled_mask: Labeled mask with multiple objects
+        valid_labels: List of valid object label IDs
+        selection_method: How to choose the primary object:
+                         - "largest": Pick the largest object (default)
+                         - "central": Pick the most centrally located object
+                         - "brightest": Pick based on highest mean intensity (requires intensity image)
+    
+    Returns:
+        Label ID of the selected primary object, or None if no valid objects
+    """
+    if not valid_labels:
+        return None
+    
+    if len(valid_labels) == 1:
+        return valid_labels[0]
+    
+    props = measure.regionprops(labeled_mask)
+    valid_props = [p for p in props if p.label in valid_labels]
+    
+    if selection_method == "largest":
+        # Select largest object by area
+        largest = max(valid_props, key=lambda p: p.area)
+        return largest.label
+    
+    elif selection_method == "central":
+        # Select object closest to image center
+        img_center = np.array(labeled_mask.shape) / 2
+        closest = min(valid_props, key=lambda p: np.linalg.norm(np.array(p.centroid) - img_center))
+        return closest.label
+    
+    else:
+        # Default to largest
+        largest = max(valid_props, key=lambda p: p.area)
+        return largest.label
 
 
 def segment_single_file(
@@ -82,161 +220,336 @@ def segment_single_file(
         
         # Load image
         img = rp.load_tczyx_image(input_path)
+        # rp.show_image(image=img, title="Input Image")
         
-        # Process each timepoint and channel
+        # Get dimensions
         T, C, Z, Y, X = img.shape
         logger.info(f"Dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
         
-        # Determine which channels to process
-        if channel == -1:
-            # Process all channels
-            channels_to_process = list(range(C))
-            logger.info(f"Processing all {C} channels")
-        else:
-            # Process single channel
-            if channel >= C:
-                logger.error(f"Channel {channel} does not exist (image has {C} channels)")
-                return False
-            channels_to_process = [channel]
-            logger.info(f"Processing channel {channel} only")
+        # Validate channel
+        if channel >= C:
+            logger.error(f"Channel {channel} does not exist (image has {C} channels)")
+            return False
         
-        # Initialize output mask (single channel output)
-        output_mask = np.zeros((T, 1, Z, Y, X), dtype=np.uint8)
+        logger.info(f"Processing channel {channel} across all {T} timepoints")
+        
+        # Get all timepoints for this channel at once: (T, C=1, Z, Y, X)
+        data_all_t = img.data[:, channel:channel+1, :, :, :]
+        
+        # Check if there's any signal
+        if data_all_t.max() == 0:
+            logger.error(f"Channel {channel}: No signal detected in any timepoint")
+            return False
+        
+        # Convert to float for processing - vectorized across all timepoints
+        data_float = data_all_t.astype(np.float32)
+
+
+        ##### STEP 0: #######
+        # Check that there are at least minsize pixels above 1.5x background level
+        background_level = np.percentile(data_float, 2)
+        signal_mask = data_float > (1.5 * background_level)
+        if np.count_nonzero(signal_mask) < minsize:
+            rp.show_image(image=data_float, mask=signal_mask, title="ERROR: Not enough signal pixels above 1.5x background")
+            logger.error(f"Step 0: Not enough signal pixels above 1.5x background level")
+            return False
+
+        ##### STEP 1: #######
+        # Median filter preprocessing - apply to all timepoints at once
+
+        logger.info(f"Step 1: Median filtering all {T} timepoints...")
+        # Use 5D median filter on (T, C=1, Z, Y, X) data
+        footprint_5d = np.ones((1, 1, median_z, median_xy, median_xy), dtype=bool)  # (T, C, Z, Y, X)
+        preprocessed = ndimage.median_filter(data_float, footprint=footprint_5d)
+
+        # Show preprocessed image
+        # rp.show_image(image=preprocessed, title="Preprocessed Image")
+
+        ##### STEP 2: #######
+        # Auto threshold per slice - vectorized where possible
+
+        logger.info(f"Step 2: Thresholding all {T} timepoints...")
+        intensity_mask = np.zeros_like(preprocessed, dtype=bool)  # (T, C=1, Z, Y, X)
+        
+        # get threshold for entire TCZ stack at once
+        if threshold_method == 'li':
+            threshold_value = filters.threshold_li(preprocessed)
+        if threshold_method == 'otsu':
+            threshold_value = filters.threshold_otsu(preprocessed)
+        if threshold_method == 'yen':
+            threshold_value = filters.threshold_yen(preprocessed)
+        else: # Default to 'li'
+            threshold_value = filters.threshold_li(preprocessed)
+
+        logger.info(f"Global threshold value: {threshold_value} ")
+
+        # Apply threshold to create mask
+        intensity_mask = preprocessed > threshold_value
+
+        # Catch errors if intensity_mask is empty in one or more frames
+        intensity_sum = [np.count_nonzero(intensity_mask[t]) for t in range(T)]
+        
+        # If all of the timepoints are empty
+        if not any(intensity_sum):
+            rp.show_image(image=preprocessed, mask=intensity_mask, title="ERROR STEP 2: All timepoints empty intensity mask")
+            logger.error(f"Step 2: All timepoints have empty intensity mask after thresholding")
+            return False
+
+        # if just some are empty we may be able to resolve it...
+        if not all(intensity_sum):
+            rp.show_image(image=preprocessed, mask=intensity_mask, title="ERROR STEP 2: Empty intensity mask in one or more timepoints")
+
+
+        
+        ##### STEP 3: #######
+        # Try Connected components in TZYX
+        # If this fails we may have to redo per timepoint or something else
+
+        logger.info(f"Step 3: Finding connected components for all {T} timepoints...")
+
+        labeled_mask, num_features = ndimage.label(intensity_mask[:, 0, :, :, :]) # pyright: ignore[reportGeneralTypeIssues]
+        labeled_mask = labeled_mask[:, np.newaxis, :, :, :]
+        # rp.show_image(image=preprocessed, mask=labeled_mask, title="Intensity Mask after Thresholding")
+
+
+        ##### STEP 4: #######
+        # Fill holes per TCZ slice
+        logger.info(f"Step 4: Filling holes for all {T} timepoints... per TCZ slice")
+        for t in range(T):
+            for z in range(Z):
+                for label in np.unique(labeled_mask[t, 0, z]):
+                    if label == 0:
+                        continue  # Skip background
+                    single_object_mask = (labeled_mask[t, 0, z] == label)
+                    filled_mask = ndimage.binary_fill_holes(single_object_mask)
+                    labeled_mask[t, 0, z][filled_mask] = label
+
+        ##### STEP 5: #######
+        # Filter components by size, apply watershed on-the-fly if oversized components found
+        tmp_labeled_mask = labeled_mask.copy()  
+        logger.info(f"Step 5: Filtering components by size for all {T} timepoints... per TCZ slice")
+        
+        watershed_count = 0  # Track how many slices needed watershed
         
         for t in range(T):
-            for c_idx, c in enumerate(channels_to_process):
-                logger.info(f"Processing T={t}, C={c}")
+            for z in range(Z):
+                component_sizes = np.bincount(tmp_labeled_mask[t, 0, z].ravel())
                 
-                # Get data for this TC
-                data = img.data[t, c]  # ZYX
+                # Check if any components exceed maxsize
+                oversized_components = np.where(component_sizes > maxsize)[0]
                 
-                # Convert to float for processing
-                if data.max() > 0:
-                    data_float = data.astype(np.float32)
+                if len(oversized_components) > 0 and use_watershed:
+                    # Apply watershed immediately to this slice
+                    logger.info(f"T={t}, Z={z}: Found {len(oversized_components)} oversized component(s), applying watershed")
+                    watershed_count += 1
+                    
+                    labels_ws, valid_labels = apply_watershed_segmentation(
+                        binary_mask=intensity_mask[t, 0, z],
+                        minsize=minsize,
+                        maxsize=maxsize,
+                        min_distance=1,  # ImageJ default: all local maxima above tolerance
+                        tolerance=0.5     # ImageJ MaximumFinder default tolerance
+                    )
+                    
+                    # Filter watershed result to keep only valid components
+                    mask_filtered = np.isin(labels_ws, valid_labels)
+                    tmp_labeled_mask[t, 0, z] = labels_ws * mask_filtered
+                    logger.info(f"  T={t}, Z={z}: Watershed produced {len(valid_labels)} valid components")
                 else:
-                    logger.warning(f"T={t}, C={c}: No signal detected, skipping")
-                    continue
+                    # No watershed needed - just filter by size as normal
+                    valid_components = np.where((component_sizes >= minsize) & (component_sizes <= maxsize))[0]
+                    mask_filtered = np.isin(tmp_labeled_mask[t, 0, z], valid_components)
+                    tmp_labeled_mask[t, 0, z] = tmp_labeled_mask[t, 0, z] * mask_filtered
+        
+        if watershed_count > 0:
+            logger.info(f"Step 5: Applied watershed to {watershed_count} slices with oversized components")
+            rp.show_image(image=preprocessed, mask=tmp_labeled_mask, title=f"After Watershed")
+        
+        # rp.show_image(image=preprocessed, mask=tmp_labeled_mask, title=f"No Watershed")
+
+
+        
+        # Update labeled_mask with the filtered/watershed results
+        labeled_mask = tmp_labeled_mask
+        
+        # Check if empty in one or more frames after watershed
+        empty_frames = [t for t in range(T) if np.count_nonzero(labeled_mask[t, 0]) == 0]
+        if len(empty_frames) > 0:
+            logger.warning(f"Empty frames after watershed: {empty_frames}")
+        
+        
+
+        ##### STEP 6: #######
+        # Remove objects on XY edges per TCZ slice
+        # Strategy: Try edge removal first. If it eliminates all signal, apply watershed then remove edges.
+        
+        logger.info(f"Step 6: Removing edge-touching objects for all {T} timepoints... per TCZ slice")
+        
+        tmp_labeled_mask = labeled_mask.copy()
+        edge_removal_failed = False  # Track if edge removal killed everything
+        
+        for t in range(T):
+            for z in range(Z):
+                edge_labels = set()
+                # Check edges
+                edges = [
+                    labeled_mask[t, 0, z, 0, :],    # Top edge
+                    labeled_mask[t, 0, z, -1, :],   # Bottom edge
+                    labeled_mask[t, 0, z, :, 0],    # Left edge
+                    labeled_mask[t, 0, z, :, -1]    # Right edge
+                ]
+                for edge in edges:
+                    edge_labels.update(np.unique(edge))
                 
-                # Step 1: Median filter preprocessing
-                preprocessed = median_filter_3d(data_float, median_xy, median_z)
+                edge_labels.discard(0)  # Remove background
                 
-                # Step 2: Auto threshold per slice
-                intensity_mask = np.zeros_like(preprocessed, dtype=bool)
+                # Remove edge-touching objects
+                for label in edge_labels:
+                    tmp_labeled_mask[t, 0, z][tmp_labeled_mask[t, 0, z] == label] = 0
+        
+        # Check if edge removal killed everything
+        if tmp_labeled_mask.sum() == 0:
+            logger.warning("Step 6: Edge removal eliminated all objects - applying watershed fallback")
+            edge_removal_failed = True
+            
+            # Fallback: Apply watershed to original mask, THEN remove edges
+            logger.info("Step 6 Fallback: Applying watershed to recover signal...")
+            watershed_fallback_count = 0
+            
+            for t in range(T):
                 for z in range(Z):
-                    slice_data = preprocessed[z]
-                    if slice_data.max() > 0:
-                        if threshold_method == 'li':
-                            thresh_val = filters.threshold_li(slice_data)
-                        elif threshold_method == 'otsu':
-                            thresh_val = filters.threshold_otsu(slice_data)
-                        elif threshold_method == 'yen':
-                            thresh_val = filters.threshold_yen(slice_data)
-                        else:
-                            thresh_val = filters.threshold_li(slice_data)
+                    if labeled_mask[t, 0, z].sum() > 0:
+                        # Apply watershed to this slice
+                        labels_ws, valid_labels = apply_watershed_segmentation(
+                            binary_mask=intensity_mask[t, 0, z],
+                            minsize=minsize,
+                            maxsize=maxsize,
+                            min_distance=1,   # ImageJ default: all local maxima above tolerance
+                            tolerance=0.5      # ImageJ MaximumFinder default tolerance
+                        )
                         
-                        intensity_mask[z] = slice_data > thresh_val
-                
-                # Step 3: Fill holes (3D)
-                intensity_mask = ndimage.binary_fill_holes(intensity_mask)
-                
-                # Step 4: Analyze particles and filter by size
-                final_mask = np.zeros_like(intensity_mask, dtype=bool)
-                for z in range(Z):
-                    labeled = measure.label(intensity_mask[z])
-                    props = measure.regionprops(labeled)
-                    
-                    # Count objects in size range
-                    valid_labels = []
-                    for prop in props:
-                        if minsize <= prop.area <= maxsize:
-                            valid_labels.append(prop.label)
-                    
-                    n_objects = len(valid_labels)
-                    
-                    # Step 5: If wrong object count and watershed enabled, try watershed
-                    if use_watershed and max_objects > 0 and n_objects != max_objects:
-                        # Check if we have oversized objects
-                        oversized = any(prop.area > maxsize for prop in props)
+                        # Filter to keep only valid components
+                        mask_filtered = np.isin(labels_ws, valid_labels)
+                        tmp_labeled_mask[t, 0, z] = labels_ws * mask_filtered
                         
-                        if oversized:
-                            logger.info(f"T={t}, C={c}, Z={z}: Applying watershed (found {n_objects}, expected {max_objects})")
-                            
-                            # Apply watershed on this slice
-                            from scipy import ndimage as ndi
-                            from skimage.segmentation import watershed
-                            from skimage.feature import peak_local_max
-                            
-                            # Distance transform
-                            distance = ndi.distance_transform_edt(intensity_mask[z])
-                            
-                            # Find peaks
-                            coords = peak_local_max(distance, min_distance=20, labels=intensity_mask[z])
-                            mask_peaks = np.zeros(distance.shape, dtype=bool)
-                            mask_peaks[tuple(coords.T)] = True
-                            markers = measure.label(mask_peaks)
-                            
-                            # Watershed
-                            labels_ws = watershed(-distance, markers, mask=intensity_mask[z])
-                            
-                            # Re-analyze after watershed
-                            props = measure.regionprops(labels_ws)
-                            valid_labels = []
-                            for prop in props:
-                                if minsize <= prop.area <= maxsize:
-                                    valid_labels.append(prop.label)
-                            
-                            labeled = labels_ws
-                    
-                    # Create final mask for this slice
-                    slice_mask = np.zeros_like(intensity_mask[z], dtype=bool)
-                    for label in valid_labels:
-                        slice_mask[labeled == label] = True
-                    
-                    final_mask[z] = slice_mask
-                    
-                    # Log object count warnings
-                    if max_objects > 0:
-                        n_final = len(valid_labels)
-                        if n_final != max_objects:
-                            logger.warning(
-                                f"T={t}, C={c}, Z={z}: Found {n_final} objects, expected {max_objects}"
-                            )
-                
-                # Store mask (convert to uint8: 0 or 255)
-                # Note: c_idx is the index in output (always 0 for single channel output)
-                output_mask[t, 0] = final_mask.astype(np.uint8) * 255
+                        # NOW remove edges from watershed result
+                        edge_labels = set()
+                        edges = [
+                            tmp_labeled_mask[t, 0, z, 0, :],
+                            tmp_labeled_mask[t, 0, z, -1, :],
+                            tmp_labeled_mask[t, 0, z, :, 0],
+                            tmp_labeled_mask[t, 0, z, :, -1]
+                        ]
+                        for edge in edges:
+                            edge_labels.update(np.unique(edge))
+                        edge_labels.discard(0)
+                        
+                        for label in edge_labels:
+                            tmp_labeled_mask[t, 0, z][tmp_labeled_mask[t, 0, z] == label] = 0
+                        
+                        if len(valid_labels) > 0:
+                            watershed_fallback_count += 1
+            
+            logger.info(f"Step 6 Fallback: Watershed applied to {watershed_fallback_count} slices")
+            
+            # Check if we still have signal after fallback
+            if tmp_labeled_mask.sum() == 0:
+                logger.error("Step 6 Fallback: Still no signal after watershed - segmentation failed")
+                rp.show_image(image=preprocessed, mask=tmp_labeled_mask, 
+                            title="ERROR STEP 6: No signal after edge removal + watershed fallback")
+                return False
+        
+        # Update labeled_mask with edge-cleaned result
+        labeled_mask = tmp_labeled_mask
+        
+        if edge_removal_failed:
+            logger.info("Step 6: Fallback successful - continuing with watershed-recovered mask")
+        else:
+            logger.info(f"Step 6: Edge removal successful - {np.count_nonzero(labeled_mask)} pixels remaining")
+
+
+
+        ##### STEP 7: #######
+        # Are all the same objects kept in all frames?
+        logger.info(f"Step 7: Checking component ID-consistency across {T} timepoints...")
+        components_in_frame_1 = set(np.unique(labeled_mask[0, 0, :, :, :])) - {0}
+        for t in range(1, T):
+            components_in_frame_t = set(np.unique(labeled_mask[t, 0, :, :, :])) - {0}
+            if components_in_frame_t != components_in_frame_1:
+                logger.warning(f"Components differ in frame {t}: {components_in_frame_t}")
+                rp.show_image(image=preprocessed, mask=labeled_mask, title="ERROR: Components ID differ between timepoints")        
+        
+        ##### STEP 8: #######
+        # Does the size of each component size change less than a threshold over time?
+        logger.info(f"Step 8: Checking component size consistency across {T} timepoints...")
+        size_change_threshold = 0.1  # Example threshold
+        for component_id in components_in_frame_1:
+            sizes_over_time = [np.sum(labeled_mask[t, 0] == component_id) for t in range(T)]
+            if max(sizes_over_time) / min(sizes_over_time) < (1 + size_change_threshold):
+                logger.info(f"Component {component_id} size change is within threshold over time.")
+            else:
+                logger.warning(f"Component {component_id} size change is outside threshold over time.")
+                rp.show_image(image=preprocessed, mask=labeled_mask, title="ERROR: Large size change over time")
+
+        ##### STEP 9: #######
+        # particle analysis per TCZ slice
+        logger.info(f"Step 9: Performing particle analysis for all {T} timepoints... per TCZ slice")
+        results = []
+        for t in range(T):
+            for z in range(Z):
+                props = measure.regionprops(labeled_mask[t, 0, z])
+                for prop in props:
+                    results.append({
+                        'timepoint': t,
+                        'z_slice': z,
+                        'label': prop.label,
+                        'area': prop.area,
+                        'centroid': prop.centroid
+                    })  
+
         
         # Save mask
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        rp.save_tczyx_image(output_mask, output_path)
-        logger.info(f"Saved mask: {output_path}")
         
-        # Save ROI if requested
+        #rp.save_tczyx_image(output_mask, output_path)
+        # Lets make an exeption for saving these masks as normal tif instead of ome.tif
+        # since normal tifs gets a preview in Windows explorer
+        
+        # Save as binary 8-bit mask (0 or 255) for ImageJ compatibility
+        # Squeeze out the C dimension: (T, C=1, Z, Y, X) -> (T, Z, Y, X)
+        labeled_mask_squeezed = labeled_mask[:, 0, :, :, :]
+        #rp.show_image(image=data_float, mask=labeled_mask_squeezed, title="Final Mask to be saved")
+
+        
+        # Convert to binary (0 or 255) 8-bit mask
+        labeled_mask_out = (labeled_mask_squeezed > 0).astype(np.uint8) * 255
+        
+        logger.info(f"Mask shape before save: {labeled_mask_out.shape}, dtype: {labeled_mask_out.dtype}, max_value: {labeled_mask_out.max()}")
+
+        tifffile.imwrite(
+            output_path,
+            labeled_mask_out,
+            imagej=True,  # ImageJ-compatible format
+            metadata={'axes': 'TZYX'},  # Specify axis order (4D: T, Z, Y, X)
+            compression='deflate'  # Lossless compression
+        )
+        
+        logger.info(f"Saved mask: {output_path}")
+
+        # Save max projections for quick visualization
+        
+        # Save imageJ ROIs if requested
         if save_roi:
-            roi_path = os.path.splitext(output_path)[0] + "_roi.npz"
+            roi_folder = os.path.splitext(output_path)[0] + "_rois"
             try:
-                # Extract ROI coordinates for each slice
-                rois = []
-                for t in range(T):
-                    for z in range(Z):
-                        labeled = measure.label(output_mask[t, 0, z] > 0)
-                        props = measure.regionprops(labeled)
-                        
-                        for prop in props:
-                            roi_info = {
-                                't': t,
-                                'c': channel if channel >= 0 else 0,
-                                'z': z,
-                                'label': prop.label,
-                                'area': prop.area,
-                                'centroid': prop.centroid,
-                                'bbox': prop.bbox,
-                            }
-                            rois.append(roi_info)
+                # Use helper function to save all ROIs from the mask
+                roi_count = rp.save_imagej_rois_from_mask(
+                    mask=labeled_mask,
+                    output_path=roi_folder,
+                    name_pattern=f"T{{t}}_C{channel if channel >= 0 else 0}_Z{{z}}_obj{{label}}.roi"
+                )
                 
-                # Save as compressed numpy archive
-                np.savez_compressed(roi_path, rois=rois)
-                logger.info(f"Saved ROI data: {roi_path}")
+                logger.info(f"Saved {roi_count} ImageJ ROI files to: {roi_folder}")
             except Exception as e:
                 logger.warning(f"Failed to save ROI data: {e}")
         
@@ -473,7 +786,7 @@ run:
         "--channel",
         type=int,
         default=0,
-        help="Channel index to process (0-based), use -1 to process all channels (default: 0)"
+        help="Channel index to process (0-based, default: 0)"
     )
     
     parser.add_argument(

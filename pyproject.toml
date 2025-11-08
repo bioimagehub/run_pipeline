@@ -212,6 +212,22 @@ run_ilastik = [
 
 ]
 
+imagej = [
+	"pyimagej>=1.4.0",
+	"scyjava",
+	"jpype1==1.5.0",
+	"numpy",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"bioio_lif",
+	"bioio_czi",
+	"bioio_dv",
+	"tqdm",
+]
+
 # Development dependencies
 dev = [
 	"pytest>=7.0",

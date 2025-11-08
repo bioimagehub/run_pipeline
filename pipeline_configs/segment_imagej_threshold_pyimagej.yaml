@@ -1,0 +1,62 @@
+---
+# ImageJ Simple Threshold Segmentation Pipeline using PyImageJ
+# This pipeline uses PyImageJ to run ImageJ macros from Python
+# 
+# Prerequisites:
+# - Python with PyImageJ installed (uv sync --group imagej)
+# - ImageJ/Fiji installation (optional, PyImageJ can download one)
+#
+# Usage:
+#   run_pipeline.exe pipeline_configs/segment_imagej_threshold_pyimagej.yaml
+#
+# Advantages over direct ImageJ command-line:
+#   - No headless mode issues
+#   - Better error handling
+#   - Proper argument passing
+#   - Python integration for pre/post-processing
+
+run:
+  - name: Segment images using ImageJ threshold (via PyImageJ)
+    environment: uv@3.11:imagej
+    commands:
+      - python
+      - '%REPO%/standard_code/python/run_imagej_script.py'
+      - --script: '%REPO%/standard_code/imagej/simple_threshold_pyimagej.ijm'
+      - --input: '%SARAH_DATA%/cellprofiler_input'
+      - --suffix: '.tif'
+      - --minsize: 35000
+      - --maxsize: 120000
+
+# Example with ImageJ path specified:
+# run:
+#   - name: Segment images using ImageJ threshold (custom Fiji path)
+#     environment: uv@3.11:imagej
+#     commands:
+#       - python
+#       - '%REPO%/standard_code/python/run_imagej_script.py'
+#       - --script: '%REPO%/standard_code/imagej/simple_treshold.ijm'
+#       - --imagej-path: 'E:/Oyvind/OF_program_files/OF_Fiji.app'
+#       - --input: '%SARAH_DATA%/cellprofiler_input'
+#       - --suffix: '.tif'
+#       - --minsize: 35000
+#       - --maxsize: 120000
+
+# Example with ImageJ2 Python script:
+# run:
+#   - name: Run ImageJ2 Python script
+#     environment: uv@3.11:imagej
+#     commands:
+#       - python
+#       - '%REPO%/standard_code/python/run_imagej_script.py'
+#       - --script: '%REPO%/standard_code/imagej/simple_threshold.py'
+#       - --input: '%SARAH_DATA%/cellprofiler_input'
+#       - --suffix: '.tif'
+#       - --minsize: 35000
+#       - --maxsize: 120000
+
+# Notes:
+# - Output will be saved to: {input}_threshold/
+# - All --arguments after --script are passed to the ImageJ macro
+# - Arguments are automatically formatted for ImageJ (key=value,key=value,...)
+# - Paths are converted to forward slashes for ImageJ compatibility
+# - The run_imagej_script.py wrapper handles all ImageJ initialization

@@ -15,7 +15,7 @@ args = getArgument();
 input = "E:\\Coen\\Sarah\\6849908-IMB-Coen-Sarah-Photoconv_global\\cellprofiler_input";  // Change this to your test folder
 suffix = ".tif";
 max_objects = 1;
-minsize = 35000;
+minsize = 30000;
 maxsize = 120000;
 
 median_xy = 8;
@@ -86,10 +86,22 @@ function processFile(input, output, file) {
 	
 	setBatchMode("hide");
 	
-	print("Processing: " + input + File.separator + file);
-	run("Bio-Formats Importer", "open=[" + input + File.separator + file +"] color_mode=Default rois_import=[ROI manager] view=Hyperstack stack_order=XYCZT");
+	fullPath = input + File.separator + file;
+	print("Processing: " + fullPath);
+		
+	// Open
+	run("Bio-Formats Importer", "open=[" + fullPath + "] autoscale color_mode=Default rois_import=[ROI manager] view=Hyperstack stack_order=XYCZT");
+	
+	
+	// Verify an image was opened
+	if (nImages == 0) {
+		print("ERROR: Could not open image: " + file);
+		setBatchMode("exit and display");
+		return;
+	}
+	
 	rename("input");
-	run("Enhance Contrast", "saturated=0.35");	
+	
 	
 	// Duplicate image to create preprocessed image
 	run("Duplicate...", "title=preprocessed duplicate");
@@ -109,8 +121,7 @@ function processFile(input, output, file) {
 	run("Convert to Mask", "background=Dark black");
 	run("Fill Holes", "stack");
 	
-	
-	// Count objects
+	// Count objects
 	selectWindow("intensity_mask");	
 	n = roiManager('count');
 	if (n>0) {		
@@ -127,7 +138,7 @@ function processFile(input, output, file) {
 	// if not the correct number of objects try to resolve
 	getDimensions(width, height, channels, slices, frames);
 
-	if(n/frames != max_objects){ // One ROI per frame
+	if(n/frames != max_objects){ // not One ROI per frame
 		
 		// is there any signal?
 		
@@ -143,175 +154,42 @@ function processFile(input, output, file) {
 			run("Watershed", "stack");
 			run("Analyze Particles...", "size=" + minsize + "-" + maxsize + " pixel exclude clear add stack");
 		}
-
-
+		
 		n = roiManager('count');
 		
 		// There is no hope if no ROIs after
 		if(n==0){
 			return;
-		}		
-	}
-
-	// Clear outside ROI
-	n = roiManager('count');
-	for (i = 0; i < n; i++) {
-	    roiManager('select', i);
-	    // process roi here
-	    run("Clear Outside", "slice");
-	}
-
-
-	// Keep ROI
-	//if (n>0) {		
-	//	roiManager("Deselect");
-	//	roiManager("Delete");
-	//}
-	
+		}	
 		
-	/**
-	///////////////////////////////////////////////////////////////////////
-	// Create slightly oversized edge mask and remove things outside it  //
- 	// This helps split out debres that are close to the edge            //
-	///////////////////////////////////////////////////////////////////////
-	
-	selectWindow("preprocessed");
-	run("Duplicate...", "title=edge_mask duplicate");
-	
-	// Clear outside ROI
-	// We only care about shrinking the mask if there is debris included in the threshold mask
-	n = roiManager('count');
-	for (i = 0; i < n; i++) {
-	    roiManager('select', i);
-	    // process roi here
-	    run("Clear Outside", "slice");
+		run("Erode", "stack");
+		run("Erode", "stack");
+	    run("Connected Components Labeling", "connectivity=6 type=[16 bits]");
+	    run("Label Size Filtering", "operation=Greater_Than size=" +  minsize);
+
+	    run("Keep Largest Label");
+	    run("Erode", "stack");
 	}
 	
-	if (n>0) {		
-		roiManager("Deselect");
-		roiManager("Delete");
-	}
-	run("Select None");
-	run("Gaussian Blur...", "sigma=3 stack");
 	
-	// threshold on edge mask
-	run("Find Edges", "stack");
-	
-	
-	run("Convert to Mask", "method=Li background=Dark calculate black");
-	
-	// Label connected components and get largest
 	run("Connected Components Labeling", "connectivity=6 type=[16 bits]");
-	run("Label Size Filtering", "operation=Greater_Than size=0");
-
-	run("Keep Largest Label");
-	
-	run("Fill Holes", "stack");
-	
-	// Clean up intermediate images
-	selectWindow("edge_mask");
-	close();
-	selectImage("edge_mask-lbl");
-	close();
-	selectImage("edge_mask-lbl-sizeFilt");
-	close();
-	
-	selectImage("edge_mask-lbl-sizeFilt-largest");
-	rename("edge_mask");
-
 	
 
-	
-	// ensure there is a mask
-	selectWindow("edge_mask");	
-	n = roiManager('count');
-	if (n>0) {		
-		roiManager("Deselect");
-		roiManager("Delete");
-	}
-	
-	selectWindow("edge_mask");
-	
-	run("Analyze Particles...", "size=" + minsize + "-" + maxsize + " pixel exclude clear add stack");
-	
-	 
-	
-	n = roiManager('count');
+	run("Re-order Hyperstack ...", "channels=[Channels (c)] slices=[Frames (t)] frames=[Slices (z)]");
 	
 	
-	// If edgemask found ask user for help
-	if (n>0) {	
-		
-		// Clear outsite edge mask for spline to work
-		for (i = 0; i < n; i++) {
-		    roiManager('select', i);
-		    // process roi here
-		    run("Clear Outside", "slice");
-		}
-		
-		
-		// Delete tmp ROIs
-		if (n>0) {		
-			roiManager("Deselect");
-			roiManager("Delete");
-		}
-		
-		// Smooth the edge mask using morphological operations
-		selectWindow("edge_mask");
-		run("Options...", "iterations=3 count=1 black do=Dilate stack");
-		run("Options...", "iterations=3 count=1 black do=Erode stack");
-
-		imageCalculator("AND create stack", "edge_mask", "intensity_mask");
-
-		rename("mask");
-		selectWindow("intensity_mask");	
-		close();
-		
-
-	}
- else {
-		// if no edge mask found use threshold only
-		selectWindow("intensity_mask");	
-		rename("mask");
-	}
-
-	selectWindow("edge_mask");
-	close();
-
-		
-	// Analyze final mask
-	
-	selectWindow("mask");
-	n = roiManager('count');
-	if (n>0) {		
-		roiManager("Deselect");
-		roiManager("Delete");
-	}
-	run("Analyze Particles...", "size=" + minsize + "-" + maxsize + " pixel exclude clear add stack");
-
-	
-	
-	// only keep labels that have a defined roi 
-	// remove on edge and size 
-	n = roiManager('count');
-	print(n);
-	
-	
-	
-	print(slices);
-	*/
-	
-	getDimensions(width, height, channels, slices, frames);
+	getDimensions(width, height, channels, slices, frames);
 
 	// Debugging checks (disabled in headless mode)
-	if(n/frames != max_objects){ // One ROI per frame
+	//if(n/frames != max_objects){ // One ROI per frame
 		
-	 	setBatchMode("exit and display");
-	 	waitForUser("Not one mask per frame");
-	 	setBatchMode("hide");
-	 }
+	// 	setBatchMode("exit and display");
+	 //	waitForUser("Not one mask per frame");
+	 //	setBatchMode("hide");
+	// }
 	
 	// Save mask
+
 	run("OME-TIFF...", "save=[" + output_tif + "] export compression=Uncompressed");
 	
 	// save ROI
@@ -325,6 +203,7 @@ function processFile(input, output, file) {
 	}
 	run("Close All");
 	setBatchMode("exit and display");
+	run("Close All");
 	
 	// save measurements can come here if need be
 	

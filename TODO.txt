@@ -68,7 +68,14 @@
 
 ## Multi-Language Support (Universal Orchestration)
 - **R scripts** for statistical analysis - create test examples with YAML variable passing
-- **ImageJ macros** for image processing - debug current issues and create working examples
+- **ImageJ macros** for image processing
+  - ✅ Direct ImageJ CLI integration working (environment: imagej)
+  - ✅ Auto-detects .ijm vs .py/.js/.groovy scripts
+  - ✅ Clean YAML map syntax for parameters
+  - ✅ Path handling with forward slashes
+  - ⚠️ PyImageJ approach created but has headless mode JVM crashes on Windows
+  - 📝 Both approaches documented in README_IMAGEJ_INTEGRATION.md
+  - 🎯 NEXT: Test more ImageJ2 scripts (.py, .js, .groovy formats)
 - **Shell commands** for file operations - demonstrate cross-platform shell script orchestration
 - Create comprehensive test suite showing string, int, list, and complex data types
 - Document variable type conversion between YAML and target languages

@@ -8,21 +8,39 @@
 #
 # Usage:
 #   run_pipeline.exe pipeline_configs/segment_imagej_threshold.yaml
+#
+# Note: The pipeline orchestrator automatically:
+#   - Converts YAML map format to ImageJ's comma-separated argument format
+#   - Converts all paths to forward slashes for ImageJ compatibility
+#   - Uses -macro flag for .ijm files
 
 run:
-  - name: Segment images using ImageJ threshold macro
+  - name: Segment images using ImageJ threshold (Python/Jython)
     environment: imagej
     commands:
-      - '%REPO%/standard_code/imagej/simple_treshold.ijm'
-      - 'input=%YAML%/cellprofiler_input,suffix=.tif,minsize=35000,maxsize=120000'
-
+      - '%REPO%/standard_code/imagej/simple_threshold.py'
+      - input: '%SARAH_DATA%/cellprofiler_input'
+      - suffix: '.tif'
+      - minsize: 35000
+      - maxsize: 120000
 # Alternative: Using full absolute paths instead of %REPO% and %YAML% tokens
 # run:
 #   - name: Segment images using ImageJ threshold macro (absolute paths)
 #     environment: imagej
 #     commands:
 #       - E:\Oyvind\OF_git\run_pipeline\standard_code\imagej\simple_treshold.ijm
-#       - 'input=E:\Coen\Sarah\6849908-IMB-Coen-Sarah-Photoconv_global\cellprofiler_input,suffix=.tif,minsize=35000,maxsize=120000'
+#       - input: 'E:\Coen\Sarah\6849908-IMB-Coen-Sarah-Photoconv_global\cellprofiler_input'
+#       - suffix: '.tif'
+#       - minsize: 35000
+#       - maxsize: 120000
+
+# Alternative: Legacy comma-separated string format (still supported)
+# run:
+#   - name: Segment images using ImageJ threshold macro (legacy format)
+#     environment: imagej
+#     commands:
+#       - '%REPO%/standard_code/imagej/simple_treshold.ijm'
+#       - 'input=%YAML%/cellprofiler_input,suffix=.tif,minsize=35000,maxsize=120000'
 
 # Notes:
 # - Output will be saved to: {input}_threshold/

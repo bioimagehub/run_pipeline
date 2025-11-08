@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Optional
 from bioio import BioImage
 import os
 import tempfile
@@ -456,6 +456,362 @@ def split_comma_separated_strstring(value:str) -> list[str]:
 
 def split_comma_separated_intstring(value:str) -> list[int]:
     return list(map(int, value.split(',')))    
+
+
+def show_image(
+    image: Union[BioImage, np.ndarray, str],
+    mask: Union[BioImage, np.ndarray, str, None] = None,
+    title: Optional[str] = None,
+    alpha: float = 0.5
+) -> None:
+    """
+    Quick visualization of mask segmentation over time.
+    
+    Layout:
+    - Top row: First and last timepoint overlays (max Z projection)
+    - Bottom: Stacked area chart showing pixel counts per object ID across all timepoints
+    
+    Args:
+        image: BioImage, numpy array (TCZYX), or path to image file
+        mask: Optional mask as BioImage, numpy array (TCZYX), or path to mask file
+        title: Optional title for the figure. If None, uses image filename if available.
+        alpha: Transparency of mask overlay (0-1, default: 0.5)
+    
+    Examples:
+        >>> show_image("path/to/image.tif", mask="path/to/mask.tif")
+        >>> show_image(img_array, mask=mask_array, title="My Segmentation")
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from pathlib import Path
+    
+    # Load image if it's a path
+    if isinstance(image, str):
+        image_path = image
+        image = load_tczyx_image(image)
+    else:
+        image_path = None
+    
+    # Convert to numpy array if BioImage
+    if hasattr(image, 'data'):
+        img_data = np.asarray(image.data)  # Force conversion from memoryview to numpy array
+    else:
+        img_data = np.asarray(image)
+    
+    # Ensure 5D
+    while img_data.ndim < 5:
+        img_data = img_data[np.newaxis, ...]
+    
+    T, C, Z, Y, X = img_data.shape
+    
+    # Load and process mask if provided
+    mask_data = None
+    mT = T  # Default to image timepoints
+    if mask is not None:
+        if isinstance(mask, str):
+            mask = load_tczyx_image(mask)
+        
+        if hasattr(mask, 'data'):
+            mask_data = np.asarray(mask.data)  # Force conversion from memoryview to numpy array
+        else:
+            mask_data = np.asarray(mask)
+        
+        # Ensure 5D
+        while mask_data.ndim < 5:
+            mask_data = mask_data[np.newaxis, ...]
+        
+        mT, mC, mZ, mY, mX = mask_data.shape
+        
+        # Validate dimensions
+        if (Y, X) != (mY, mX):
+            raise ValueError(f"Image and mask XY dimensions must match. Got image: ({Y}, {X}), mask: ({mY}, {mX})")
+    
+    # Create figure layout based on whether we have mask data
+    if mask_data is not None:
+        # With mask: 2x2 grid (top: first/last timepoint, bottom: area chart)
+        fig = plt.figure(figsize=(10, 7))
+        gs = fig.add_gridspec(2, 2, height_ratios=[1, 1], hspace=0.3, wspace=0.2)
+        ax_first = fig.add_subplot(gs[0, 0])
+        ax_last = fig.add_subplot(gs[0, 1])
+        ax_chart = fig.add_subplot(gs[1, :])
+    else:
+        # Without mask: just show first and last timepoint side by side
+        fig, (ax_first, ax_last) = plt.subplots(1, 2, figsize=(10, 4))
+        ax_chart = None
+    
+    # Helper function to create distinct colors for each label
+    def get_label_colors(max_label: int) -> dict:
+        """Generate distinct colors for each label ID."""
+        np.random.seed(42)
+        colors = {}
+        for label_id in range(1, max_label + 1):
+            hue = (label_id * 0.618033988749895) % 1.0  # Golden ratio for good distribution
+            h = hue * 6
+            x = 1 - abs((h % 2) - 1)
+            
+            if h < 1:
+                r, g, b = 1, x, 0
+            elif h < 2:
+                r, g, b = x, 1, 0
+            elif h < 3:
+                r, g, b = 0, 1, x
+            elif h < 4:
+                r, g, b = 0, x, 1
+            elif h < 5:
+                r, g, b = x, 0, 1
+            else:
+                r, g, b = 1, 0, x
+            
+            colors[label_id] = (r, g, b)
+        return colors
+    
+    # Get max projection of first channel for display
+    img_first = np.max(img_data[0, 0, :, :, :], axis=0)
+    img_last = np.max(img_data[-1, 0, :, :, :], axis=0)
+    
+    # Normalize intensities
+    vmin = np.percentile(img_data[0, 0], 1)
+    vmax = np.percentile(img_data[0, 0], 99)
+    
+    # Show first timepoint
+    ax_first.imshow(img_first, cmap='gray', vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax_first.set_title(f'T=0 (MIP)', fontsize=10)
+    ax_first.axis('off')
+    
+    # Show last timepoint
+    ax_last.imshow(img_last, cmap='gray', vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax_last.set_title(f'T={T-1} (MIP)', fontsize=10)
+    ax_last.axis('off')
+    
+    # Overlay masks if provided
+    if mask_data is not None:
+        # Get all unique labels across all timepoints
+        all_labels = set()
+        for t in range(mT):
+            mask_mip = np.max(mask_data[t, 0, :, :, :], axis=0)
+            all_labels.update(np.unique(mask_mip))
+        all_labels.discard(0)  # Remove background
+        max_label = max(all_labels) if all_labels else 0
+        
+        if max_label > 0:
+            label_colors = get_label_colors(max_label)
+            
+            # Create colormap for overlays
+            colors_list = [(0, 0, 0, 0)]  # Background transparent
+            for i in range(1, max_label + 1):
+                if i in label_colors:
+                    r, g, b = label_colors[i]
+                    colors_list.append((r, g, b, alpha))
+                else:
+                    colors_list.append((0, 0, 0, alpha))
+            mask_cmap = ListedColormap(colors_list)
+            
+            # Overlay on first timepoint
+            mask_first = np.max(mask_data[0, 0, :, :, :], axis=0)
+            mask_overlay_first = np.ma.masked_where(mask_first == 0, mask_first)
+            ax_first.imshow(mask_overlay_first, cmap=mask_cmap, alpha=1.0, interpolation='nearest',
+                          vmin=0, vmax=max_label)
+            n_obj_first = len(np.unique(mask_first)) - 1
+            ax_first.set_title(f'T=0 ({n_obj_first} objects)', fontsize=10)
+            
+            # Overlay on last timepoint
+            mask_last = np.max(mask_data[-1, 0, :, :, :], axis=0)
+            mask_overlay_last = np.ma.masked_where(mask_last == 0, mask_last)
+            ax_last.imshow(mask_overlay_last, cmap=mask_cmap, alpha=1.0, interpolation='nearest',
+                         vmin=0, vmax=max_label)
+            n_obj_last = len(np.unique(mask_last)) - 1
+            ax_last.set_title(f'T={T-1} ({n_obj_last} objects)', fontsize=10)
+            
+            # Calculate pixel counts per label per timepoint (only if we have chart axis)
+            if ax_chart is not None:
+                timepoints = []
+                pixel_counts = {label: [] for label in sorted(all_labels)}
+                
+                for t in range(mT):
+                    mask_mip = np.max(mask_data[t, 0, :, :, :], axis=0)
+                    timepoints.append(t)
+                    
+                    for label_id in sorted(all_labels):
+                        count = np.sum(mask_mip == label_id)
+                        pixel_counts[label_id].append(count)
+                
+                # Create stacked area chart
+                bottom = np.zeros(len(timepoints))
+                for label_id in sorted(all_labels):
+                    counts = pixel_counts[label_id]
+                    color = label_colors.get(label_id, (0.5, 0.5, 0.5))
+                    ax_chart.fill_between(timepoints, bottom, bottom + counts, 
+                                         color=color, alpha=0.7, label=f'ID {label_id}')
+                    bottom += counts
+                
+                ax_chart.set_xlabel('Timepoint', fontsize=10)
+                ax_chart.set_ylabel('Pixel Count', fontsize=10)
+                ax_chart.set_title('Object Pixel Counts Over Time', fontsize=10)
+                ax_chart.grid(True, alpha=0.3)
+                
+                # Only show legend if not too many labels
+                if len(all_labels) <= 20:
+                    ax_chart.legend(loc='upper left', fontsize=8, ncol=min(5, len(all_labels)))
+    
+    # Set figure title
+    if title is None and image_path:
+        title = Path(image_path).stem
+    
+    if title:
+        fig.suptitle(title, fontsize=12, fontweight='bold')
+    
+    # Show plot and block until user closes the window
+    plt.show(block=True)
+
+
+def save_imagej_roi(
+    coordinates: np.ndarray,
+    output_path: str,
+    t: int = 0,
+    c: int = 0,
+    z: int = 0
+) -> None:
+    """
+    Save a contour as an ImageJ ROI file.
+    
+    Args:
+        coordinates: Nx2 array of (row, col) or (y, x) coordinates from find_contours
+        output_path: Path where to save the .roi file
+        t: Timepoint index (0-based)
+        c: Channel index (0-based)
+        z: Z-slice index (0-based)
+    
+    Example:
+        >>> from skimage import measure
+        >>> mask_single = (labeled == prop.label)
+        >>> contours = measure.find_contours(mask_single, 0.5)
+        >>> contour = max(contours, key=len)
+        >>> save_imagej_roi(contour, "output.roi", t=0, c=0, z=5)
+    """
+    from roifile import ImagejRoi
+    
+    # Convert coordinates: find_contours returns (row, col), ImageJ expects (x, y)
+    # So we need to flip: row,col -> col,row -> x,y
+    coords_xy = np.fliplr(coordinates).astype(np.int16)
+    
+    if len(coords_xy) < 3:
+        raise ValueError(f"ROI must have at least 3 points, got {len(coords_xy)}")
+    
+    # Create ROI and set position
+    roi = ImagejRoi.frompoints(coords_xy)
+    roi.position = z + 1  # ImageJ uses 1-based indexing for position
+    
+    # Save to file
+    roi.tofile(output_path)
+
+
+def save_imagej_rois_from_mask(
+    mask: Union[np.ndarray, BioImage],
+    output_path: str,
+    name_pattern: str = "T{t}_C{c}_Z{z}_obj{label}"
+) -> int:
+    """
+    Convert a labeled mask to individual ImageJ ROI files.
+    
+    Creates one .roi file per object in the mask. Each unique label (except 0)
+    in each T,C,Z plane is converted to a separate ROI file.
+    
+    Args:
+        mask: Labeled mask as numpy array (TCZYX or lower dimensions) or BioImage.
+              Each unique integer value (except 0) represents a different object.
+        output_path: Directory path where ROI files will be saved, or path to .zip file
+                     for saving all ROIs in a single archive.
+        name_pattern: Format string for ROI filenames. Available placeholders:
+                      {t}, {c}, {z}, {label}. Only used if output_path is a directory.
+                      Default: "T{t}_C{c}_Z{z}_obj{label}"
+    
+    Returns:
+        Number of ROI files created
+    
+    Example:
+        >>> # Save individual ROI files
+        >>> count = save_imagej_rois_from_mask(
+        ...     mask, 
+        ...     "output_folder",
+        ...     name_pattern="T{t}_C{c}_Z{z}_obj{label}.roi"
+        ... )
+        >>> print(f"Saved {count} ROI files")
+        
+        >>> # Save as a single zip archive
+        >>> count = save_imagej_rois_from_mask(mask, "output_rois.zip")
+    """
+    from skimage import measure
+    from roifile import ImagejRoi, roiwrite
+    
+    # Convert to numpy array if BioImage
+    if hasattr(mask, 'data'):
+        mask_data = np.asarray(mask.data)
+    else:
+        mask_data = np.asarray(mask)
+    
+    # Ensure 5D
+    while mask_data.ndim < 5:
+        mask_data = mask_data[np.newaxis, ...]
+    
+    T, C, Z, Y, X = mask_data.shape
+    
+    # Determine if we're saving to a zip or individual files
+    save_as_zip = output_path.lower().endswith('.zip')
+    
+    if not save_as_zip:
+        os.makedirs(output_path, exist_ok=True)
+    
+    rois = []
+    roi_count = 0
+    
+    for t in range(T):
+        for c in range(C):
+            for z in range(Z):
+                plane = mask_data[t, c, z]
+                labels = np.unique(plane)
+                
+                for label in labels:
+                    if label == 0:  # Skip background
+                        continue
+                    
+                    # Create binary mask for this label
+                    mask_single = (plane == label).astype(np.uint8)
+                    
+                    # Find contours
+                    contours = measure.find_contours(mask_single, 0.5)
+                    
+                    if not contours:
+                        continue
+                    
+                    # Use the largest contour
+                    contour = max(contours, key=len)
+                    
+                    if len(contour) < 3:
+                        continue
+                    
+                    # Convert to ImageJ format (flip y,x to x,y)
+                    coords_xy = np.fliplr(contour).astype(np.int16)
+                    roi = ImagejRoi.frompoints(coords_xy)
+                    roi.position = z + 1  # ImageJ uses 1-based indexing
+                    
+                    if save_as_zip:
+                        # Add to list for bulk save
+                        rois.append(roi)
+                    else:
+                        # Save individual file
+                        roi_name = name_pattern.format(t=t, c=c, z=z, label=int(label))
+                        if not roi_name.endswith('.roi'):
+                            roi_name += '.roi'
+                        roi_path = os.path.join(output_path, roi_name)
+                        roi.tofile(roi_path)
+                    
+                    roi_count += 1
+    
+    # Save as zip if requested
+    if save_as_zip and rois:
+        roiwrite(output_path, rois)
+    
+    return roi_count
 
 
 if __name__ == "__main__":

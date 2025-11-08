@@ -1,0 +1,24 @@
+
+pipeline_name: Pipeline
+run:
+    - name:  Enable force mode mid-pipeline
+      type: force
+      message: 'Reprocessing all subsequent steps.'
+    
+    - name: Segment images with python simple thresholding
+      environment: uv:segmentation
+      commands:
+        - python
+        - '%REPO%/standard_code/python/segment_simple_threshold.py'
+        - --input-search-pattern: '%SARAH_DATA%/cellprofiler_input/*.tif'
+        - --output-folder: '%SARAH_DATA%/output_masks_simple_threshold'
+        - --channel: 0
+        - --minsize: 35000
+        - --maxsize: 220000
+        - --median-xy: 8
+        - --median-z: 2
+        - --threshold-method: li
+        - --max-objects: 1
+        - --use-watershed
+        - --no-parallel
+
