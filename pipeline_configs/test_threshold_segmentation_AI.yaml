@@ -1,0 +1,23 @@
+
+pipeline_name: Pipeline
+run:
+    - name:  Enable force mode mid-pipeline
+      type: force
+      message: 'Reprocessing all subsequent steps.'
+    
+    - name: Segment nuclei with ROI-seeded AI approach
+      environment: uv:segmentation
+      commands:
+        - python
+        - '%REPO%/standard_code/python/segment_simple_threshold_AI.py'
+        - --input-search-pattern: '%SARAH_DATA%/cellprofiler_input/*_bleach_corrected.tif'
+        - --yaml-search-pattern: '%SARAH_DATA%/input_tif/*_metadata.yaml'
+        - --output-folder: '%SARAH_DATA%/output_masks_simple_threshold_AI'
+        - --channel: 0
+        - --minsize: 35000
+        - --maxsize: 220000
+        - --median-size: 5
+        - --threshold-method: li
+        - --no-parallel
+        - --force
+

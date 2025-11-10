@@ -13,6 +13,7 @@ import random
 from pathlib import Path
 from typing import Optional, List, Dict
 from collections import defaultdict
+from tqdm import tqdm
 
 import bioimage_pipeline_utils as rp
 
@@ -86,7 +87,7 @@ def select_random_from_groups(
         n_to_select = min(n_per_group, len(file_list_sorted))
         selected[group_key] = random.sample(file_list_sorted, n_to_select)
         
-        logger.info(f"Group '{group_key}': Selected {n_to_select}/{len(file_list_sorted)} files")
+        logger.warning(f"Group '{group_key}': Selected {n_to_select}/{len(file_list_sorted)} files")
     
     return selected
 
@@ -110,26 +111,32 @@ def copy_selected_files(
     
     total_copied = 0
     
-    for group_key, file_list in selected_groups.items():
-        for src_path in file_list:
-            if preserve_structure and base_folder:
-                # Preserve relative path structure
-                rel_path = os.path.relpath(src_path, base_folder)
-                dst_path = os.path.join(output_folder, rel_path)
-            else:
-                # Flat structure - just copy to output folder
-                filename = os.path.basename(src_path)
-                dst_path = os.path.join(output_folder, filename)
-            
-            # Create destination directory if needed
-            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-            
-            # Copy file
-            shutil.copy2(src_path, dst_path)
-            logger.info(f"Copied: {os.path.basename(src_path)} -> {dst_path}")
-            total_copied += 1
+    # Count total files to copy
+    total_files = sum(len(file_list) for file_list in selected_groups.values())
     
-    logger.info(f"Total files copied: {total_copied}")
+    # Add progress bar for file copying
+    with tqdm(total=total_files, desc="Copying files", unit="file") as pbar:
+        for group_key, file_list in selected_groups.items():
+            for src_path in file_list:
+                if preserve_structure and base_folder:
+                    # Preserve relative path structure
+                    rel_path = os.path.relpath(src_path, base_folder)
+                    dst_path = os.path.join(output_folder, rel_path)
+                else:
+                    # Flat structure - just copy to output folder
+                    filename = os.path.basename(src_path)
+                    dst_path = os.path.join(output_folder, filename)
+                
+                # Create destination directory if needed
+                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                
+                # Copy file
+                shutil.copy2(src_path, dst_path)
+                pbar.set_postfix_str(f"{os.path.basename(src_path)}")
+                total_copied += 1
+                pbar.update(1)
+    
+    logger.warning(f"Total files copied: {total_copied}")
 
 
 def process_files(
@@ -163,7 +170,7 @@ def process_files(
         logger.error(f"No files found matching pattern: {input_pattern}")
         return
     
-    logger.info(f"Found {len(files)} file(s) to process")
+    logger.warning(f"Found {len(files)} file(s) to process")
     
     # Determine base folder (for structure preservation)
     if '**' in input_pattern:
@@ -174,23 +181,23 @@ def process_files(
     else:
         base_folder = str(Path(files[0]).parent)
     
-    logger.info(f"Base folder: {base_folder}")
+    logger.warning(f"Base folder: {base_folder}")
     
     # Group files by pattern
-    logger.info(f"Grouping files by first {group_segments} segments (delimiter: '{group_delimiter}')")
+    logger.warning(f"Grouping files by first {group_segments} segments (delimiter: '{group_delimiter}')")
     groups = group_files_by_pattern(files, group_delimiter, group_segments)
     
-    logger.info(f"Found {len(groups)} group(s):")
+    logger.warning(f"Found {len(groups)} group(s):")
     for group_key, file_list in sorted(groups.items()):
-        logger.info(f"  {group_key}: {len(file_list)} files")
+        logger.warning(f"  {group_key}: {len(file_list)} files")
     
     # Select random samples from each group
-    logger.info(f"Selecting {n_per_group} random file(s) per group (seed: {random_seed})")
+    logger.warning(f"Selecting {n_per_group} random file(s) per group (seed: {random_seed})")
     selected = select_random_from_groups(groups, n_per_group, random_seed)
     
     # Calculate total selections
     total_selected = sum(len(files) for files in selected.values())
-    logger.info(f"Total files selected: {total_selected}")
+    logger.warning(f"Total files selected: {total_selected}")
     
     # Dry run - just print plans
     if dry_run:
@@ -205,7 +212,7 @@ def process_files(
         return
     
     # Copy selected files
-    logger.info(f"Copying files to: {output_folder}")
+    logger.warning(f"Copying files to: {output_folder}")
     copy_selected_files(
         selected,
         output_folder,
@@ -213,7 +220,7 @@ def process_files(
         base_folder=base_folder if preserve_structure else None
     )
     
-    logger.info("Selection complete!")
+    logger.warning("Selection complete!")
 
 
 def main() -> None:
@@ -344,7 +351,7 @@ File Grouping Example:
     
     # Setup logging
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format='%(asctime)s | %(levelname)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )

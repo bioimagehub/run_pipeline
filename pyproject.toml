@@ -169,6 +169,7 @@ segmentation = [
 	"nd2reader",
 	"seaborn",
 	"roifile",
+	"h5py",
 ]
 denoise = [
 	"numpy",
@@ -195,7 +196,7 @@ run_ilastik = [
 	"opencv-python",
 	"roifile",
 	"trackpy",
-
+	"filelock",
 	"h5py",
 	"tqdm",
 	"joblib",
@@ -226,6 +227,7 @@ imagej = [
 	"bioio_czi",
 	"bioio_dv",
 	"tqdm",
+	"matplotlib"
 ]
 
 # Development dependencies

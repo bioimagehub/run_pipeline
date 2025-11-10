@@ -6,6 +6,8 @@ from bioio.writers import OmeTiffWriter
 import os
 from joblib import Parallel, delayed
 import yaml
+import h5py
+import logging
 
 from skimage import io
 from skimage.measure import block_reduce
@@ -17,6 +19,9 @@ import bioimage_pipeline_utils as rp
 from extract_metadata import get_all_metadata
 
 from skimage.transform import resize
+
+# Configure logging
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 
 
@@ -60,43 +65,49 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
                 output = img_np[:, group, :, :, :].sum(axis=1, keepdims=True, dtype=img_np.dtype)
             output_channels.append(output)
 
-        if os.path.exists(output_tif_file_path):
-            os.remove(output_tif_file_path)
-
         # Concatenate all processed channel groups
         out_img = np.concatenate(output_channels, axis=1)  # TCZYX
+
+        # Only remove existing output file if it's a TIF (don't delete input when output is H5)
+        if output_format == "tif" and os.path.exists(output_tif_file_path):
+            os.remove(output_tif_file_path)
 
 
 
         # Apply output scaling if specified
         if scale < 1:
-            print(f"[INFO] Downsampling image by a factor of {1/scale}")
-            print(f"[INFO] Original shape: {out_img.shape}")
+            logging.info(f"Downsampling image by a factor of {1/scale}")
+            logging.info(f"Original shape: {out_img.shape}")
             out_img = block_reduce(out_img, block_size=(1, 1, 1, int(1/scale), int(1/scale)), func=np.max)
-            print(f"[INFO] New shape after downsampling: {out_img.shape}")
+            logging.info(f"New shape after downsampling: {out_img.shape}")
 
             # Scale physical_pixel_sizes
             physical_pixel_sizes = tuple(p * scale for p in physical_pixel_sizes)
 
         elif scale > 1:
-            print(f"[INFO] Upsampling image by a factor of {scale}")
-            print(f"[INFO] Original shape: {out_img.shape}")
+            logging.info(f"Upsampling image by a factor of {scale}")
+            logging.info(f"Original shape: {out_img.shape}")
             t, c, z, y, x = out_img.shape
             new_y = int(y * scale)
             new_x = int(x * scale)
             up_img = np.zeros((t, c, z, new_y, new_x), dtype=out_img.dtype)
-            for ti in range(t):
-                for ci in range(c):
-                    for zi in range(z):
-                        up_img[ti, ci, zi] = resize(
-                            out_img[ti, ci, zi],
-                            (new_y, new_x),
-                            order=0,  # nearest-neighbor
-                            preserve_range=True,
-                            anti_aliasing=False
-                        ).astype(out_img.dtype)
+            
+            # Add progress bar for upsampling
+            total_slices = t * c * z
+            with tqdm(total=total_slices, desc="Upsampling slices", unit="slice", leave=False) as pbar:
+                for ti in range(t):
+                    for ci in range(c):
+                        for zi in range(z):
+                            up_img[ti, ci, zi] = resize(
+                                out_img[ti, ci, zi],
+                                (new_y, new_x),
+                                order=0,  # nearest-neighbor
+                                preserve_range=True,
+                                anti_aliasing=False
+                            ).astype(out_img.dtype)
+                            pbar.update(1)
             out_img = up_img
-            print(f"[INFO] New shape after upsampling: {out_img.shape}")
+            logging.info(f"New shape after upsampling: {out_img.shape}")
 
             # Scale physical_pixel_sizes
             physical_pixel_sizes = tuple(p * scale for p in physical_pixel_sizes)
@@ -112,6 +123,40 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
                 # out_img is TCZYX, convert to TZYXC
                 out_img = np.transpose(out_img, (0,2,3,4,1))
             np.save(os.path.splitext(output_tif_file_path)[0] + ".npy", out_img)
+        elif output_format == "ilastik-h5":
+            # Export in TZYXC format (channel LAST) to match Ilastik's ImageJ plugin format
+            # This is what actually works in Ilastik, despite VIGRA documentation suggesting CTZYX
+            
+            # Change file extension to .h5
+            h5_file_path = os.path.splitext(output_tif_file_path)[0] + ".h5"
+            
+            # Check number of channels and time frames
+            t, c, z, y, x = out_img.shape
+            
+            # Convert TCZYX -> TZYXC (channel axis LAST, matching del.h5 format)
+            out_img_ilastik = np.transpose(out_img, (0, 2, 3, 4, 1))  # TCZYX -> TZYXC
+            
+            # Build axis configuration with channel LAST (matching ImageJ exporter)
+            axis_keys = ['t', 'z', 'y', 'x', 'c']
+            axis_configs = [
+                {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},     # Time (typeFlags=8 not 16!)
+                {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},     # Space
+                {'key': 'y', 'typeFlags': 2, 'resolution': 0, 'description': ''},     # Space
+                {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},     # Space
+                {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''},     # Channels LAST
+            ]
+            
+            # Write HDF5 file with Ilastik-compatible structure (matching del.h5)
+            with h5py.File(h5_file_path, 'w') as f:
+                # Create the main dataset at '/data' as required by Ilastik
+                dset = f.create_dataset('data', data=out_img_ilastik, compression='gzip', compression_opts=4)
+                
+                # Add axistags metadata for Ilastik (VIGRA format, matching ImageJ exporter)
+                dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
+                
+                # Note: No physical pixel size metadata - del.h5 doesn't have it either
+            
+            logging.info(f"Saved Ilastik H5 file with shape {out_img_ilastik.shape} (TZYXC) and axes {''.join(axis_keys)}")
         else:
             raise ValueError(f"Unsupported output format: {output_format}")
 
@@ -126,7 +171,7 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
             yaml.dump(metadata, f)
 
     except Exception as e:
-        print(f"Error processing {input_file_path}: {e}")
+        logging.error(f"Error processing {input_file_path}: {e}")
         return
 
 def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
@@ -172,7 +217,7 @@ if __name__ == "__main__":
     parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: input folder (use --input-search-pattern)")
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
     parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
-    parser.add_argument("--output-format", type=str, choices=["tif", "npy"], default="tif", help="Output format: 'tif' (OME-TIFF) or 'npy' (NumPy array)")
+    parser.add_argument("--output-format", type=str, choices=["tif", "npy", "ilastik-h5"], default="tif", help="Output format: 'tif' (OME-TIFF), 'npy' (NumPy array), or 'ilastik-h5' (HDF5 for Ilastik)")
     parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")
     parser.add_argument("--output-scale", type=float, default=1, help="Over or under-sampling factor for the output image. Default is 1 (no scaling).")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")

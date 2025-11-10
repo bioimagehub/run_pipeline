@@ -20,10 +20,35 @@ from skimage.feature import peak_local_max
 from skimage import filters, measure
 
 import tifffile
+import yaml
 import bioimage_pipeline_utils as rp
 
 # Module-level logger
 logger = logging.getLogger(__name__)
+
+
+def get_coordinates_from_metadata(yaml_path: str) -> Optional[list[tuple[int, int]]]:
+    """Extract (x, y) coordinates from ROI metadata."""
+    if not os.path.exists(yaml_path):
+        logger.warning(f"YAML file not found: {yaml_path}")
+        return None
+    
+    with open(yaml_path, 'r') as f:
+        metadata = yaml.safe_load(f)
+
+    rois = metadata.get("Image metadata", {}).get("ROIs", [])
+    if not rois:
+        return None
+
+    coords = []
+    for roi in rois:
+        pos = roi.get("Roi", {}).get("Positions", {})
+        x = int(round(pos.get("x", -1)))
+        y = int(round(pos.get("y", -1)))
+        if x != -1 and y != -1:
+            coords.append((x, y))
+
+    return coords or None
 
 
 def median_filter_3d(data: np.ndarray, xy_size: int = 8, z_size: int = 2) -> np.ndarray:
@@ -53,24 +78,15 @@ def apply_watershed_segmentation(
 ) -> tuple[np.ndarray, list[int]]:
     """
     Apply watershed segmentation to separate touching objects in a binary mask.
-    Implements ImageJ's Watershed algorithm using EDM (Euclidean Distance Map).
-    
-    ImageJ watershed algorithm:
-    1. Compute EDM of foreground
-    2. Find maxima with tolerance (like ImageJ's MaximumFinder with tolerance=0.5)
-    3. Use maxima as seeds/markers for watershed
-    4. Apply watershed on inverted EDM (-EDM) to segment from peaks
+    Uses distance transform and local maxima detection for marker-based watershed.
     
     Args:
         binary_mask: 2D binary mask (YX) with objects to segment
         minsize: Minimum object size in pixels
         maxsize: Maximum object size in pixels
         min_distance: Minimum distance between watershed peaks in pixels (default: 1).
-                     ImageJ default is effectively 1 (all local maxima above tolerance).
                      Increase to reduce over-segmentation (e.g., 5-10 for touching cells).
-        tolerance: EDM value tolerance for peak detection (default: 0.5, matching ImageJ).
-                  Only peaks with EDM values >= (max_edm - tolerance) are considered.
-                  Lower values = more aggressive splitting. Range: 0.3-0.8 recommended.
+        tolerance: Not used in this implementation (kept for API compatibility)
     
     Returns:
         Tuple of:
@@ -81,46 +97,28 @@ def apply_watershed_segmentation(
         # Empty mask - return zeros and empty list
         return np.zeros_like(binary_mask, dtype=np.int32), []
     
-    # Step 1: Compute EDM (Euclidean Distance Map) - like ImageJ
+    # Compute distance transform
     distance = ndimage.distance_transform_edt(binary_mask)
     
-    if distance is None or not isinstance(distance, np.ndarray):
-        raise ValueError("Distance transform failed to compute a valid NumPy array.")
-    
-    # Step 2: Find maxima with tolerance (ImageJ MaximumFinder approach)
-    # ImageJ uses tolerance=0.5 by default - only peaks significantly above neighbors
-    max_edm = distance.max()
-    
-    # Apply tolerance threshold: only consider peaks in top range of EDM values
-    # This prevents watershed from splitting at insignificant local maxima
-    threshold_value = max(max_edm - tolerance, 0)
-    
-    # Find local maxima above tolerance threshold
-    coords = peak_local_max(
-        distance, 
-        min_distance=min_distance,
-        threshold_abs=threshold_value,  # Key difference: tolerance-based threshold
-        labels=binary_mask,
-        exclude_border=False  # ImageJ includes border maxima
-    )
+    # Find local maxima (markers for watershed)
+    coords = peak_local_max(distance, footprint=np.ones((3, 3)), labels=binary_mask)
     
     if len(coords) == 0:
-        # No peaks found above tolerance - return original labeled mask without watershed
+        # No peaks found - return original labeled mask without watershed
         labeled_no_ws = measure.label(binary_mask)
         props = measure.regionprops(labeled_no_ws)
         valid_labels = [p.label for p in props if minsize <= p.area <= maxsize]
-        return labeled_no_ws, valid_labels  # type: ignore[return-value]
+        return labeled_no_ws, valid_labels
     
-    # Step 3: Create markers from peaks (seeds for watershed)
-    markers = np.zeros(distance.shape, dtype=np.int32)
-    for i, coord in enumerate(coords, start=1):
-        markers[tuple(coord)] = i
+    # Create markers from peaks
+    markers = np.zeros(distance.shape, dtype=bool)
+    markers[tuple(coords.T)] = True
+    markers = ndimage.label(markers)[0]
     
-    # Step 4: Apply watershed on inverted EDM (like ImageJ)
-    # Watershed floods from markers along gradient of -EDM
+    # Apply watershed
     labeled = watershed(-distance, markers, mask=binary_mask)
     
-    # Step 5: Filter by size criteria
+    # Filter by size criteria
     props = measure.regionprops(labeled)
     valid_labels = []
     for prop in props:
@@ -189,7 +187,8 @@ def segment_single_file(
     max_objects: int = 1,
     save_roi: bool = True,
     use_watershed: bool = False,
-    channel: int = 0
+    channel: int = 0,
+    roi_coords: Optional[list[tuple[int, int]]] = None
 ) -> bool:
     """
     Segment a single image file using simple threshold (like ImageJ macro).
@@ -206,12 +205,17 @@ def segment_single_file(
         save_roi: Whether to save ROI coordinates as sidecar
         use_watershed: Apply watershed if object count doesn't match
         channel: Channel index to process (0-based, -1 for all channels)
+        roi_coords: Optional list of (x, y) ROI coordinates from metadata
     
     Returns:
         True if successful, False otherwise
     """
     try:
         logger.info(f"Processing: {os.path.basename(input_path)}")
+        
+        # Log ROI coordinates if provided
+        if roi_coords:
+            logger.info(f"Using {len(roi_coords)} ROI coordinate(s): {roi_coords}")
         
         # Check if output already exists
         if os.path.exists(output_path):
@@ -250,7 +254,7 @@ def segment_single_file(
         background_level = np.percentile(data_float, 2)
         signal_mask = data_float > (1.5 * background_level)
         if np.count_nonzero(signal_mask) < minsize:
-            rp.show_image(image=data_float, mask=signal_mask, title="ERROR: Not enough signal pixels above 1.5x background")
+            # rp.show_image(image=data_float, mask=signal_mask, title="ERROR: Not enough signal pixels above 1.5x background")
             logger.error(f"Step 0: Not enough signal pixels above 1.5x background level")
             return False
 
@@ -291,13 +295,14 @@ def segment_single_file(
         
         # If all of the timepoints are empty
         if not any(intensity_sum):
-            rp.show_image(image=preprocessed, mask=intensity_mask, title="ERROR STEP 2: All timepoints empty intensity mask")
+            # rp.show_image(image=preprocessed, mask=intensity_mask, title="ERROR STEP 2: All timepoints empty intensity mask")
             logger.error(f"Step 2: All timepoints have empty intensity mask after thresholding")
             return False
 
         # if just some are empty we may be able to resolve it...
         if not all(intensity_sum):
-            rp.show_image(image=preprocessed, mask=intensity_mask, title="ERROR STEP 2: Empty intensity mask in one or more timepoints")
+            # rp.show_image(image=preprocessed, mask=intensity_mask, title="ERROR STEP 2: Empty intensity mask in one or more timepoints")
+            logger.warning(f"Step 2: Empty intensity mask in one or more timepoints")
 
 
         
@@ -457,6 +462,25 @@ def segment_single_file(
                 logger.error("Step 6 Fallback: Still no signal after watershed - segmentation failed")
                 rp.show_image(image=preprocessed, mask=tmp_labeled_mask, 
                             title="ERROR STEP 6: No signal after edge removal + watershed fallback")
+
+                
+                
+                labeled_mask_squeezed = labeled_mask[:, 0, :, :, :]
+                
+                # Convert to binary (0 or 255) 8-bit mask
+                labeled_mask_out = (labeled_mask_squeezed > 0).astype(np.uint8) * 255
+                
+                logger.info(f"Mask shape before save: {labeled_mask_out.shape}, dtype: {labeled_mask_out.dtype}, max_value: {labeled_mask_out.max()}")
+
+                tifffile.imwrite(
+                    os.path.splitext(output_path)[0] + "_before_failed_edge_removal.tif",
+                    labeled_mask_out,
+                    imagej=True,  # ImageJ-compatible format
+                    metadata={'axes': 'TZYX'},  # Specify axis order (4D: T, Z, Y, X)
+                    compression='deflate'  # Lossless compression
+                )
+                rp.show_image(image=preprocessed, mask=labeled_mask,
+                              title="ERROR STEP 6: It was like this before")
                 return False
         
         # Update labeled_mask with edge-cleaned result
@@ -575,7 +599,8 @@ def process_files(
     output_extension: str = "_mask",
     use_watershed: bool = False,
     channel: int = 0,
-    dry_run: bool = False
+    dry_run: bool = False,
+    yaml_pattern: Optional[str] = None
 ) -> None:
     """
     Process multiple files matching a pattern.
@@ -596,7 +621,120 @@ def process_files(
         use_watershed: Apply watershed if object count doesn't match
         channel: Channel index to process (0-based, -1 for all channels)
         dry_run: Only print planned actions without executing
+        yaml_pattern: Optional YAML search pattern for ROI metadata
     """
+    # If YAML pattern provided, use grouped file processing
+    if yaml_pattern:
+        logger.info("Using grouped file processing with YAML metadata")
+        search_subfolders = '**' in input_pattern or '**' in yaml_pattern
+        
+        search_patterns = {
+            'image': input_pattern,
+            'yaml': yaml_pattern
+        }
+        
+        grouped_files = rp.get_grouped_files_to_process(
+            search_patterns=search_patterns,
+            search_subfolders=search_subfolders
+        )
+        
+        if not grouped_files:
+            logger.error("No files matched the search patterns.")
+            return
+        
+        logger.info(f"Found {len(grouped_files)} file groups to process")
+        
+        # Determine output folder
+        if output_folder is None:
+            base_pattern = input_pattern or yaml_pattern
+            output_folder = os.path.dirname(base_pattern) + "_threshold" or "output_threshold"
+        
+        logger.info(f"Output folder: {output_folder}")
+        os.makedirs(output_folder, exist_ok=True)
+        
+        # Build task list from groups
+        tasks = []
+        for basename, files in grouped_files.items():
+            if 'image' in files:
+                img_path = files['image']
+                yaml_path = files.get('yaml', None)
+                
+                # Get ROI coordinates if YAML exists
+                roi_coords = None
+                if yaml_path:
+                    roi_coords = get_coordinates_from_metadata(yaml_path)
+                    if roi_coords:
+                        logger.debug(f"Found {len(roi_coords)} ROI(s) in {basename}")
+                
+                # Prepare output path
+                out_name = os.path.splitext(os.path.basename(img_path))[0] + output_extension + ".tif"
+                out_path = os.path.join(output_folder, out_name)
+                
+                tasks.append((img_path, out_path, roi_coords))
+            else:
+                logger.warning(f"Skipping '{basename}': missing image file")
+        
+        if not tasks:
+            logger.warning("No valid image files were found after grouping.")
+            return
+        
+        logger.info(f"Processing {len(tasks)} valid files")
+        
+        # Dry run
+        if dry_run:
+            print(f"[DRY RUN] Would process {len(tasks)} files")
+            print(f"[DRY RUN] Output folder: {output_folder}")
+            print(f"[DRY RUN] Parameters: minsize={minsize}, maxsize={maxsize}, "
+                  f"median_xy={median_xy}, median_z={median_z}, threshold={threshold_method}, "
+                  f"channel={channel}")
+            for img, out, coords in tasks:
+                coord_info = f" (with {len(coords)} ROI coordinates)" if coords else " (no ROI)"
+                print(f"[DRY RUN] {img} -> {out}{coord_info}")
+            return
+        
+        # Process files
+        if no_parallel or len(tasks) == 1:
+            for img_path, out_path, roi_coords in tasks:
+                try:
+                    segment_single_file(
+                        img_path, out_path,
+                        minsize=minsize,
+                        maxsize=maxsize,
+                        median_xy=median_xy,
+                        median_z=median_z,
+                        threshold_method=threshold_method,
+                        max_objects=max_objects,
+                        save_roi=save_roi,
+                        use_watershed=use_watershed,
+                        channel=channel,
+                        roi_coords=roi_coords
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to process {img_path}: {e}")
+        else:
+            cpu_count = os.cpu_count() or 1
+            cpu_count = max(cpu_count - 1, 1)
+            
+            with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+                futures = []
+                for img_path, out_path, roi_coords in tasks:
+                    future = executor.submit(
+                        segment_single_file,
+                        img_path, out_path,
+                        minsize, maxsize, median_xy, median_z,
+                        threshold_method, max_objects, save_roi,
+                        use_watershed, channel, roi_coords
+                    )
+                    futures.append(future)
+                
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"A file failed to process: {e}")
+        return
+    
+    # Original single-pattern processing (no YAML)
     # Find files
     search_subfolders = '**' in input_pattern
     files = rp.get_files_to_process2(input_pattern, search_subfolders=search_subfolders)
@@ -730,6 +868,13 @@ run:
         type=str,
         required=True,
         help="Input file pattern (supports wildcards, use '**' for recursive search)"
+    )
+    
+    parser.add_argument(
+        "--yaml-search-pattern",
+        type=str,
+        required=False,
+        help="Glob for YAML ROI metadata files, e.g. './input_data/**/*_metadata.yaml'"
     )
     
     parser.add_argument(
@@ -867,7 +1012,8 @@ run:
         output_extension=args.output_file_name_extension,
         use_watershed=args.use_watershed,
         channel=args.channel,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        yaml_pattern=args.yaml_search_pattern
     )
 
 

@@ -4729,6 +4729,7 @@ imagej = [
     { name = "bioio-ome-tiff" },
     { name = "bioio-tifffile" },
     { name = "jpype1" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pyimagej" },
     { name = "scyjava" },
@@ -4773,6 +4774,7 @@ run-ilastik = [
     { name = "bioio-nd2" },
     { name = "bioio-ome-tiff" },
     { name = "bioio-tifffile" },
+    { name = "filelock" },
     { name = "h5py" },
     { name = "joblib" },
     { name = "matplotlib" },
@@ -4823,6 +4825,7 @@ segmentation = [
     { name = "bioio-nd2" },
     { name = "bioio-ome-tiff" },
     { name = "bioio-tifffile" },
+    { name = "h5py" },
     { name = "joblib" },
     { name = "nd2reader" },
     { name = "numpy" },
@@ -4928,7 +4931,8 @@ imagej = [
     { name = "bioio-nd2" },
     { name = "bioio-ome-tiff" },
     { name = "bioio-tifffile" },
-    { name = "jpype1" },
+    { name = "jpype1", specifier = "==1.5.0" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pyimagej", specifier = ">=1.4.0" },
     { name = "scyjava" },
@@ -4973,6 +4977,7 @@ run-ilastik = [
     { name = "bioio-nd2" },
     { name = "bioio-ome-tiff" },
     { name = "bioio-tifffile" },
+    { name = "filelock" },
     { name = "h5py" },
     { name = "joblib" },
     { name = "matplotlib" },
@@ -5023,6 +5028,7 @@ segmentation = [
     { name = "bioio-nd2" },
     { name = "bioio-ome-tiff" },
     { name = "bioio-tifffile" },
+    { name = "h5py" },
     { name = "joblib" },
     { name = "nd2reader" },
     { name = "numpy" },
@@ -5694,7 +5700,7 @@ name = "triton"
 version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "filelock", marker = "(python_full_version < '3.14' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "filelock", marker = "(python_full_version < '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/3e/a2f59384587eff6aeb7d37b6780de7fedd2214935e27520430ca9f5b7975/triton-3.0.0-1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5ce8520437c602fb633f1324cc3871c47bee3b67acf9756c1a66309b60e3216c", size = 209438883, upload-time = "2024-07-19T20:56:52.275Z" },
