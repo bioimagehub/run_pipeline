@@ -1,0 +1,15 @@
+run:
+- type: force
+
+- name: Validate input image quality
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python:
+  - '%REPO%/standard_code/python/input_qc.py'
+  - --input-search-pattern: '%TEST_FOLDER%/qc_input/**/*.tif'
+  - --yaml-search-pattern: '%TEST_FOLDER%/qc_input/**/*_metadata.yaml'
+  - --output-summary: '%TEST_FOLDER%/qc_input/QC_summary.tsv'
+  - --generate-report: '%TEST_FOLDER%/qc_input/QC_report.html'
+  - --intensity-percentile: 5.0
+  - --intensity-ratio: 1.5
+  - --search-subfolders
