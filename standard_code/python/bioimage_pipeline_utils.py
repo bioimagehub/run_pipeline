@@ -393,42 +393,32 @@ def get_grouped_files_to_process(
     for pattern_name, pattern in search_patterns.items():
         files = get_files_to_process2(pattern, search_subfolders)
         
-        # Extract the part before the '*' to use as prefix
-        prefix_match = re.search(r'(.*)\*', pattern)
-        prefix = prefix_match.group(1) if prefix_match else ''
-        
-        # Extract the part after the '*' to use as suffix
-        suffix_match = re.search(r'\*(.*)', pattern)
-        suffix = suffix_match.group(1) if suffix_match else ''
+        # Split pattern at the last '*' to get prefix and suffix
+        # This handles patterns like 'folder/**/*_metadata.yaml' correctly
+        last_star_idx = pattern.rfind('*')
+        prefix = pattern[:last_star_idx]
+        suffix = pattern[last_star_idx + 1:]  # Everything after the last '*'
         
         basenames_and_paths = []
         for file_path in files:
-            # Get the part of filename that matched the '*'
-            if prefix:
-                # Get relative path from prefix
-                if file_path.startswith(prefix):
-                    rel_path = file_path[len(prefix):]
-                else:
-                    # Prefix might be relative, try basename matching
-                    rel_path = os.path.basename(file_path)
-            else:
-                rel_path = os.path.basename(file_path)
+            # Get just the filename (not full path)
+            filename = os.path.basename(file_path)
             
-            # Remove suffix if present
-            if suffix:
-                # Handle file extension in suffix
-                if rel_path.endswith(suffix):
-                    basename = rel_path[:-len(suffix)]
+            # Remove suffix from filename to get basename
+            if suffix and filename.endswith(suffix):
+                basename = filename[:-len(suffix)]
+            elif suffix:
+                # If suffix doesn't match exactly, try removing extension
+                basename_no_ext = os.path.splitext(filename)[0]
+                suffix_no_ext = os.path.splitext(suffix)[0]
+                if suffix_no_ext and basename_no_ext.endswith(suffix_no_ext):
+                    basename = basename_no_ext[:-len(suffix_no_ext)]
                 else:
-                    # Try without extension matching
-                    basename_no_ext = os.path.splitext(rel_path)[0]
-                    suffix_no_ext = os.path.splitext(suffix)[0]
-                    if basename_no_ext.endswith(suffix_no_ext):
-                        basename = basename_no_ext[:-len(suffix_no_ext)]
-                    else:
-                        basename = rel_path
+                    # Last resort: just remove file extension
+                    basename = basename_no_ext
             else:
-                basename = os.path.splitext(rel_path)[0]
+                # No suffix specified, use filename without extension
+                basename = os.path.splitext(filename)[0]
             
             basenames_and_paths.append((basename, file_path))
         

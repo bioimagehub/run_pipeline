@@ -12,4 +12,3 @@ run:
   - --generate-report: '%TEST_FOLDER%/qc_input/QC_report.html'
   - --intensity-percentile: 5.0
   - --intensity-ratio: 1.5
-  - --search-subfolders

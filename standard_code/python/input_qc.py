@@ -844,55 +844,7 @@ def run_qc_tests(
     return all_passed
 
 
-def group_image_and_yaml_files(
-    input_pattern: str,
-    yaml_pattern: str,
-    search_subfolders: bool
-) -> Dict[str, Dict[str, str]]:
-    """
-    Group image files with their corresponding metadata YAML files.
-    
-    Matches files by removing the pattern suffix and comparing basenames.
-    For example:
-      - input/**/*.tif -> basename without .tif
-      - input/**/*_metadata.yaml -> basename without _metadata.yaml
-    
-    Returns dict mapping basename to {'input': path, 'yaml': path}
-    """
-    import glob
-    
-    # Get all files matching patterns
-    input_files = glob.glob(input_pattern, recursive=search_subfolders)
-    yaml_files = glob.glob(yaml_pattern, recursive=search_subfolders)
-    
-    # Extract basenames by removing pattern suffixes
-    # For *.tif pattern, remove .tif extension
-    # For *_metadata.yaml pattern, remove _metadata.yaml suffix
-    
-    input_map = {}  # basename -> full_path
-    for path in input_files:
-        basename = os.path.splitext(os.path.basename(path))[0]  # Remove extension
-        input_map[basename] = path
-    
-    yaml_map = {}  # basename -> full_path
-    for path in yaml_files:
-        filename = os.path.basename(path)
-        # Remove _metadata.yaml suffix
-        if filename.endswith('_metadata.yaml'):
-            basename = filename[:-len('_metadata.yaml')]
-            yaml_map[basename] = path
-    
-    # Combine into groups
-    all_basenames = set(input_map.keys()) | set(yaml_map.keys())
-    
-    grouped = {}
-    for basename in sorted(all_basenames):
-        grouped[basename] = {
-            'input': input_map.get(basename),
-            'yaml': yaml_map.get(basename)
-        }
-    
-    return grouped
+
 
 
 def main():
@@ -921,7 +873,6 @@ run:
   - --yaml-search-pattern: '%YAML%/input/**/*_metadata.yaml'
   - --output-summary: '%YAML%/QC_summary.tsv'
   - --generate-report: '%YAML%/QC_report.html'
-  - --search-subfolders
 
 - name: QC with custom thresholds and fail on error
   environment: uv@3.11:convert-to-tif
@@ -935,7 +886,6 @@ run:
   - --intensity-ratio: 2.0
   - --saturation-threshold: 0.5
   - --fail-on-error
-  - --search-subfolders
 
 - name: Skip specific tests
   environment: uv@3.11:convert-to-tif
@@ -946,7 +896,6 @@ run:
   - --yaml-search-pattern: '%YAML%/input/**/*_metadata.yaml'
   - --output-summary: '%YAML%/QC_summary.tsv'
   - --skip-tests: QC_focus QC_saturation
-  - --search-subfolders
         """
     )
     
@@ -956,8 +905,6 @@ run:
                        help='Glob pattern for metadata YAML files (e.g., "./input/*_metadata.yaml")')
     parser.add_argument('--output-summary', type=str, required=True,
                        help='Output TSV file path for QC results')
-    parser.add_argument('--search-subfolders', action='store_true',
-                       help='Enable recursive search for files')
     parser.add_argument('--intensity-percentile', type=float, default=5.0,
                        help='Percentile for intensity range test (default: 5.0)')
     parser.add_argument('--intensity-ratio', type=float, default=1.5,
@@ -982,26 +929,28 @@ run:
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Get grouped files using custom grouping function
+    # Get grouped files using standard utility function
     logger.info(f"Searching for files:")
     logger.info(f"  Input: {args.input_search_pattern}")
     logger.info(f"  YAML:  {args.yaml_search_pattern}")
     
-    grouped_files = group_image_and_yaml_files(
-        args.input_search_pattern,
-        args.yaml_search_pattern,
-        args.search_subfolders
+    # Use standard grouping function from bioimage_pipeline_utils
+    # Patterns with ** automatically search recursively
+    search_patterns = {
+        'input': args.input_search_pattern,
+        'yaml': args.yaml_search_pattern
+    }
+    
+    grouped_files = rp.get_grouped_files_to_process(
+        search_patterns=search_patterns,
+        search_subfolders=True  # Always True since ** patterns handle recursion
     )
     
     if not grouped_files:
         raise FileNotFoundError(f"No files found matching patterns")
     
-    # Debug: Show what was matched
-    logger.info(f"Found {len(grouped_files)} file groups")
-    for basename, files in list(grouped_files.items())[:3]:
-        logger.info(f"  {basename}: input={files.get('input') is not None}, yaml={files.get('yaml') is not None}")
-    
-    # Filter out entries where 'input' file is actually a YAML file (shouldn't happen with custom grouping)
+    # Filter out groups where 'input' is missing or is actually a YAML file
+    # (This can happen when YAML pattern creates separate groups)
     filtered_files = {}
     for basename, files in grouped_files.items():
         input_path = files.get('input')
