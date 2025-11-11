@@ -452,7 +452,8 @@ def show_image(
     image: Union[BioImage, np.ndarray, str],
     mask: Union[BioImage, np.ndarray, str, None] = None,
     title: Optional[str] = None,
-    alpha: float = 0.5
+    alpha: float = 0.3,
+    timer: float = -1
 ) -> None:
     """
     Quick visualization of mask segmentation over time.
@@ -466,10 +467,13 @@ def show_image(
         mask: Optional mask as BioImage, numpy array (TCZYX), or path to mask file
         title: Optional title for the figure. If None, uses image filename if available.
         alpha: Transparency of mask overlay (0-1, default: 0.5)
+        timer: Duration to show the plot in seconds. If -1 (default), blocks until user closes.
+               If > 0, auto-closes after the specified duration.
     
     Examples:
         >>> show_image("path/to/image.tif", mask="path/to/mask.tif")
         >>> show_image(img_array, mask=mask_array, title="My Segmentation")
+        >>> show_image(img, mask=mask, timer=1.0)  # Auto-close after 1 second
     """
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
@@ -650,8 +654,15 @@ def show_image(
     if title:
         fig.suptitle(title, fontsize=12, fontweight='bold')
     
-    # Show plot and block until user closes the window
-    plt.show(block=True)
+    # Show plot with optional timer
+    if timer > 0:
+        # Non-blocking show with auto-close timer
+        plt.show(block=False)
+        plt.pause(timer)
+        plt.close(fig)
+    else:
+        # Block until user closes the window
+        plt.show(block=True)
 
 
 def save_imagej_roi(

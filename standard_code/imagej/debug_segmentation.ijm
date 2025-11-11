@@ -3,8 +3,10 @@
  */
 
 #@ File (label = "Input directory", style = "directory") input
-#@ String (label = "File suffix", value = ".tif") suffix
-output = input + "ij_qc"
+// String (label = "File suffix", value = ".tif") suffix
+
+suffix = "_Probabilities.h5"
+output = input + "_ij_qc"
 
 File.makeDirectory(output);
 
@@ -28,10 +30,11 @@ function processFolder(input) {
 	list = Array.sort(list);
 	for (i = 0; i < list.length; i++) {
 		failname = File.getNameWithoutExtension(list[i]) + "_fail.tif";
+		maskname = File.getNameWithoutExtension(list[i]) + ".tif";
 		if(File.isDirectory(input + File.separator + list[i]))
 			processFolder(input + File.separator + list[i]);
 		
-		if (File.exists(output + File.separator + list[i])) {
+		if (File.exists(output + File.separator + maskname)) {
 			continue;
 		}
 		if (File.exists(output + File.separator + failname)) {
@@ -161,6 +164,12 @@ function on_edge(){
 	run("Duplicate...", "duplicate");
 	rename("tmp_stack");
 	
+	if(nSlices>1){
+		run("Z Project...", "projection=[Max Intensity]");
+	}
+
+	
+	
 	run("Select All");
 	run("Enlarge...", "enlarge=-1");
 	run("Make Inverse");
@@ -168,6 +177,9 @@ function on_edge(){
 	
 	selectWindow("tmp_stack");
 	run("Close");
+	selectWindow("MAX_tmp_stack");
+	run("Close");
+	
 	
 	if(max >0){
 		return true
@@ -226,21 +238,41 @@ function processFile(input, file) {
 	
 	setBatchMode("hide");
 	
-	dapi_file = input + File.separator + file;
+
+	
+	imput_file = input + File.separator + file;
+	imput_file = replace(imput_file, "\\", "/");
+	
+	print(imput_file);
+	
+	
 	edge_file = replace(input + File.separator + file, "Label2.tif", "Label3.tif");
 	
-	output_file = output + File.separator + file;
+
+	
+	output_file = output + File.separator + File.getNameWithoutExtension(file) + ".tif";
+	print(output_file);
 	output_fail = output + File.separator + File.getNameWithoutExtension(file) + "_fail.tif";
 	
+
+	// Load h5 file
+	run("Import HDF5", "select=[" +imput_file +"] datasetname=/exported_data axisorder=tzyxc");
 	
-	
-	
-	print("Processing: " + dapi_file);
-	
-	open(dapi_file);
+	run("Duplicate...", "duplicate channels=2");
 	rename("input");
-	run("8-bit");
 	
+	close("\\Others");
+	
+	lower = 0.5;
+	upper = 1;
+	setThreshold(lower, upper);
+	
+	// Make binary stack from threshold
+	setOption("BlackBackground", true);
+	run("Convert to Mask", "method=Default background=Dark black");
+	rename("mask");
+	
+		
 	area = printArea("Input area");
 	
 	if(area<minsize){
@@ -250,38 +282,55 @@ function processFile(input, file) {
 		return;
 	}	
 		
-
-	
+	// Fill holes
 	run("Fill Holes", "stack");
 	area = printArea("Filled holes");
 	
+	// remove very small things and remove on edges
 	particle_filter(200, "Infinity", "exclude");
-	run("Connected Components Labeling", "connectivity=6 type=[16 bits]");
 	
+	run("Connected Components Labeling", "connectivity=6 type=[16 bits]");
+		
 	run("Keep Largest Label");
 	
 	
 	area = printArea("Largest object");	
 	
 	// Check if there is something on the edges
-	selectWindow("input-lbl-largest");
+	selectWindow("mask-lbl-largest");
+	close("\\Others");
 		
 	max_watershed_rounds = 5;
+
+	
 	for (i = 0; i < max_watershed_rounds; i++) {
-		print(i);
+		selectWindow("mask-lbl-largest");
+
 		// Check if we still have edge-touching objects
 	    
+	    area = printArea("Largest object");	
 	    
-	    if(!on_edge()){
-	    	//waitForUser("Nothing on edges after i=" + i);
+	    if(!on_edge() && area < maxsize){
+	    	//waitForUser("Nothing on edges after i=" + i);	  
+	    	
 	        break;  // Success! Nothing on  
 	    }
+	    
+	    
+	    // Try watershed to see if things improve
+		run("Watershed", "stack");
+		
+		particle_filter(minsize, "Infinity", "exclude");
+		
+		
+		
 		
 		for (j = 0; j < i; j++) { // 0 times in first run, 1 in second and so on
 			erode_preserve_border();
 		}
+		selectWindow("mask-lbl-largest");
 		
-		run("Watershed", "stack");
+
 		
 		
 		// Remove masks that are touching the edge
@@ -290,10 +339,9 @@ function processFile(input, file) {
 		
 		// Re- merge over watersheded
 		run("Dilate", "stack");
-		erode_preserve_border();
-		
-		
-		
+		run("Erode", "stack");
+
+				
 		run("Connected Components Labeling", "connectivity=6 type=[16 bits]");
 		
 		run("Keep Largest Label");
@@ -302,36 +350,43 @@ function processFile(input, file) {
 		for (j = 0; j < i+1; j++) { // 0 times in first run, 1 in second and so on 
 			run("Dilate", "stack");
 		}
+
 	}
 	
-	area = printArea("Largest object after Watershed");	
+	selectWindow("mask-lbl-largest");	
+	rename("mask");
+	
+	particle_filter(minsize, maxsize, "exclude");
+
 
 	qc_status = validate_object();
+	
 	if(qc_status){
 		
+		
 		save(output_file);
+		print(output_file);
 		run("Close All");
 		setBatchMode("exit and display");
 		return;
 	}
-	
-	
+		
 	// Try to load the edge segmentation for this file since everyhtong failed
 	// combine it with the best attempt from DAPI stain
-		
+	
+	
 	rename("input-failed-attempt");
-	run("8-bit");
 	
-	open(dapi_file);
-	rename("input");
-	run("8-bit");	
-	
-	
-	open(edge_file);
-	rename("edge_input");
-	run("8-bit");
-	
+	for (i = 1; i <= nSlices; i++) {
+    	setSlice(i);
+    	// do something here;
+    	run("Create Selection");
+		run("Convex Hull");
+		changeValues(0, 255, 255);
+	}
 
+
+	/*
 	particle_filter(0, "Infinity", "exclude");
 	
 	imageCalculator("Add create stack", "input","edge_input");
@@ -346,7 +401,8 @@ function processFile(input, file) {
 	for (i = 0; i < grow_steps; i++) {
 		run("Erode", "stack");
 	}
-	
+	*/
+		
 	particle_filter(minsize, maxsize, "exclude");
 	
 	
@@ -359,16 +415,8 @@ function processFile(input, file) {
 		return;
 	}
 	
-	
-	
-	
-	
-	setBatchMode("exit and display");
-	waitForUser("did not pass validation");
-	
-	
-	
 	save(output_fail);
+		
 
 	selectWindow("input");
 	run("Close");
