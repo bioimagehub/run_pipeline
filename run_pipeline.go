@@ -882,6 +882,7 @@ func main() {
 	// Initialize a variable to hold the path to the YAML configuration file
 	var yamlPath string
 	forceReprocessing := false // Initialize the force reprocessing flag
+	printHashOnly := false     // Initialize the print-hash flag
 
 	// Check if a path is passed as a command-line argument
 	for _, arg := range os.Args[1:] {
@@ -891,6 +892,7 @@ func main() {
 			fmt.Println("")
 			fmt.Println("Options:")
 			fmt.Println("  -f, --force_reprocessing  Process segments even if they have been previously processed.")
+			fmt.Println("  --print-hash              Print content hash for each segment without executing.")
 			fmt.Println("  -h, --help                Show help information.")
 			fmt.Println("")
 			fmt.Println("Arguments:")
@@ -913,6 +915,8 @@ func main() {
 			os.Exit(0)
 		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
+		} else if arg == "--print-hash" {
+			printHashOnly = true
 		} else {
 			yamlPath = arg // Assume the next argument is the YAML file path
 
@@ -938,6 +942,31 @@ func main() {
 	err = yaml.Unmarshal(data, &config)
 	if err != nil {
 		log.Fatalf("error unmarshalling YAML: %v", err)
+	}
+
+	// If --print-hash flag is set, print hashes and exit
+	if printHashOnly {
+		fmt.Printf("# Content hashes for segments in: %s\n", yamlPath)
+		fmt.Println("# Copy this to your status file if needed\n")
+		fmt.Println("segments:")
+
+		for _, segment := range config.Run {
+			// Skip control types (pause, stop, force)
+			stepType := strings.ToLower(segment.Type)
+			if stepType == "pause" || stepType == "stop" || stepType == "force" {
+				continue
+			}
+
+			hash := computeSegmentHash(segment)
+
+			fmt.Printf("- name: %s\n", segment.Name)
+			fmt.Printf("  content_hash: %s\n", hash)
+			fmt.Printf("  last_processed: \"\"\n")
+			fmt.Printf("  code_version: \"\"\n")
+			fmt.Printf("  run_duration: \"\"\n")
+		}
+
+		os.Exit(0)
 	}
 
 	// Get the directory of the YAML file for resolving data paths

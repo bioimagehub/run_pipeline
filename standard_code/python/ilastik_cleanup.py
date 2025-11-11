@@ -519,6 +519,7 @@ def process_single_file(
     max_watershed_rounds: int = 5,
     max_grow_shrink_cycles: int = 10,
     max_time_gap: int = -1,
+    output_suffix: str = "",
     debug_all: bool = False,
     debug_failed: bool = False,
     image_path: Optional[str] = None,
@@ -554,6 +555,7 @@ def process_single_file(
         max_time_gap: Fill temporal gaps up to this many frames (e.g., 1 or 2). 
                       Default -1 (disabled). Fills gaps where segmentation failed
                       in a few frames but succeeded in adjacent frames.
+        output_suffix: Suffix to add to successful output filenames (default: "")
         debug_all: If True, show all results (both successes and failures) with image overlay
         debug_failed: If True, show only failed results with image overlay
         image_path: Optional path to original image for visualization
@@ -564,8 +566,22 @@ def process_single_file(
     """
     try:
         basename = os.path.splitext(os.path.basename(h5_path))[0]
-        output_path = os.path.join(output_dir, f"{basename}.tif")
-        output_fail = os.path.join(output_dir, f"{basename}_fail.tif")
+        
+        # Build output filenames
+        # For successful: basename + suffix + .tif
+        # For failed: basename_Probabilities_failed.tif (save input probabilities instead of mask)
+        if output_suffix:
+            output_path = os.path.join(output_dir, f"{basename}{output_suffix}.tif")
+        else:
+            output_path = os.path.join(output_dir, f"{basename}.tif")
+        
+        # For failures, we'll save the probability map itself with _failed suffix
+        # Remove _Probabilities from basename if present, then add _Probabilities_failed
+        if basename.endswith("_Probabilities"):
+            base_without_prob = basename[:-len("_Probabilities")]
+            output_fail = os.path.join(output_dir, f"{base_without_prob}_Probabilities_failed.tif")
+        else:
+            output_fail = os.path.join(output_dir, f"{basename}_Probabilities_failed.tif")
         
         # Check if output already exists
         if os.path.exists(output_path) or os.path.exists(output_fail):
@@ -779,8 +795,39 @@ def process_single_file(
             
             return True
         else:
-            logger.error("Some slices failed validation, saving as fail file")
-            save_imagej_tif(output_mask, output_fail)
+            logger.error("Some slices failed validation, saving input probabilities as fail file")
+            
+            # Save the INPUT probability map (not the failed mask) for future debugging/fixing
+            # Convert the thresholded binary mask back to probability-like format (0-255)
+            # Actually, let's save the original probability data from H5
+            try:
+                # Reload the original probability map to save as-is
+                with h5py.File(h5_path, 'r') as f:
+                    dataset_name = "/exported_data"
+                    if dataset_name in f:
+                        data = f[dataset_name][:]
+                        # Convert to TCZYX if needed
+                        if data.ndim == 5:  # (T, Z, Y, X, C)
+                            prob_data = data[:, :, :, :, 1]  # Channel 1
+                            prob_data = prob_data[:, np.newaxis, :, :, :]  # (T, C=1, Z, Y, X)
+                        elif data.ndim == 4:  # (Z, Y, X, C)
+                            prob_data = data[:, :, :, 1]
+                            prob_data = prob_data[np.newaxis, np.newaxis, :, :, :]
+                        elif data.ndim == 3:  # (Z, Y, X)
+                            prob_data = data[np.newaxis, np.newaxis, :, :, :]
+                        else:
+                            raise ValueError(f"Unexpected data shape: {data.shape}")
+                        
+                        # Convert probabilities (0-1 float) to 0-255 uint8
+                        prob_uint8 = (prob_data * 255).astype(np.uint8)
+                        save_imagej_tif(prob_uint8, output_fail, as_binary=False)
+                        logger.info(f"Saved input probabilities to: {output_fail}")
+                    else:
+                        logger.warning(f"Could not find dataset in H5 file, saving processed mask instead")
+                        save_imagej_tif(output_mask, output_fail)
+            except Exception as e:
+                logger.warning(f"Could not save original probabilities: {e}, saving processed mask instead")
+                save_imagej_tif(output_mask, output_fail)
             
             # Show visualization if debug_all or debug_failed is enabled
             if (debug_all or debug_failed) and HAS_RP:
@@ -808,6 +855,7 @@ def process_files(
     max_watershed_rounds: int = 5,
     max_grow_shrink_cycles: int = 10,
     max_time_gap: int = -1,
+    output_suffix: str = "",
     debug_all: bool = False,
     debug_failed: bool = False,
     dry_run: bool = False
@@ -830,6 +878,7 @@ def process_files(
         max_watershed_rounds: Maximum watershed iterations
         max_grow_shrink_cycles: Maximum grow/shrink cycles
         max_time_gap: Fill temporal gaps up to this many frames (default: -1, disabled)
+        output_suffix: Suffix to add to successful output filenames (default: "")
         debug_all: Show all results (both successes and failures) with image overlay
         debug_failed: Show only failed results with image overlay
         dry_run: Only print planned actions without executing
@@ -910,6 +959,7 @@ def process_files(
             max_watershed_rounds=max_watershed_rounds,
             max_grow_shrink_cycles=max_grow_shrink_cycles,
             max_time_gap=max_time_gap,
+            output_suffix=output_suffix,
             debug_all=debug_all,
             debug_failed=debug_failed,
             image_path=image_path,
@@ -1063,6 +1113,14 @@ Examples:
     )
     
     parser.add_argument(
+        "--output-suffix",
+        type=str,
+        default="",
+        help="Suffix to add to successful output filenames (default: no suffix). "
+             "Example: '_cleaned' or '_processed'. Failed outputs always get '_Probabilities_failed' suffix."
+    )
+    
+    parser.add_argument(
         "--debug-all",
         action="store_true",
         help="Show all results (both successes and failures) with image overlay for 1 second each"
@@ -1110,6 +1168,7 @@ Examples:
         max_watershed_rounds=args.max_watershed_rounds,
         max_grow_shrink_cycles=args.max_grow_shrink_cycles,
         max_time_gap=args.max_time_gap,
+        output_suffix=args.output_suffix,
         debug_all=args.debug_all,
         debug_failed=args.debug_failed,
         dry_run=args.dry_run
