@@ -20,3 +20,12 @@ At line:1 char:3
 +   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     + CategoryInfo          : SecurityError: (:) [], PSSecurityException
     + FullyQualifiedErrorId : UnauthorizedAccess
+
+
+    ▶ Processing segment: convert_to_tif
+uv@3.11:convert-to-tif
+[note] Requesting UV_PYTHON= (override via UV_DEFAULT_PYTHON). 3.11 is recommended for best wheel coverage on Windows.
+Constructed command: [C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\python.exe C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\standard_code/python/convert_to_tif.py --input-search-pattern C:\Users\Nikon Analysis\Documents\biphub\test_files\del.tif --output-folder C:\Users\Nikon Analysis\Documents\biphub\test_files --no-parallel] with UV_PYTHON=
+Error executing command: exit status 0xc0000005
+2025/11/13 14:57:37 Error
+PS C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline> 
