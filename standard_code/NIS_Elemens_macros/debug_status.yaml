@@ -1,1 +1,6 @@
-segments: []
+segments:
+- name: hello
+  content_hash: 397e73e1d331e14f1da88d4d2cf63b05a368314bd19b5c579400933055251183
+  last_processed: "2025-11-13"
+  code_version: 0.0.13
+  run_duration: 126.5402ms

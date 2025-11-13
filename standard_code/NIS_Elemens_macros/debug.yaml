@@ -1,4 +1,11 @@
 run:
+  - name: hello
+    environment: uv@3.11:convert-to-tif
+    commands:
+      - python: '%REPO%/standard_code\python\Test_code\hello.py'
+      - --hello: test
+
+
   - name: convert_to_tif
     environment: uv@3.11:convert-to-tif
     commands:
