@@ -56,7 +56,10 @@ int main() {
     }
     
     // Set run_pipeline.exe path (adjust if needed)
-    strcpy(run_pipeline_path, "C:/biphub/git/run_pipeline/run_pipeline.exe");
+    strcpy(run_pipeline_path, "C:/Users/Nikon Analysis/Documents/biphub/git/run_pipeline/run_pipeline.exe");
+    
+    strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+    
     
     // Verify run_pipeline.exe exists
     if (!ExistFile(run_pipeline_path)) {
@@ -248,7 +251,8 @@ int main() {
                 }
                 
                 // Build YAML configuration for run_pipeline
-                strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+                // Now defined in the beguinning from run_pipeline path
+
                 
                 // Extract folder path
                 strcpy(temp_folder_path, selected_file);
@@ -402,5 +406,5 @@ int main() {
     SetCommandText("Multi-file conversion completed!");
     WaitText(2, display_msg);
 }
-RunMacro("F:\BIPHUB-OYVIND\test_data\different_fileformats\Apsana_large_czi\29102025_Apsana-04_1\reassemble_to_nd2.mac");
- 
+//RunMacro("F:\BIPHUB-OYVIND\test_data\different_fileformats\Apsana_large_czi\29102025_Apsana-04_1\reassemble_to_nd2.mac");
+  
