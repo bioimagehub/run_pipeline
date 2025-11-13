@@ -1,19 +1,15 @@
 import subprocess
 import argparse
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import h5py
-import numpy as np
 import logging
 import tempfile
 import time
 import uuid
 import multiprocessing
-from threading import Lock
 
 import bioimage_pipeline_utils as rp
-
-import tifffile
 
 # Add tqdm for progress bars (fallback to no-op if not installed)
 try:
@@ -39,34 +35,19 @@ except Exception:
 # Configure logging
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s [%(levelname)s] %(message)s')
 
-def get_expected_output_paths(input_file):
-    """Get the expected H5 and TIF output paths for an input file."""
+def get_expected_output_path(input_file):
+    """Get the expected H5 output path for an input file."""
     in_dir = os.path.dirname(input_file)
     base_name = os.path.splitext(os.path.basename(input_file))[0]
     h5_path = os.path.join(in_dir, base_name + "_Probabilities.h5")
-    # For multi-channel output, we'll check for _mask_Label1.tif pattern
-    tif_path_pattern = os.path.join(in_dir, base_name + "_mask_Label*.tif")
-    return h5_path, tif_path_pattern
-
-def get_channel_tif_path(input_file, channel_idx):
-    """Get the TIF path for a specific channel.
-    
-    Ilastik labels are 1-indexed, so channel_idx 0 becomes Label1, etc.
-    """
-    in_dir = os.path.dirname(input_file)
-    base_name = os.path.splitext(os.path.basename(input_file))[0]
-    # Ilastik uses 1-indexed labels, so add 1 to channel_idx
-    label_number = channel_idx + 1
-    tif_path = os.path.join(in_dir, f"{base_name}_mask_Label{label_number}.tif")
-    return tif_path
+    return h5_path
 
 def monitor_file_completion(input_files, pbar_position, batch_id, stop_event, check_interval=1):
     """
     Monitor for completed output files and update progress bar in real-time.
     Runs in a separate thread to track files as they're created.
     
-    Monitors H5 files since those appear during Ilastik execution,
-    not TIF files which only appear after H5 conversion completes.
+    Monitors H5 files as they appear during Ilastik execution.
     """
     completed = set()
     
@@ -84,7 +65,7 @@ def monitor_file_completion(input_files, pbar_position, batch_id, stop_event, ch
             if input_file in completed:
                 continue
                 
-            h5_path, _ = get_expected_output_paths(input_file)
+            h5_path = get_expected_output_path(input_file)
             
             # Check if H5 file exists (appears during Ilastik execution)
             # This gives real-time progress as Ilastik processes files
@@ -129,7 +110,7 @@ def process_batch(args, input_files, batch_id=0, pbar_position=0):
     files_with_h5 = []
     
     for input_file in input_files:
-        h5_output_path, _ = get_expected_output_paths(input_file)
+        h5_output_path = get_expected_output_path(input_file)
         if os.path.exists(h5_output_path):
             # Validate that the H5 file can be opened and read
             try:
@@ -161,7 +142,7 @@ def process_batch(args, input_files, batch_id=0, pbar_position=0):
         # Delete any corrupted H5 files to ensure clean re-processing
         corrupted_count = 0
         for input_file in files_needing_processing:
-            h5_output_path, _ = get_expected_output_paths(input_file)
+            h5_output_path = get_expected_output_path(input_file)
             if os.path.exists(h5_output_path):
                 try:
                     os.remove(h5_output_path)
@@ -210,11 +191,11 @@ def process_batch(args, input_files, batch_id=0, pbar_position=0):
         if monitor_thread:
             monitor_thread.join(timeout=5)
 
-    # Process each file's output (both newly created and existing H5 files)
+    # Verify H5 files were created
     files_processed = 0
     failed_files = []
     for input_file in input_files:
-        h5_output_path, tif_output_path = get_expected_output_paths(input_file)
+        h5_output_path = get_expected_output_path(input_file)
 
         # Give the filesystem a brief moment for the output to appear
         if not os.path.exists(h5_output_path):
@@ -228,84 +209,20 @@ def process_batch(args, input_files, batch_id=0, pbar_position=0):
             failed_files.append(input_file)
             continue
         
-        # Read Ilastik probability output
+        # Validate H5 file can be opened
         try:
             with h5py.File(h5_output_path, 'r') as f:
                 if len(f.keys()) == 0:
                     logging.error(f"H5 file is empty: {h5_output_path}")
                     failed_files.append(input_file)
                     continue
-                    
-                group_key = list(f.keys())[0]
-                data = np.array(f[group_key])  # Expected: TZYXC (probabilities per class)
         except Exception as e:
             logging.error(f"Failed to read H5 file: {h5_output_path}")
             logging.error(f"Error: {e}")
             logging.error(f"This file may be corrupted. Consider deleting it and re-running.")
             failed_files.append(input_file)
             continue
-
-        # Rearrange to TCZYX (be tolerant to 4D TZYX without channel)
-        if data.ndim == 5:
-            # TZYXC -> TCZYX
-            data_tczyx = np.transpose(data, (0, 4, 1, 2, 3))
-        elif data.ndim == 4:
-            # Assume T, Z, Y, X -> add singleton channel dimension
-            data_tczyx = data[:, np.newaxis, :, :, :]
-        else:
-            logging.error(f"Unexpected data shape: {data.shape}, expected 5D (TZYXC) or 4D (TZYX)")
-            continue
         
-        # Loop over each channel (each label in Ilastik) and save separately
-        num_channels = data_tczyx.shape[1]
-        
-        # Check if all TIF files already exist for this input
-        all_tifs_exist = True
-        for channel_idx in range(num_channels):
-            tif_path = get_channel_tif_path(input_file, channel_idx)
-            if not os.path.exists(tif_path):
-                all_tifs_exist = False
-                break
-        
-        # Skip TIF creation if all files already exist
-        if all_tifs_exist:
-            files_processed += 1
-            continue
-        
-        for channel_idx in range(num_channels):
-            # Check if this specific TIF already exists
-            tif_output_path = get_channel_tif_path(input_file, channel_idx)
-            if os.path.exists(tif_output_path):
-                continue  # Skip this channel, file already exists
-            
-            # Extract probabilities for this channel
-            probabilities = data_tczyx[:, channel_idx:channel_idx+1, :, :, :]  # TCZYX with C=1
-            
-            # Threshold probabilities at 0.5 to create binary mask
-            # Convert to uint8 with values 0 and 255 for ImageJ compatibility
-            binary_mask = (probabilities > 0.5).astype(np.uint8) * 255
-            
-            # For ImageJ compatibility, squeeze out the channel dimension
-            output_array = binary_mask[:, 0, :, :, :]  # TZYX
-            
-            # Save as ImageJ TIF with proper metadata
-            try:
-                tifffile.imwrite(
-                    tif_output_path,
-                    output_array,
-                    imagej=True,
-                    metadata={'axes': 'TZYX'},
-                    compression='deflate'
-                )
-            except Exception as e:
-                logging.error(f"Failed to save TIF file: {tif_output_path}")
-                logging.error(f"Error: {e}")
-                # Mark this file as failed but continue with other channels/files
-                if input_file not in failed_files:
-                    failed_files.append(input_file)
-                continue
-        
-        # Count file as processed after all channels are saved
         files_processed += 1
     
     # Report any failures at the end
@@ -436,14 +353,33 @@ def process_folder(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Ilastik segmentation in parallel and save masks as ImageJ TIFFs.")
+    parser = argparse.ArgumentParser(
+        description="Run Ilastik segmentation in parallel to generate probability H5 files.",
+        epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Run Ilastik segmentation
+  environment: uv@3.11:segment-ilastik
+  commands:
+  - python
+  - '%REPO%/standard_code/python/segment_ilastik.py'
+  - --ilastik-path: 'C:/Program Files/ilastik-1.4.0/ilastik.exe'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --project-path: '%YAML%/my_project.ilp'
+  - --workers: 4
+
+Note: Output H5 files are saved next to input files with '_Probabilities.h5' suffix.
+      Post-processing (thresholding, TIF conversion) should be done in a separate step.
+"""
+    )
     parser.add_argument("--ilastik-path", type=str, required=True, help="Path to the ilastik executable")
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input images, e.g. './input_Ilastik/*.h5'")
-    parser.add_argument("--output-folder", type=str, required=True, help="Path to save the output mask TIF files")
+    parser.add_argument("--output-folder", type=str, required=True, help="Path to save the output (currently unused, H5 files saved next to inputs)")
     parser.add_argument("--project-path", type=str, required=True, help="Path to trained Ilastik project file (.ilp)")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (process all files in one batch)")
     parser.add_argument("--workers", type=int, default=None, help="Number of parallel workers (default: CPU count)")
-    parser.add_argument("--qc-key", type=str, default="segment_ilastik", help="Key to use in QC YAML files (default: segment_ilastik)")
 
 
 

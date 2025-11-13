@@ -153,6 +153,7 @@ segmentation = [
 	"numpy",
 	"scipy",
 	"scikit-image",
+	"scikit-learn",
 	"pandas",
 	"trackpy",
 	"opencv-python>=4.11.0.86",

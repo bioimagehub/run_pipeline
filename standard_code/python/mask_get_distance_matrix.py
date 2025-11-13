@@ -2,11 +2,15 @@ import os
 import argparse
 from tqdm import tqdm
 import numpy as np
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import distance_transform_edt, label
 from bioio.writers import OmeTiffWriter
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import tifffile
 
 
 import bioimage_pipeline_utils as rp
+
+
 
 def process_file(mask_path: str, output_folder_path: str) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
@@ -41,23 +45,26 @@ def process_file(mask_path: str, output_folder_path: str) -> None:
                 # Extract the 2D mask for the current frame, channel, and z-slice
                 mask_2d = mask.data[mask_frame, mask_channel, mask_zslice, :, :]
 
-                objects = np.unique(mask_2d)
-                objects = objects[objects > 0]  # Exclude background (0)
+                # Create binary mask (any non-zero value is foreground)
+                binary_mask = (mask_2d > 0).astype(np.uint8)
+                
+                # Label connected components to separate distinct objects
+                labeled_mask, num_objects = label(binary_mask)
 
                 # Initialize a 2D distance matrix for the current position
                 distance_matrix_for_frame = np.zeros_like(mask_2d, dtype=np.float32)
 
-                # Loop through all objects in the indexed mask
-                for object_id in objects:
-                    # Create a mask for the current object
-                    object_mask = (mask_2d == object_id).astype(np.uint8)
+                # Loop through each separate connected component
+                for object_id in range(1, num_objects + 1):
+                    # Create binary mask for this specific connected component
+                    object_mask = (labeled_mask == object_id).astype(np.uint8)
 
                     # Calculate the distance to the edge of the object
-                    distance_to_edge_mask = distance_transform_edt(object_mask == object_id)  # Distance to background (0)
+                    distance_to_edge_mask = distance_transform_edt(object_mask)
 
                     # Assign the distance to the corresponding pixels in the overall distance matrix
                     if distance_to_edge_mask is not None:
-                        distance_matrix_for_frame[mask_2d == object_id] = distance_to_edge_mask[mask_2d == object_id]
+                        distance_matrix_for_frame[object_mask == 1] = distance_to_edge_mask[object_mask == 1]
                     else:
                         print(f"Warning: Distance transform returned None for object {object_id} in file {mask_path}.")
 
@@ -66,25 +73,52 @@ def process_file(mask_path: str, output_folder_path: str) -> None:
 
     # Save the overall distance matrix
     output_file_path = f"{output_file_basename}_distance_matrix.tif"
-    rp.save_tczyx_image(overall_distance_matrix, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
-
-
+    # rp.save_mask(overall_distance_matrix, output_file_path, as_binary=False)
+    rp.save_tczyx_image(
+        overall_distance_matrix,
+        output_file_path,
+        physical_pixel_sizes=physical_pixel_sizes,
+        ome_xml=None
+    )
 
   
 def process_folder(args: argparse.Namespace):
-    files_to_process = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
+    files_to_process = rp.get_files_to_process2(args.input_search_pattern, False)
     os.makedirs(args.output_folder, exist_ok=True)
 
-    for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-        process_file(mask_path=input_file_path, output_folder_path=args.output_folder)
+    if args.no_parallel:
+        # Sequential processing
+        for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
+            process_file(mask_path=input_file_path, output_folder_path=args.output_folder)
+    else:
+        # Parallel processing
+        cpu_count = os.cpu_count() or 1
+        cpu_count = max(cpu_count - 1, 1)
+        
+        with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+            futures = []
+            for input_file_path in files_to_process:
+                future = executor.submit(
+                    process_file,
+                    mask_path=input_file_path,
+                    output_folder_path=args.output_folder
+                )
+                futures.append(future)
+            
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing files", unit="file"):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error processing file: {e}")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process masks and convert indexed masks to distance matrix")
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'")
-    parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only if pattern doesn't already include '**')")
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
+    parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+
     parsed_args = parser.parse_args()
 
     if not parsed_args.output_folder:

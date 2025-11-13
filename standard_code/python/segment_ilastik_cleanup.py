@@ -559,7 +559,7 @@ def process_single_file(
         debug_all: If True, show all results (both successes and failures) with image overlay
         debug_failed: If True, show only failed results with image overlay
         image_path: Optional path to original image for visualization
-        yaml_path: Optional path to metadata YAML file
+        yaml_path: Optional path to metadata YAML file (not used in processing yet)
     
     Returns:
         True if successful, False otherwise
@@ -987,7 +987,7 @@ run:
   environment: uv@3.11:ilastik-cleanup
   commands:
   - python
-  - '%REPO%/standard_code/python/ilastik_cleanup.py'
+  - '%REPO%/standard_code/python/segment_ilastik_cleanup.py'
   - --image-search-pattern: '%YAML%/images/**/*.tif'
   - --probabilities-search-pattern: '%YAML%/probabilities/**/*_Probabilities.h5'
   - --output-folder: '%YAML%/masks'
@@ -997,7 +997,7 @@ run:
   environment: uv@3.11:ilastik-cleanup
   commands:
   - python
-  - '%REPO%/standard_code/python/ilastik_cleanup.py'
+  - '%REPO%/standard_code/python/segment_ilastik_cleanup.py'
   - --image-search-pattern: '%YAML%/images/**/*.tif'
   - --probabilities-search-pattern: '%YAML%/probabilities/**/*_Probabilities.h5'
   - --yaml-search-pattern: '%YAML%/metadata/**/*_metadata.yaml'
@@ -1008,31 +1008,31 @@ run:
 
 Examples:
   # Process with image overlay
-  python ilastik_cleanup.py \\
+  python segment_ilastik_cleanup.py \\
     --image-search-pattern "data/images/*.tif" \\
     --probabilities-search-pattern "data/ilastik/*_Probabilities.h5"
   
   # With metadata and debug visualization (all results)
-  python ilastik_cleanup.py \\
+  python segment_ilastik_cleanup.py \\
     --image-search-pattern "data/**/*.tif" \\
     --probabilities-search-pattern "data/**/*_Probabilities.h5" \\
     --yaml-search-pattern "data/**/*_metadata.yaml" \\
     --debug-all
   
   # Show only failed results
-  python ilastik_cleanup.py \\
+  python segment_ilastik_cleanup.py \\
     --image-search-pattern "data/**/*.tif" \\
     --probabilities-search-pattern "data/**/*_Probabilities.h5" \\
     --debug-failed
   
   # Fill temporal gaps (useful when segmentation fails in a few frames)
-  python ilastik_cleanup.py \\
+  python segment_ilastik_cleanup.py \\
     --image-search-pattern "data/**/*.tif" \\
     --probabilities-search-pattern "data/**/*_Probabilities.h5" \\
     --max-time-gap 2
   
   # Dry run to preview file matching
-  python ilastik_cleanup.py \\
+  python segment_ilastik_cleanup.py \\
     --image-search-pattern "data/**/*.tif" \\
     --probabilities-search-pattern "data/**/*.h5" \\
     --dry-run

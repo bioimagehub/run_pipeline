@@ -1,0 +1,168 @@
+# DBSCAN Parameter Tuning Tests for quantify_distance_heatmap_v3.py
+# Use these to systematically find optimal clustering parameters
+# Run each test sequentially and examine the log output
+
+run:
+  # ============================================
+  # TEST 1: Current Baseline (Your Settings)
+  # ============================================
+  - name: "[BASELINE] Current settings (eps=0.20)"
+    environment: uv@3.11:segmentation
+    commands:
+      - python
+      - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+      - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+      - --output-folder: '%YAML%/quantification_bulk/test_baseline'
+      - --colormap: viridis
+      - --smooth-sigma-distance: 3
+      - --use-clustering
+      - --subtract-t0
+      - --clustering-eps: 0.20
+      - --clustering-min-samples: 30
+      - --clustering-intensity-threshold: 50
+      - --split-char: '__'
+      - --metadata-columns: expID,Group,Replicate
+      - --no-parallel
+      - --force-show
+
+  # ============================================
+  # TEST 2: Moderate Tightening
+  # ============================================
+  - name: "[TEST 2] Moderate tightening (eps=0.12, thresh=60)"
+    environment: uv@3.11:segmentation
+    commands:
+      - python
+      - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+      - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+      - --output-folder: '%YAML%/quantification_bulk/test_moderate'
+      - --colormap: viridis
+      - --smooth-sigma-distance: 3
+      - --use-clustering
+      - --subtract-t0
+      - --clustering-eps: 0.12
+      - --clustering-min-samples: 40
+      - --clustering-intensity-threshold: 60
+      - --split-char: '__'
+      - --metadata-columns: expID,Group,Replicate
+      - --no-parallel
+      - --force-show
+
+  # ============================================
+  # TEST 3: Aggressive Tightening
+  # ============================================
+  - name: "[TEST 3] Aggressive tightening (eps=0.08, thresh=70)"
+    environment: uv@3.11:segmentation
+    commands:
+      - python
+      - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+      - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+      - --output-folder: '%YAML%/quantification_bulk/test_aggressive'
+      - --colormap: viridis
+      - --smooth-sigma-distance: 3
+      - --use-clustering
+      - --subtract-t0
+      - --clustering-eps: 0.08
+      - --clustering-min-samples: 50
+      - --clustering-intensity-threshold: 70
+      - --split-char: '__'
+      - --metadata-columns: expID,Group,Replicate
+      - --no-parallel
+      - --force-show
+
+  # ============================================
+  # TEST 4: Very Aggressive (For Heavy Dirt)
+  # ============================================
+  - name: "[TEST 4] Very aggressive (eps=0.05, thresh=80)"
+    environment: uv@3.11:segmentation
+    commands:
+      - python
+      - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+      - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+      - --output-folder: '%YAML%/quantification_bulk/test_very_aggressive'
+      - --colormap: viridis
+      - --smooth-sigma-distance: 3
+      - --use-clustering
+      - --subtract-t0
+      - --clustering-eps: 0.05
+      - --clustering-min-samples: 100
+      - --clustering-intensity-threshold: 80
+      - --split-char: '__'
+      - --metadata-columns: expID,Group,Replicate
+      - --no-parallel
+      - --force-show
+
+  # ============================================
+  # TEST 5: Looser (If Tests 2-4 Too Aggressive)
+  # ============================================
+  - name: "[TEST 5] Looser settings (eps=0.18, thresh=55)"
+    environment: uv@3.11:segmentation
+    commands:
+      - python
+      - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+      - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+      - --output-folder: '%YAML%/quantification_bulk/test_looser'
+      - --colormap: viridis
+      - --smooth-sigma-distance: 3
+      - --use-clustering
+      - --subtract-t0
+      - --clustering-eps: 0.18
+      - --clustering-min-samples: 35
+      - --clustering-intensity-threshold: 55
+      - --split-char: '__'
+      - --metadata-columns: expID,Group,Replicate
+      - --no-parallel
+      - --force-show
+
+  # ============================================
+  # TEST 6: Much Looser (If All Previous Too Tight)
+  # ============================================
+  - name: "[TEST 6] Much looser (eps=0.30, thresh=40)"
+    environment: uv@3.11:segmentation
+    commands:
+      - python
+      - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+      - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+      - --output-folder: '%YAML%/quantification_bulk/test_much_looser'
+      - --colormap: viridis
+      - --smooth-sigma-distance: 3
+      - --use-clustering
+      - --subtract-t0
+      - --clustering-eps: 0.30
+      - --clustering-min-samples: 20
+      - --clustering-intensity-threshold: 40
+      - --split-char: '__'
+      - --metadata-columns: expID,Group,Replicate
+      - --no-parallel
+      - --force-show
+
+# ============================================
+# USAGE INSTRUCTIONS
+# ============================================
+# 1. Run TEST 1 (baseline) first to see current behavior
+# 2. If clusters TOO LARGE: Try TEST 2, then TEST 3, then TEST 4
+# 3. If clusters DISAPPEAR (no clusters found): Try TEST 5, then TEST 6
+# 4. Compare log output for each test:
+#    - Number of clusters found
+#    - Selected cluster size and spatial extent (Δdist, ΔT)
+#    - Distance to origin for selected cluster
+# 5. Once you find optimal settings, update your main YAML config
+
+# ============================================
+# WHAT TO LOOK FOR IN LOG OUTPUT
+# ============================================
+# GOOD RESULT:
+#   Clusters found: 3-5
+#   Selected cluster: size=500-1000, dist_to_origin<0.20
+#   Spatial extent: Δdist<30, ΔT<10
+#
+# TOO LARGE (need tighter):
+#   Selected cluster: Δdist>50, ΔT>15
+#   Spatial extent too large
+#
+# TOO TIGHT (need looser):
+#   Clusters found: 0
+#   "No clusters found - all pixels marked as noise"
+#
+# SIGNAL FRAGMENTED:
+#   Many small clusters near origin
+#   Selected cluster misses parts of signal

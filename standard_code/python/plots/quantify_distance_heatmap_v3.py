@@ -14,6 +14,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -31,6 +32,8 @@ import glob
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from tqdm import tqdm
+
+from sklearn.cluster import DBSCAN
 
 # Local imports
 try:
@@ -75,6 +78,786 @@ def get_experiment_info_from_filename(filename: str, split: str = "__", colname:
     return result
 
 
+def find_signal_seed_near_origin(
+    heatmap_smoothed: np.ndarray,
+    distance_bins: np.ndarray,
+    search_n_bins: int = 20,
+    quiet: bool = False
+) -> Tuple[int, int]:
+    """
+    Find the signal seed near the expected origin (distance≈0, T1).
+    
+    For photoconversion experiments, the real signal starts near distance=0 at T1.
+    Search for the brightest point in the first N distance bins at T1.
+    
+    Args:
+        heatmap_smoothed: Smoothed heatmap (distance × timepoints) INCLUDING T0
+        distance_bins: Distance bin values
+        search_n_bins: Number of distance bins from start to search (default: 20)
+        quiet: Suppress logging
+    
+    Returns:
+        Tuple of (seed_distance_idx, seed_time_idx)
+    """
+    def log_info(msg):
+        if not quiet:
+            logging.info(msg)
+    
+    n_distance, n_time = heatmap_smoothed.shape
+    
+    # Ensure we don't search beyond available bins
+    search_n_bins = min(search_n_bins, n_distance)
+    
+    # T1 is index 1 (skip T0)
+    if n_time < 2:
+        logging.warning("Less than 2 timepoints - cannot search at T1")
+        # Fallback to global maximum
+        max_idx = np.unravel_index(np.argmax(heatmap_smoothed), heatmap_smoothed.shape)
+        return max_idx
+    
+    # Search in first N distance bins at T1
+    search_region = heatmap_smoothed[:search_n_bins, 1]  # T1 = index 1
+    
+    log_info(f"Searching for signal seed near origin:")
+    log_info(f"  Distance bins: 0 to {search_n_bins-1} (distance {distance_bins[0]:.1f} to {distance_bins[search_n_bins-1]:.1f})")
+    log_info(f"  Timepoint: T1")
+    
+    if np.max(search_region) <= 0:
+        log_info("  WARNING: No signal found in search region at T1, falling back to global maximum")
+        # Fallback: find global maximum (excluding T0)
+        heatmap_no_t0 = heatmap_smoothed[:, 1:]
+        max_idx_global = np.unravel_index(np.argmax(heatmap_no_t0), heatmap_no_t0.shape)
+        seed_distance_idx, seed_time_idx_offset = max_idx_global
+        seed_time_idx = seed_time_idx_offset + 1  # Add 1 because we excluded T0
+        log_info(f"  Fallback seed: distance_idx={seed_distance_idx}, time=T{seed_time_idx}")
+    else:
+        # Find brightest point in search region
+        local_max_idx = np.argmax(search_region)
+        seed_distance_idx = local_max_idx
+        seed_time_idx = 1  # T1
+    
+    seed_value = heatmap_smoothed[seed_distance_idx, seed_time_idx]
+    log_info(f"  Found seed: distance_idx={seed_distance_idx} (distance={distance_bins[seed_distance_idx]:.1f}), time=T{seed_time_idx}, intensity={seed_value:.2f}")
+    
+    return seed_distance_idx, seed_time_idx
+
+
+def subtract_t0_background(
+    heatmap_data: np.ndarray,
+    quiet: bool = False
+) -> np.ndarray:
+    """
+    Subtract T0 background from all timepoints.
+    
+    This simple preprocessing step removes static background/dirt by subtracting
+    the T0 intensity from all subsequent timepoints. Works because:
+    - Real photoconverted signal is NOT present in T0
+    - Dirt/artifacts ARE present in T0
+    - Subtraction removes static background, keeping only dynamic signal
+    
+    Args:
+        heatmap_data: Heatmap (distance × timepoints) INCLUDING T0
+        quiet: Suppress logging
+    
+    Returns:
+        Background-subtracted heatmap (T0 values set to 0, rest subtracted)
+    """
+    def log_info(msg):
+        if not quiet:
+            logging.info(msg)
+    
+    n_distance, n_time = heatmap_data.shape
+    
+    if n_time < 2:
+        logging.warning("Only one timepoint - cannot perform T0 subtraction")
+        return heatmap_data.copy()
+    
+    log_info("=" * 60)
+    log_info("T0 BACKGROUND SUBTRACTION")
+    log_info("=" * 60)
+    
+    # Get T0 column
+    t0_values = heatmap_data[:, 0:1]  # Keep as 2D (n_distance, 1)
+    
+    log_info(f"T0 intensity range: [{np.min(t0_values):.2f}, {np.max(t0_values):.2f}]")
+    log_info(f"T0 mean: {np.mean(t0_values):.2f}, median: {np.median(t0_values):.2f}")
+    
+    # Subtract T0 from all timepoints (broadcasting)
+    heatmap_subtracted = heatmap_data - t0_values
+    
+    # Clip negative values to 0 (can't have negative fluorescence)
+    heatmap_subtracted = np.maximum(heatmap_subtracted, 0)
+    
+    # Report how much signal was removed
+    original_sum = np.sum(heatmap_data[:, 1:])  # Sum T1 onwards (before subtraction)
+    subtracted_sum = np.sum(heatmap_subtracted[:, 1:])  # Sum T1 onwards (after subtraction)
+    removed_pct = ((original_sum - subtracted_sum) / original_sum * 100) if original_sum > 0 else 0
+    
+    log_info(f"Background removed: {removed_pct:.2f}% of original signal")
+    log_info(f"Subtracted heatmap range: [{np.min(heatmap_subtracted):.2f}, {np.max(heatmap_subtracted):.2f}]")
+    log_info("=" * 60)
+    
+    return heatmap_subtracted
+
+
+def segment_by_clustering(
+    heatmap_smoothed: np.ndarray,
+    distance_bins: np.ndarray,
+    intensity_threshold_percentile: float = 50.0,
+    eps: float = 0.20,
+    min_samples: int = 30,
+    quiet: bool = False,
+    visualize: bool = False,
+    output_path: Optional[str] = None
+) -> np.ndarray:
+    """
+    Segment signal from dirt using DBSCAN clustering based on spatial-temporal features.
+    
+    Strategy:
+    1. Pre-filter pixels above intensity threshold
+    2. Cluster pixels based on (distance, time, intensity) features in normalized space
+    3. Select cluster with center closest to (distance=0, T1)
+    4. Return mask for selected cluster
+    
+    This works because:
+    - Real signal is spatially contiguous near photoconversion site (distance≈0, T1)
+    - Dirt particles are isolated and spatially separated from signal (>20 distance units away)
+    - DBSCAN automatically finds dense regions regardless of intensity
+    
+    Args:
+        heatmap_smoothed: Smoothed heatmap (distance × timepoints) INCLUDING T0
+        distance_bins: Distance bin values
+        intensity_threshold_percentile: Percentile for pre-filtering candidate pixels (default: 50.0)
+        eps: DBSCAN neighborhood radius in normalized space (default: 0.20)
+        min_samples: Minimum cluster size in pixels (default: 30)
+        quiet: Suppress logging
+        visualize: Show clustering result using rp.show_image (default: False)
+        output_path: If provided and visualize=True, save visualization (optional)
+    
+    Returns:
+        Boolean mask (distance × timepoints) marking signal pixels
+    """
+    def log_info(msg):
+        if not quiet:
+            logging.info(msg)
+    
+    if DBSCAN is None:
+        raise ImportError("scikit-learn is required for clustering. Install with: pip install scikit-learn")
+    
+    n_distance, n_time = heatmap_smoothed.shape
+    
+    log_info("=" * 60)
+    log_info("DBSCAN CLUSTERING FOR SIGNAL SEGMENTATION")
+    log_info("=" * 60)
+    log_info(f"Heatmap shape: {heatmap_smoothed.shape}")
+    log_info(f"Parameters: eps={eps}, min_samples={min_samples}, intensity_threshold={intensity_threshold_percentile}%ile")
+    
+    # Step 1: Pre-filter candidate pixels above threshold
+    positive_pixels = heatmap_smoothed > 0
+    if np.sum(positive_pixels) == 0:
+        logging.warning("No positive pixels found - returning empty mask")
+        return np.zeros_like(heatmap_smoothed, dtype=bool)
+    
+
+    threshold = np.percentile(heatmap_smoothed[positive_pixels], intensity_threshold_percentile)
+    candidate_mask = heatmap_smoothed > threshold
+    
+    n_candidates = np.sum(candidate_mask)
+    log_info(f"Step 1: Threshold = {threshold:.2f} ({intensity_threshold_percentile}%ile)")
+    log_info(f"  Candidate pixels: {n_candidates} / {heatmap_smoothed.size} ({100*n_candidates/heatmap_smoothed.size:.2f}%)")
+    
+    if n_candidates == 0:
+        logging.warning("No candidate pixels above threshold - returning empty mask")
+        return np.zeros_like(heatmap_smoothed, dtype=bool)
+    
+    # Step 2: Extract features and normalize
+    features = []
+    pixel_coords = []
+    
+    # Calculate normalization scales
+    distance_scale = np.max(distance_bins) - np.min(distance_bins)
+    time_scale = float(n_time)
+    intensity_scale = np.max(heatmap_smoothed)
+    
+    if distance_scale == 0:
+        distance_scale = 1.0
+    if intensity_scale == 0:
+        intensity_scale = 1.0
+    
+    log_info(f"Step 2: Normalizing features")
+    log_info(f"  Distance scale: {distance_scale:.2f}")
+    log_info(f"  Time scale: {time_scale}")
+    log_info(f"  Intensity scale: {intensity_scale:.2f}")
+    
+    for d_idx in range(n_distance):
+        for t_idx in range(n_time):
+            if candidate_mask[d_idx, t_idx]:
+                features.append([
+                    distance_bins[d_idx] / distance_scale,  # Normalized distance [0-1]
+                    t_idx / time_scale,                      # Normalized time [0-1]
+                    heatmap_smoothed[d_idx, t_idx] / intensity_scale  # Normalized intensity [0-1]
+                ])
+                pixel_coords.append((d_idx, t_idx))
+    
+    features = np.array(features)
+    pixel_coords = np.array(pixel_coords)
+    
+    log_info(f"  Feature matrix shape: {features.shape}")
+    
+    # Step 3: DBSCAN clustering
+    log_info(f"Step 3: Running DBSCAN (eps={eps}, min_samples={min_samples})")
+    log_info(f"  Total candidate pixels: {len(features)}")
+    
+    dbscan = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=1)
+    labels = dbscan.fit_predict(features)
+    
+    # Analyze clusters
+    unique_labels = set(labels) - {-1}  # Exclude noise (-1)
+    n_noise = np.sum(labels == -1)
+    n_clusters = len(unique_labels)
+    
+    log_info(f"  Clusters found: {n_clusters}")
+    log_info(f"  Noise pixels: {n_noise} ({100*n_noise/len(labels):.1f}%)")
+    log_info(f"  Cluster IDs: {sorted(unique_labels)}")
+    
+    if n_clusters == 0:
+        logging.warning("No clusters found - all pixels marked as noise")
+        logging.warning(f"  Try: Increase eps (current: {eps}) or decrease min_samples (current: {min_samples})")
+        return np.zeros_like(heatmap_smoothed, dtype=bool)
+    
+    # Step 4: Calculate cluster properties
+    cluster_info = {}
+    for label in unique_labels:
+        cluster_mask = (labels == label)
+        cluster_features = features[cluster_mask]
+        cluster_pixels = pixel_coords[cluster_mask]
+        
+        # Cluster size
+        size = np.sum(cluster_mask)
+        
+        # Cluster center in normalized space
+        center_dist_norm = np.mean(cluster_features[:, 0])
+        center_time_norm = np.mean(cluster_features[:, 1])
+        
+        # Un-normalize for logging
+        center_dist = center_dist_norm * distance_scale
+        center_time = center_time_norm * time_scale
+        
+        # Distance to origin (T1, distance=0) in normalized space
+        # Origin in normalized space: (0, 1/time_scale)
+        origin_norm = np.array([0.0, 1.0 / time_scale])
+        cluster_center_norm = np.array([center_dist_norm, center_time_norm])
+        
+        # Euclidean distance to origin
+        dist_to_origin = np.linalg.norm(cluster_center_norm - origin_norm)
+        
+        # Calculate spatial extent of cluster
+        cluster_dist_values = cluster_pixels[:, 0]
+        cluster_time_values = cluster_pixels[:, 1]
+        
+        dist_extent = distance_bins[np.max(cluster_dist_values)] - distance_bins[np.min(cluster_dist_values)]
+        time_extent = np.max(cluster_time_values) - np.min(cluster_time_values)
+        
+        cluster_info[label] = {
+            'size': size,
+            'center_dist': center_dist,
+            'center_time': center_time,
+            'dist_to_origin': dist_to_origin,
+            'dist_extent': dist_extent,
+            'time_extent': time_extent,
+            'pixels': cluster_pixels
+        }
+        
+        log_info(f"  Cluster {label}: size={size}, center=({center_dist:.1f}, T{center_time:.1f}), "
+                f"dist_to_origin={dist_to_origin:.3f}, extent=(Δdist={dist_extent:.1f}, ΔT={time_extent:.1f})")
+    
+    # Step 5: Select cluster closest to origin (T1, distance≈0)
+    signal_cluster_label = min(cluster_info.keys(), key=lambda k: cluster_info[k]['dist_to_origin'])
+    signal_info = cluster_info[signal_cluster_label]
+    
+    log_info(f"Step 4: Selected cluster {signal_cluster_label} as signal")
+    log_info(f"  Size: {signal_info['size']} pixels")
+    log_info(f"  Center: distance={signal_info['center_dist']:.1f}, time=T{signal_info['center_time']:.1f}")
+    log_info(f"  Distance to origin: {signal_info['dist_to_origin']:.3f}")
+    
+    # Step 6: Build signal mask
+    signal_mask = np.zeros_like(heatmap_smoothed, dtype=bool)
+    signal_pixels = signal_info['pixels']
+    
+    for d_idx, t_idx in signal_pixels:
+        signal_mask[d_idx, t_idx] = True
+    
+    log_info("=" * 60)
+    log_info(f"CLUSTERING COMPLETE: {np.sum(signal_mask)} signal pixels identified")
+    log_info("=" * 60)
+
+
+
+    # === VISUALIZATION (OPTIONAL) ===
+    if visualize:
+        log_info("Generating cluster visualization with color-coded clusters...")
+        
+        # Create matplotlib figure with cluster colormap
+        fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+        
+        # === PLOT 1: Heatmap ===
+        ax1 = axes[0]
+        
+        # Normalize heatmap for display
+        vmin, vmax = np.percentile(heatmap_smoothed, [1, 99])
+        
+        im1 = ax1.imshow(heatmap_smoothed, aspect='auto', cmap='viridis',
+                        extent=[0, heatmap_smoothed.shape[1], distance_bins[-1], distance_bins[0]],
+                        vmin=vmin, vmax=vmax, interpolation='nearest')
+        
+        ax1.set_xlabel('Timepoint', fontweight='bold', fontsize=12)
+        ax1.set_ylabel('Distance', fontweight='bold', fontsize=12)
+        ax1.set_title('Smoothed Heatmap', fontweight='bold', fontsize=14)
+        plt.colorbar(im1, ax=ax1, label='Intensity')
+        
+        # === PLOT 2: Cluster Map with Legend ===
+        ax2 = axes[1]
+        
+        # Create indexed mask showing all clusters
+        log_info("  Creating indexed cluster mask for visualization")
+        indexed_mask = np.zeros_like(heatmap_smoothed, dtype=np.int32)
+        
+        # Assign each cluster a unique label
+        for cluster_label_key in sorted(cluster_info.keys()):
+            cluster_pixels = cluster_info[cluster_label_key]['pixels']
+            for d_idx, t_idx in cluster_pixels:
+                indexed_mask[d_idx, t_idx] = cluster_label_key + 1  # +1 so background=0
+        
+        # Create discrete colormap
+        from matplotlib.colors import ListedColormap
+        import matplotlib.patches as mpatches
+        
+        # Colors for clusters (skip first color for background)
+        n_clusters_total = len(cluster_info)
+        cmap_base = plt.cm.get_cmap('tab10')  # Discrete colormap
+        colors = ['black']  # Background
+        for i in range(n_clusters_total):
+            colors.append(cmap_base(i % 10))
+        
+        cluster_cmap = ListedColormap(colors)
+        
+        im2 = ax2.imshow(indexed_mask, aspect='auto', cmap=cluster_cmap,
+                        extent=[0, heatmap_smoothed.shape[1], distance_bins[-1], distance_bins[0]],
+                        vmin=0, vmax=n_clusters_total, interpolation='nearest')
+        
+        ax2.set_xlabel('Timepoint', fontweight='bold', fontsize=12)
+        ax2.set_ylabel('Distance', fontweight='bold', fontsize=12)
+        ax2.set_title(f'DBSCAN Clusters (Selected: Cluster {signal_cluster_label})', 
+                     fontweight='bold', fontsize=14)
+        
+        # Create custom legend with cluster info
+        legend_elements = []
+        for cluster_label_key in sorted(cluster_info.keys()):
+            info = cluster_info[cluster_label_key]
+            color = colors[cluster_label_key + 1]  # +1 because background=0
+            
+            # Mark selected cluster
+            marker = '⭐' if cluster_label_key == signal_cluster_label else ''
+            
+            label = (f"{marker} Cluster {cluster_label_key}: "
+                    f"n={info['size']}, "
+                    f"center=({info['center_dist']:.1f}, T{info['center_time']:.1f}), "
+                    f"extent=(Δd={info['dist_extent']:.1f}, ΔT={info['time_extent']:.1f})")
+            
+            legend_elements.append(mpatches.Patch(facecolor=color, edgecolor='black', label=label))
+        
+        ax2.legend(handles=legend_elements, loc='upper left', fontsize=9, 
+                  bbox_to_anchor=(0, -0.05), ncol=1, framealpha=0.9)
+        
+        # Overall title
+        fig.suptitle(f'DBSCAN Clustering Visualization\n'
+                    f'eps={eps}, min_samples={min_samples}, intensity_threshold={intensity_threshold_percentile}%ile\n'
+                    f'Found {n_clusters} clusters | ⭐ = Selected as signal',
+                    fontsize=16, fontweight='bold')
+        
+        plt.tight_layout()
+        
+        # Save or show
+        if output_path:
+            cluster_viz_path = output_path.replace('.png', '_clustering_debug.png')
+            plt.savefig(cluster_viz_path, dpi=300, bbox_inches='tight')
+            log_info(f"Saved cluster visualization: {cluster_viz_path}")
+            
+            # Also show briefly
+            plt.show(block=False)
+            plt.pause(5.0)
+            plt.close()
+            log_info(f"Cluster visualization displayed (5s timer)")
+        else:
+            plt.show()
+            log_info("Cluster visualization displayed (close window to continue)")
+    
+    return signal_mask
+
+
+def detect_artifacts_by_t0_presence(
+    heatmap_smoothed: np.ndarray,
+    distance_bins: np.ndarray,
+    region_grow_threshold: float = 0.5,
+    quiet: bool = False
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Detect artifacts by checking if region-grown segments touch T0.
+    
+    Strategy:
+    1. Perform region growing from brightest point in smoothed heatmap (including T0)
+    2. Check if grown region touches T0 (first timepoint)
+    3. If yes → artifact (dirt was present before photoconversion), mark entire region as 0
+    4. If no → real signal (only appeared after T0), keep it and stop
+    5. Repeat until a valid signal region is found or no signal remains
+    
+    This works because:
+    - Real photoconverted signal is NOT present in T0
+    - Dirt particles ARE present in T0
+    - Any region that touches T0 must be dirt
+    
+    Args:
+        heatmap_smoothed: Smoothed heatmap (distance × timepoints) INCLUDING T0
+        distance_bins: Distance bin values (for logging)
+        region_grow_threshold: Threshold for region growing (default: 0.5)
+        quiet: Suppress logging
+    
+    Returns:
+        Tuple of (cleaned_heatmap, artifact_mask)
+        - cleaned_heatmap: heatmap with artifacts set to 0
+        - artifact_mask: boolean mask marking artifact regions
+    """
+    def log_info(msg):
+        if not quiet:
+            logging.info(msg)
+    
+    n_distance, n_time = heatmap_smoothed.shape
+    
+    # Initialize
+    heatmap_working = heatmap_smoothed.copy()
+    artifact_mask_full = np.zeros_like(heatmap_smoothed, dtype=bool)
+    
+    log_info("=" * 60)
+    log_info("ARTIFACT DETECTION BY T0 PRESENCE")
+    log_info("=" * 60)
+    log_info(f"Heatmap shape: {heatmap_working.shape} (distance × time, including T0)")
+    log_info(f"Region grow threshold: {region_grow_threshold}")
+    log_info("Strategy: Any region touching T0 is an artifact")
+    
+    iteration = 0
+    max_iterations = 100  # Safety limit
+    
+    while iteration < max_iterations:
+        iteration += 1
+        
+        # Find brightest point in remaining data
+        if np.max(heatmap_working) <= 0:
+            log_info(f"\nNo more signal remaining after {iteration-1} iterations")
+            break
+        
+        max_idx = np.unravel_index(np.argmax(heatmap_working), heatmap_working.shape)
+        seed_d, seed_t = max_idx
+        seed_val = heatmap_working[seed_d, seed_t]
+        
+        log_info(f"\nIteration {iteration}:")
+        log_info(f"  Seed: distance={distance_bins[seed_d]:.1f}, time=T{seed_t}, intensity={seed_val:.2f}")
+        
+        # Region growing from this seed
+        region_mask = np.zeros_like(heatmap_working, dtype=bool)
+        visited = np.zeros_like(heatmap_working, dtype=bool)
+        queue = deque([(seed_d, seed_t)])
+        visited[seed_d, seed_t] = True
+        region_mask[seed_d, seed_t] = True
+        
+        current_max = seed_val
+        neighbors_offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # 4-connectivity
+        
+        while queue:
+            d_idx, t_idx = queue.popleft()
+            
+            for d_offset, t_offset in neighbors_offsets:
+                nd = d_idx + d_offset
+                nt = t_idx + t_offset
+                
+                if 0 <= nd < n_distance and 0 <= nt < n_time:
+                    if not visited[nd, nt]:
+                        visited[nd, nt] = True
+                        neighbor_val = heatmap_working[nd, nt]
+                        
+                        if neighbor_val > current_max:
+                            current_max = neighbor_val
+                        
+                        if neighbor_val >= current_max * region_grow_threshold:
+                            region_mask[nd, nt] = True
+                            queue.append((nd, nt))
+        
+        region_size = np.sum(region_mask)
+        log_info(f"  Region size: {region_size} pixels")
+        
+        # Check if region touches T0 (timepoint index 0)
+        touches_t0 = np.any(region_mask[:, 0])
+        
+        if touches_t0:
+            # This is an artifact - mark it and remove from working data
+            t0_pixels = np.sum(region_mask[:, 0])
+            log_info(f"  ⚠️  ARTIFACT DETECTED (touches T0 with {t0_pixels} pixels)")
+            log_info(f"  Removing artifact from heatmap...")
+            artifact_mask_full |= region_mask
+            heatmap_working[region_mask] = 0
+        else:
+            # This is valid signal - stop searching
+            timepoints_present = np.where(np.any(region_mask, axis=0))[0]
+            log_info(f"  ✓ VALID SIGNAL FOUND (does not touch T0)")
+            log_info(f"  Signal timepoint range: T{np.min(timepoints_present)} to T{np.max(timepoints_present)}")
+            log_info(f"  Stopping artifact detection - valid signal identified")
+            break
+    
+    if iteration >= max_iterations:
+        logging.warning(f"Reached max iterations ({max_iterations}) - may not have found valid signal")
+    
+    # Clean the original heatmap by setting artifact regions to 0
+    heatmap_cleaned = heatmap_smoothed.copy()
+    heatmap_cleaned[artifact_mask_full] = 0
+    
+    n_artifact_pixels = np.sum(artifact_mask_full)
+    pct_artifact = (n_artifact_pixels / artifact_mask_full.size) * 100
+    
+    log_info("=" * 60)
+    log_info(f"ARTIFACT DETECTION COMPLETE")
+    log_info(f"  Total iterations: {iteration}")
+    log_info(f"  Artifact pixels removed: {n_artifact_pixels} ({pct_artifact:.2f}%)")
+    if iteration < max_iterations:
+        log_info(f"  Valid signal region identified and preserved")
+    log_info("=" * 60)
+    
+    return heatmap_cleaned, artifact_mask_full
+
+
+def detect_and_track_artifacts(
+    heatmap_data: np.ndarray,
+    distance_bins: np.ndarray,
+    artifact_threshold_percentile: float = 95.0,
+    tracking_tolerance_distance: float = 5.0,
+    tracking_tolerance_time: int = 3,
+    quiet: bool = False
+) -> np.ndarray:
+    """
+    Detect bright artifacts in T0 and track them through time.
+    
+    Strategy:
+    1. Identify bright pixels in T0 using percentile threshold
+    2. Track each artifact through subsequent timepoints
+    3. Use spatial proximity to follow artifacts as they drift
+    4. Create a mask to exclude artifact regions from analysis
+    
+    Args:
+        heatmap_data: Raw heatmap (distance_bins × timepoints) including T0
+        distance_bins: Distance bin values (in same units as tracking_tolerance_distance)
+        artifact_threshold_percentile: Percentile threshold for artifact detection in T0 (default: 95.0)
+        tracking_tolerance_distance: Max distance an artifact can move between timepoints (default: 5.0)
+        tracking_tolerance_time: Max timepoints to bridge gaps in tracking (default: 3)
+        quiet: Suppress logging output (default: False)
+    
+    Returns:
+        Boolean mask (distance_bins × timepoints) marking artifact regions to exclude
+    """
+    def log_info(msg):
+        if not quiet:
+            logging.info(msg)
+    
+    num_distance_bins, T_all = heatmap_data.shape
+    
+    # Step 1: Detect artifacts in T0 using percentile threshold
+    t0_data = heatmap_data[:, 0]  # T0 column
+    
+    # Handle NaN values in T0
+    t0_data_clean = np.nan_to_num(t0_data, nan=0.0)
+    
+    # Calculate threshold based on percentile
+    threshold = np.percentile(t0_data_clean, artifact_threshold_percentile)
+    t0_artifact_mask = t0_data_clean > threshold
+    
+    # Get artifact positions (indices where artifacts are detected)
+    artifact_indices = np.where(t0_artifact_mask)[0]
+    artifact_positions = distance_bins[artifact_indices]
+    
+    log_info(f"Artifact detection in T0:")
+    log_info(f"  Threshold (>{artifact_threshold_percentile}th percentile): {threshold:.2f}")
+    log_info(f"  Detected {len(artifact_positions)} artifact pixels in T0")
+    
+    if len(artifact_positions) == 0:
+        log_info("  No artifacts detected - returning zero mask")
+        return np.zeros_like(heatmap_data, dtype=bool)
+    
+    # Step 2: Track artifacts through time
+    artifact_mask_full = np.zeros_like(heatmap_data, dtype=bool)
+    artifact_mask_full[:, 0] = t0_artifact_mask  # Mark T0 artifacts
+    
+    # Track each artifact independently
+    for start_idx in artifact_indices:
+        start_pos = distance_bins[start_idx]
+        current_pos_idx = start_idx
+        current_pos = start_pos
+        last_detected_t = 0
+        
+        trajectory = [(0, current_pos_idx, current_pos)]  # (time, idx, position)
+        
+        for t in range(1, T_all):
+            # Search within tracking_tolerance_distance around last known position
+            search_lower = current_pos - tracking_tolerance_distance
+            search_upper = current_pos + tracking_tolerance_distance
+            
+            search_mask = (distance_bins >= search_lower) & (distance_bins <= search_upper)
+            search_indices = np.where(search_mask)[0]
+            
+            if len(search_indices) > 0:
+                # Get intensities in search region
+                search_intensities = heatmap_data[search_indices, t]
+                search_intensities_clean = np.nan_to_num(search_intensities, nan=0.0)
+                
+                # Find brightest point in search region
+                if np.max(search_intensities_clean) > 0:
+                    local_max_idx = np.argmax(search_intensities_clean)
+                    new_pos_idx = search_indices[local_max_idx]
+                    new_pos = distance_bins[new_pos_idx]
+                    new_intensity = search_intensities_clean[local_max_idx]
+                    
+                    # Check if intensity is still high enough (artifact-like)
+                    # Use adaptive threshold: 30% of original threshold
+                    if new_intensity > threshold * 0.3:
+                        artifact_mask_full[new_pos_idx, t] = True
+                        current_pos_idx = new_pos_idx
+                        current_pos = new_pos
+                        last_detected_t = t
+                        trajectory.append((t, new_pos_idx, new_pos))
+                        continue
+            
+            # Lost track - check if within time tolerance
+            if t - last_detected_t > tracking_tolerance_time:
+                break  # Artifact disappeared or moved too far
+        
+        if len(trajectory) > 1:
+            log_info(f"  Artifact at distance {start_pos:.1f}: tracked for {len(trajectory)} timepoints")
+    
+    n_masked = np.sum(artifact_mask_full)
+    n_total = artifact_mask_full.size
+    pct_masked = (n_masked / n_total) * 100
+    
+    log_info(f"Artifact tracking complete:")
+    log_info(f"  Masked {n_masked} / {n_total} pixels ({pct_masked:.2f}%)")
+    log_info(f"  Timepoints affected: {np.sum(np.any(artifact_mask_full, axis=0))} / {T_all}")
+    
+    return artifact_mask_full
+
+
+def visualize_artifact_detection(
+    heatmap_data: np.ndarray,
+    artifact_mask: np.ndarray,
+    distance_bins: np.ndarray,
+    output_path: str,
+    artifact_threshold_percentile: float,
+    colormap: str = 'viridis'
+) -> None:
+    """
+    Create diagnostic visualization of artifact detection and tracking.
+    
+    Args:
+        heatmap_data: Raw heatmap data (distance × time)
+        artifact_mask: Boolean mask of detected artifacts
+        distance_bins: Distance bin values
+        output_path: Path to save visualization
+        artifact_threshold_percentile: Percentile threshold used
+        colormap: Matplotlib colormap name
+    """
+    num_distance_bins, T_all = heatmap_data.shape
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    # Plot 1: T0 with detected artifacts highlighted
+    ax1 = axes[0, 0]
+    t0_data = heatmap_data[:, 0]
+    t0_artifact_mask = artifact_mask[:, 0]
+    
+    ax1.plot(distance_bins, t0_data, 'b-', linewidth=2, label='T0 intensity')
+    
+    # Highlight artifacts
+    if np.any(t0_artifact_mask):
+        artifact_distances = distance_bins[t0_artifact_mask]
+        artifact_intensities = t0_data[t0_artifact_mask]
+        ax1.scatter(artifact_distances, artifact_intensities, c='red', s=100, 
+                   marker='x', linewidths=3, label=f'Artifacts (>{artifact_threshold_percentile}%ile)', zorder=5)
+    
+    ax1.set_xlabel('Distance', fontweight='bold', fontsize=12)
+    ax1.set_ylabel('Intensity', fontweight='bold', fontsize=12)
+    ax1.set_title('T0: Artifact Detection', fontweight='bold', fontsize=14)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Artifact mask over time (heatmap)
+    ax2 = axes[0, 1]
+    artifact_mask_display = artifact_mask.astype(float)
+    
+    im2 = ax2.imshow(artifact_mask_display, aspect='auto', cmap='Reds', 
+                     extent=[0, T_all, distance_bins[-1], distance_bins[0]], 
+                     interpolation='nearest')
+    ax2.set_xlabel('Timepoint', fontweight='bold', fontsize=12)
+    ax2.set_ylabel('Distance', fontweight='bold', fontsize=12)
+    ax2.set_title('Artifact Mask Over Time', fontweight='bold', fontsize=14)
+    plt.colorbar(im2, ax=ax2, label='Masked')
+    
+    # Plot 3: Original heatmap with artifact overlay
+    ax3 = axes[1, 0]
+    
+    # Normalize heatmap for display
+    heatmap_display = np.nan_to_num(heatmap_data, nan=0.0)
+    vmin, vmax = np.percentile(heatmap_display, [1, 99])
+    
+    im3 = ax3.imshow(heatmap_display, aspect='auto', cmap=colormap, 
+                     extent=[0, T_all, distance_bins[-1], distance_bins[0]],
+                     vmin=vmin, vmax=vmax, interpolation='nearest')
+    
+    # Overlay artifact contours
+    ax3.contour(artifact_mask, levels=[0.5], colors='red', linewidths=2, 
+               extent=[0, T_all, distance_bins[-1], distance_bins[0]])
+    
+    ax3.set_xlabel('Timepoint', fontweight='bold', fontsize=12)
+    ax3.set_ylabel('Distance', fontweight='bold', fontsize=12)
+    ax3.set_title('Original Heatmap + Artifact Contours', fontweight='bold', fontsize=14)
+    plt.colorbar(im3, ax=ax3, label='Intensity')
+    
+    # Plot 4: Masked heatmap (after artifact removal)
+    ax4 = axes[1, 1]
+    
+    heatmap_masked = heatmap_data.copy()
+    heatmap_masked[artifact_mask] = np.nan
+    heatmap_masked_display = np.nan_to_num(heatmap_masked, nan=0.0)
+    
+    im4 = ax4.imshow(heatmap_masked_display, aspect='auto', cmap=colormap,
+                     extent=[0, T_all, distance_bins[-1], distance_bins[0]],
+                     vmin=vmin, vmax=vmax, interpolation='nearest')
+    
+    ax4.set_xlabel('Timepoint', fontweight='bold', fontsize=12)
+    ax4.set_ylabel('Distance', fontweight='bold', fontsize=12)
+    ax4.set_title('Cleaned Heatmap (Artifacts Removed)', fontweight='bold', fontsize=14)
+    plt.colorbar(im4, ax=ax4, label='Intensity')
+    
+    # Overall title
+    n_artifacts_t0 = np.sum(artifact_mask[:, 0])
+    n_total_masked = np.sum(artifact_mask)
+    pct_masked = (n_total_masked / artifact_mask.size) * 100
+    
+    fig.suptitle(f'Artifact Detection Diagnostics\n'
+                f'T0: {n_artifacts_t0} artifacts detected | '
+                f'Total: {n_total_masked} pixels masked ({pct_masked:.2f}%)',
+                fontsize=16, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    logging.info(f"Saved artifact diagnostic plot: {output_path}")
+
+
 def quantify_signal_spread_and_decay(
     tsv_path: str,
     output_path: str = None,
@@ -85,6 +868,13 @@ def quantify_signal_spread_and_decay(
     region_grow_threshold: float = 0.5,
     split_char: str = "__",
     metadata_columns: List[str] = ["Group"],
+    enable_artifact_removal: bool = False,
+    search_n_bins: int = 20,
+    use_clustering: bool = False,
+    clustering_eps: float = 0.20,
+    clustering_min_samples: int = 30,
+    clustering_intensity_threshold: float = 50.0,
+    subtract_t0: bool = False,
     quiet: bool = False
 ) -> Dict:
     """
@@ -92,13 +882,16 @@ def quantify_signal_spread_and_decay(
     
     This function:
     1. Loads pre-computed heatmap data from TSV file
-    2. Uses 'Sum_50_Random' column as heatmap values
-    3. Smooths heatmap in DISTANCE DIMENSION ONLY
-    4. Applies region growing segmentation from peak signal
-    5. Measures center of mass, distance spread, and signal area per timepoint
-    6. Plots signal trajectory and spread bounds over time
-    7. Returns quantitative metrics
-    8. Saves raw heatmap as TIF and metrics as TSV
+    2. (Optional) Subtracts T0 background to remove static dirt/artifacts
+    3. (Optional) Uses DBSCAN clustering OR origin-based seeding to segment signal
+    4. Uses 'Sum_50_Random' column for quantification heatmap
+    5. Saves 'Max' column as max projection heatmap for visualization
+    6. Smooths heatmap in DISTANCE DIMENSION ONLY
+    7. Applies segmentation (clustering or region growing)
+    8. Measures center of mass, distance spread, and signal area per timepoint
+    9. Plots signal trajectory and spread bounds over time
+    10. Returns quantitative metrics
+    11. Saves raw heatmaps and metrics as files
     
     Args:
         tsv_path: Path to the TSV file with heatmap data (from v2)
@@ -110,6 +903,13 @@ def quantify_signal_spread_and_decay(
         region_grow_threshold: Fraction of running maximum for region growing (default: 0.5)
         split_char: Character(s) to split filename for metadata (default: "__")
         metadata_columns: List of column names for metadata extraction (default: ["Group"])
+        enable_artifact_removal: Enable origin-based seeding to avoid debris (default: False)
+        search_n_bins: Number of distance bins from origin to search for seed (default: 20)
+        use_clustering: Use DBSCAN clustering instead of region growing (default: False)
+        clustering_eps: DBSCAN epsilon (neighborhood radius) in normalized space (default: 0.20)
+        clustering_min_samples: DBSCAN minimum cluster size (default: 30)
+        clustering_intensity_threshold: Percentile for pre-filtering pixels before clustering (default: 50.0)
+        subtract_t0: Subtract T0 background from all timepoints (default: False)
         quiet: Suppress info logging (default: False, used for parallel processing)
     
     Returns:
@@ -135,6 +935,7 @@ def quantify_signal_spread_and_decay(
     
     # Find the intensity column (look for Sum_N_Random pattern)
     sum_cols = [col for col in df.columns if col.startswith('Sum_') and '_Random' in col]
+    # TODO Here we also need to do the same for the other columns like Mean, etc
     
     if len(sum_cols) == 0:
         raise ValueError(f"No Sum_*_Random column found in {tsv_path}. Available columns: {df.columns.tolist()}")
@@ -142,9 +943,28 @@ def quantify_signal_spread_and_decay(
     intensity_col = sum_cols[0]  # Use the first matching column
     log_info(f"Using intensity column: {intensity_col}")
     
-    # Extract base filename from TSV filename
-    base_filename = Path(tsv_path).stem
-    log_info(f"Base filename: {base_filename}")
+    # Debug: Check the actual values in the TSV
+    log_info(f"DEBUG - Sample of intensity column values:")
+    log_info(f"  First 10 rows: {df[intensity_col].head(10).tolist()}")
+    log_info(f"  Value range: [{df[intensity_col].min()}, {df[intensity_col].max()}]")
+    log_info(f"  Non-zero count: {(df[intensity_col] != 0).sum()} / {len(df)}")
+    log_info(f"  NaN count: {df[intensity_col].isna().sum()}")
+    
+    # Extract base filename from TSV 'Base_Filename' column if available
+    if 'Base_Filename' in df.columns:
+        unique_base_filenames = df['Base_Filename'].unique()
+        if len(unique_base_filenames) == 1:
+            base_filename = unique_base_filenames[0]
+            log_info(f"Base filename from TSV 'Base_Filename' column: {base_filename}")
+        else:
+            log_info(f"WARNING: Multiple unique Base_Filename values found in TSV: {unique_base_filenames}")
+            log_info(f"  Falling back to deriving from TSV filename")
+            base_filename = Path(tsv_path).stem
+            log_info(f"  Base filename (fallback): {base_filename}")
+    else:
+        log_info("'Base_Filename' column not found in TSV - deriving from filename")
+        base_filename = Path(tsv_path).stem
+        log_info(f"Base filename: {base_filename}")
     
     # Extract experimental metadata from filename
     experiment_info = get_experiment_info_from_filename(base_filename, split=split_char, colname=metadata_columns)
@@ -153,6 +973,10 @@ def quantify_signal_spread_and_decay(
     # Pivot the data to create heatmap matrix
     # Rows = Mask_Index (distance bins), Columns = Timepoint
     pivot_df = df.pivot(index='Mask_Index', columns='Timepoint', values=intensity_col)
+    
+    log_info(f"DEBUG - Pivot table shape: {pivot_df.shape}")
+    log_info(f"DEBUG - Pivot table has NaN: {pivot_df.isna().any().any()}")
+    log_info(f"DEBUG - Pivot table min: {pivot_df.min().min()}, max: {pivot_df.max().max()}")
     
     # Get distance bins and timepoints
     distance_bins = pivot_df.index.values.astype(float)
@@ -167,115 +991,232 @@ def quantify_signal_spread_and_decay(
     # Convert to numpy array
     heatmap_data = pivot_df.values  # shape: (num_distance_bins, num_timepoints)
     
-    # Skip T=0 for quantification - only analyze T=1 onwards
-    if T > 1:
-        log_info(f"Skipping T=0, analyzing T=1 to T={T-1}")
-        heatmap_data = heatmap_data[:, 1:]  # Remove first timepoint
-        T_quantify = T - 1
-    else:
-        logging.warning("Only one timepoint found - cannot skip T=0")
-        T_quantify = T
+    log_info(f"DEBUG - After pivot.values: shape={heatmap_data.shape}, sum={np.nansum(heatmap_data)}, non-zero={np.count_nonzero(~np.isnan(heatmap_data) & (heatmap_data != 0))}")
     
-    # Save raw heatmap as TIF (before smoothing)
+    # Save raw heatmap BEFORE any processing (including T0)
     if output_path:
-        raw_heatmap_path = output_path.replace('.png', '_raw_heatmap.tif')
+        raw_heatmap_rand_path = output_path.replace('.png', '_raw_heatmap_rand.tif')
         
         # Convert to uint16 for saving (scale to full range)
-        heatmap_min = np.min(heatmap_data)
-        heatmap_max = np.max(heatmap_data)
+        heatmap_min = np.nanmin(heatmap_data)
+        heatmap_max = np.nanmax(heatmap_data)
+        
+        log_info(f"DEBUG - Scaling range (rand): [{heatmap_min}, {heatmap_max}]")
         
         if heatmap_max > heatmap_min:
             heatmap_scaled = ((heatmap_data - heatmap_min) / (heatmap_max - heatmap_min) * 65535).astype(np.uint16)
         else:
             heatmap_scaled = np.zeros_like(heatmap_data, dtype=np.uint16)
         
-        # Reshape to TCZYX format (single timepoint, single channel, single Z, Y=distance, X=time)
-        # For visualization: treat heatmap as an image where Y=distance bins, X=timepoints
-        heatmap_img = heatmap_scaled.T[np.newaxis, np.newaxis, np.newaxis, :, :]  # (1, 1, 1, T_quantify, num_distance_bins)
+        # Reshape to TCZYX format and save
+        heatmap_flipped = np.flipud(heatmap_scaled)
+        heatmap_img = heatmap_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
         
-        rp.save_tczyx_image(heatmap_img, raw_heatmap_path)
-        log_info(f"Saved raw heatmap as TIF: {raw_heatmap_path}")
-    
-    # === SMOOTH THE HEATMAP IN DISTANCE DIMENSION ONLY ===
-    heatmap_smoothed = gaussian_filter(heatmap_data, sigma=[smooth_sigma_distance, 0])
-    log_info(f"Applied Gaussian smoothing in distance dimension (σ_distance={smooth_sigma_distance}, σ_time=0)")
-    
-    # === SEGMENTATION USING REGION GROWING ===
-    from skimage.measure import regionprops
-    
-    log_info("Using region growing segmentation from peak signal")
-    log_info(f"Heatmap shape: {heatmap_smoothed.shape} (distance × time)")
-    log_info(f"Heatmap range: [{np.min(heatmap_smoothed):.2f}, {np.max(heatmap_smoothed):.2f}]")
-    
-    # Find the starting point: maximum intensity
-    max_idx = np.unravel_index(np.argmax(heatmap_smoothed), heatmap_smoothed.shape)
-    seed_distance_idx, seed_time_idx = max_idx
-    seed_value = heatmap_smoothed[seed_distance_idx, seed_time_idx]
-    
-    log_info(f"Seed point: distance_idx={seed_distance_idx} (distance={distance_bins[seed_distance_idx]:.1f}), "
-                f"time_idx={seed_time_idx} (T={seed_time_idx+1}), intensity={seed_value:.2f}")
-    
-    # Region growing with adaptive threshold
-    mask = np.zeros_like(heatmap_smoothed, dtype=bool)
-    visited = np.zeros_like(heatmap_smoothed, dtype=bool)
-    
-    queue = deque()
-    queue.append((seed_distance_idx, seed_time_idx))
-    visited[seed_distance_idx, seed_time_idx] = True
-    mask[seed_distance_idx, seed_time_idx] = True
-    
-    current_max = seed_value
-    log_info(f"Starting threshold: {current_max * region_grow_threshold:.2f} ({region_grow_threshold*100:.0f}% of seed)")
-    
-    n_distance, n_time = heatmap_smoothed.shape
-    neighbors_offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # 4-connectivity
-    
-    pixels_added = 0
-    max_iterations = n_distance * n_time
-    iteration = 0
-    
-    while queue and iteration < max_iterations:
-        iteration += 1
-        d_idx, t_idx = queue.popleft()
+        rp.save_tczyx_image(heatmap_img, raw_heatmap_rand_path)
+        log_info(f"Saved raw heatmap (random sampling, before artifact removal) as TIF: {raw_heatmap_rand_path}")
         
-        for d_offset, t_offset in neighbors_offsets:
-            nd_idx = d_idx + d_offset
-            nt_idx = t_idx + t_offset
+        # === GENERATE HEATMAP FROM MAXIMUM RADIAL INTENSITY (highest value at each distance bin) ===
+        if 'Max' in df.columns:
+            log_info("Generating max projection heatmap...")
             
-            if 0 <= nd_idx < n_distance and 0 <= nt_idx < n_time:
-                if not visited[nd_idx, nt_idx]:
-                    visited[nd_idx, nt_idx] = True
-                    
-                    neighbor_val = heatmap_smoothed[nd_idx, nt_idx]
-                    
-                    # Update running maximum if we found a brighter pixel
-                    if neighbor_val > current_max:
-                        current_max = neighbor_val
-                    
-                    # Include if above threshold (% of running max)
-                    if neighbor_val >= current_max * region_grow_threshold:
-                        mask[nd_idx, nt_idx] = True
-                        queue.append((nd_idx, nt_idx))
-                        pixels_added += 1
+            pivot_max_df = df.pivot(index='Mask_Index', columns='Timepoint', values='Max')
+            heatmap_max_data = pivot_max_df.values
+            
+            log_info(f"Max projection heatmap - min: {np.nanmin(heatmap_max_data)}, max: {np.nanmax(heatmap_max_data)}")
+            
+            # Scale to uint16
+            heatmap_max_min = np.nanmin(heatmap_max_data)
+            heatmap_max_max = np.nanmax(heatmap_max_data)
+            
+            if heatmap_max_max > heatmap_max_min:
+                heatmap_max_scaled = ((heatmap_max_data - heatmap_max_min) / (heatmap_max_max - heatmap_max_min) * 65535).astype(np.uint16)
+            else:
+                heatmap_max_scaled = np.zeros_like(heatmap_max_data, dtype=np.uint16)
+            
+            heatmap_max_flipped = np.flipud(heatmap_max_scaled)
+            heatmap_max_img = heatmap_max_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
+            
+            raw_heatmap_max_path = output_path.replace('.png', '_raw_heatmap_max.tif')
+            rp.save_tczyx_image(heatmap_max_img, raw_heatmap_max_path)
+            log_info(f"Saved raw heatmap (max projection, before artifact removal) as TIF: {raw_heatmap_max_path}")
     
-    log_info(f"Region growing complete: {np.sum(mask)} pixels (seed + {pixels_added})")
-    log_info(f"Final running maximum: {current_max:.2f}")
+    # === SMOOTH THE FULL HEATMAP FIRST (INCLUDING T0) ===
+    # This must happen BEFORE T0 subtraction so clustering/seeding can use smoothed T0 data
+    heatmap_data_clean = np.nan_to_num(heatmap_data, nan=0.0)
+    log_info(f"Replaced {np.sum(np.isnan(heatmap_data))} NaN values with 0 before smoothing")
     
-    # === CONNECTIVITY FILTERING ===
-    log_info("Applying connected component filtering...")
-    labeled_mask = label(mask, connectivity=1)
-    seed_label = labeled_mask[seed_distance_idx, seed_time_idx]
+    # Smooth in distance dimension only (not time) to avoid temporal bleeding
+    heatmap_full_smoothed = gaussian_filter(heatmap_data_clean, sigma=[smooth_sigma_distance, 0])
+    log_info(f"Applied Gaussian smoothing to FULL heatmap (σ_distance={smooth_sigma_distance}, σ_time=0)")
+    log_info(f"Heatmap full smoothed shape: {heatmap_full_smoothed.shape} (including T0)")
+
+    # flip Y axis
+    #rp.show_image(np.flipud(heatmap_full_smoothed)[np.newaxis, np.newaxis, np.newaxis, :, :], title="Smoothed Full Heatmap (including T0)", timer=2.0)
+    # This works relly welluntil now
+
+
+    # === T0 BACKGROUND SUBTRACTION (OPTIONAL) ===
+    if subtract_t0:
+        heatmap_full_smoothed = subtract_t0_background(heatmap_full_smoothed, quiet=quiet)
+        
+        # Save T0-subtracted heatmap
+        if output_path:
+            t0_subtracted_path = output_path.replace('.png', '_t0_subtracted.tif')
+            
+            heatmap_t0sub_min = np.nanmin(heatmap_full_smoothed)
+            heatmap_t0sub_max = np.nanmax(heatmap_full_smoothed)
+            
+            if heatmap_t0sub_max > heatmap_t0sub_min:
+                heatmap_t0sub_scaled = ((heatmap_full_smoothed - heatmap_t0sub_min) / (heatmap_t0sub_max - heatmap_t0sub_min) * 65535).astype(np.uint16)
+            else:
+                heatmap_t0sub_scaled = np.zeros_like(heatmap_full_smoothed, dtype=np.uint16)
+            
+            heatmap_t0sub_flipped = np.flipud(heatmap_t0sub_scaled)
+            heatmap_t0sub_img = heatmap_t0sub_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
+            
+            # rp.show_image(heatmap_t0sub_img, title="T0-Subtracted Heatmap (flipped Y)", timer=2.0)
+            # This works really well until now
+            rp.save_tczyx_image(heatmap_t0sub_img, t0_subtracted_path)
+            log_info(f"Saved T0-subtracted heatmap as TIF: {t0_subtracted_path}")
     
-    if seed_label == 0:
-        logging.warning("Seed point has label 0 after labeling - mask may be empty")
-        connected_mask = mask
+    # === PREPARE DATA FOR QUANTIFICATION (EXCLUDE T0) ===
+    if T > 1:
+        log_info(f"Skipping T=0 for quantification, analyzing T=1 to T={T-1}")
+        heatmap_smoothed = heatmap_full_smoothed[:, 1:]  # Remove T0 for quantification
+        T_quantify = T - 1
     else:
-        connected_mask = (labeled_mask == seed_label)
-        removed_pixels = np.sum(mask) - np.sum(connected_mask)
-        log_info(f"Removed {removed_pixels} disconnected pixels")
+        logging.warning("Only one timepoint found - cannot skip T=0")
+        heatmap_smoothed = heatmap_full_smoothed
+        T_quantify = T
     
-    mask = binary_fill_holes(connected_mask)
-    final_mask = mask
+    # === SEGMENTATION ===
+    
+    
+    if use_clustering:
+        # DBSCAN clustering segmentation
+        log_info("Using DBSCAN clustering for segmentation")
+
+        
+        # Use the already-smoothed full heatmap (including T0)
+        final_mask_with_t0 = segment_by_clustering(
+            heatmap_smoothed=heatmap_full_smoothed,
+            distance_bins=distance_bins,
+            intensity_threshold_percentile=clustering_intensity_threshold,
+            eps=clustering_eps,
+            min_samples=clustering_min_samples,
+            quiet=quiet,
+            visualize=(not quiet),  # Show visualization unless quiet mode
+            output_path=output_path
+        )
+        rp.show_image(final_mask_with_t0[np.newaxis, np.newaxis, np.newaxis, :, :], title="Final Mask with T0 (Clustering)", timer=2.0)
+        
+        # Remove T0 from mask for quantification
+        if final_mask_with_t0.shape[1] > 1:
+            final_mask = final_mask_with_t0[:, 1:]  # Skip T0
+        else:
+            final_mask = final_mask_with_t0
+        
+        log_info(f"Clustering segmentation: {np.sum(final_mask)} pixels (T0 excluded)")
+        
+    else:
+        # Region growing segmentation (original method)
+        log_info("Using region growing segmentation")
+        log_info(f"Heatmap shape: {heatmap_smoothed.shape} (distance × time, T0 excluded)")
+        log_info(f"Heatmap range: [{np.min(heatmap_smoothed):.2f}, {np.max(heatmap_smoothed):.2f}]")
+        
+        # Find the starting point
+        if enable_artifact_removal:
+            # Origin-based seeding to avoid debris
+            log_info("Origin-based seeding ENABLED (searches near distance=0, T1)")
+            
+            # Use the already-smoothed full heatmap (with T0)
+            seed_distance_idx_full, seed_time_idx_full = find_signal_seed_near_origin(
+                heatmap_smoothed=heatmap_full_smoothed,
+                distance_bins=distance_bins,
+                search_n_bins=search_n_bins,
+                quiet=quiet
+            )
+            
+            # Convert to T0-excluded indexing
+            seed_distance_idx = seed_distance_idx_full
+            seed_time_idx = seed_time_idx_full - 1  # Subtract 1 because heatmap_smoothed excludes T0
+            
+            if seed_time_idx < 0:
+                logging.warning("Seed found in T0 - this shouldn't happen with origin search. Using T=0 in T0-excluded data (T1).")
+                seed_time_idx = 0
+        else:
+            # Global maximum (original behavior)
+            log_info("Using global maximum as seed")
+            max_idx = np.unravel_index(np.argmax(heatmap_smoothed), heatmap_smoothed.shape)
+            seed_distance_idx, seed_time_idx = max_idx
+        
+        seed_value = heatmap_smoothed[seed_distance_idx, seed_time_idx]
+        log_info(f"Seed point: distance_idx={seed_distance_idx} (distance={distance_bins[seed_distance_idx]:.1f}), "
+                    f"time_idx={seed_time_idx} (T={seed_time_idx+1}), intensity={seed_value:.2f}")
+        
+        # Region growing with adaptive threshold
+        from skimage.measure import regionprops
+        
+        mask = np.zeros_like(heatmap_smoothed, dtype=bool)
+        visited = np.zeros_like(heatmap_smoothed, dtype=bool)
+        
+        queue = deque()
+        queue.append((seed_distance_idx, seed_time_idx))
+        visited[seed_distance_idx, seed_time_idx] = True
+        mask[seed_distance_idx, seed_time_idx] = True
+        
+        current_max = seed_value
+        log_info(f"Starting threshold: {current_max * region_grow_threshold:.2f} ({region_grow_threshold*100:.0f}% of seed)")
+        
+        n_distance, n_time = heatmap_smoothed.shape
+        neighbors_offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # 4-connectivity
+        
+        pixels_added = 0
+        max_iterations = n_distance * n_time
+        iteration = 0
+        
+        while queue and iteration < max_iterations:
+            iteration += 1
+            d_idx, t_idx = queue.popleft()
+            
+            for d_offset, t_offset in neighbors_offsets:
+                nd_idx = d_idx + d_offset
+                nt_idx = t_idx + t_offset
+                
+                if 0 <= nd_idx < n_distance and 0 <= nt_idx < n_time:
+                    if not visited[nd_idx, nt_idx]:
+                        visited[nd_idx, nt_idx] = True
+                        
+                        neighbor_val = heatmap_smoothed[nd_idx, nt_idx]
+                        
+                        # Update running maximum if we found a brighter pixel
+                        if neighbor_val > current_max:
+                            current_max = neighbor_val
+                        
+                        # Include if above threshold (% of running max)
+                        if neighbor_val >= current_max * region_grow_threshold:
+                            mask[nd_idx, nt_idx] = True
+                            queue.append((nd_idx, nt_idx))
+                            pixels_added += 1
+        
+        log_info(f"Region growing complete: {np.sum(mask)} pixels (seed + {pixels_added})")
+        log_info(f"Final running maximum: {current_max:.2f}")
+        
+        # === CONNECTIVITY FILTERING ===
+        log_info("Applying connected component filtering...")
+        labeled_mask = label(mask, connectivity=1)
+        seed_label = labeled_mask[seed_distance_idx, seed_time_idx]
+        
+        if seed_label == 0:
+            logging.warning("Seed point has label 0 after labeling - mask may be empty")
+            connected_mask = mask
+        else:
+            connected_mask = (labeled_mask == seed_label)
+            removed_pixels = np.sum(mask) - np.sum(connected_mask)
+            log_info(f"Removed {removed_pixels} disconnected pixels")
+        
+        mask = binary_fill_holes(connected_mask)
+        final_mask = mask
     
     log_info(f"Final mask: {np.sum(final_mask)} pixels")
     
@@ -586,6 +1527,13 @@ def process_single_tsv(
             region_grow_threshold=args.region_grow_threshold,
             split_char=args.split_char,
             metadata_columns=args.metadata_columns.split(',') if isinstance(args.metadata_columns, str) else args.metadata_columns,
+            enable_artifact_removal=args.enable_artifact_removal,
+            search_n_bins=args.search_n_bins,
+            use_clustering=args.use_clustering,
+            clustering_eps=args.clustering_eps,
+            clustering_min_samples=args.clustering_min_samples,
+            clustering_intensity_threshold=args.clustering_intensity_threshold,
+            subtract_t0=args.subtract_t0,
             quiet=quiet
         )
         
@@ -607,29 +1555,41 @@ def main():
 Example YAML config for run_pipeline.exe:
 ---
 run:
-- name: Quantify distance heatmaps from TSV (v3)
+- name: Quantify with DBSCAN clustering and T0 subtraction (recommended for dirt removal)
   environment: uv@3.11:quantify-distance-heatmap
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
-  - --input-search-pattern: '%YAML%/output_heatmaps/**/*_heatmap_data.tsv'
-  - --output-folder: '%YAML%/output_quantifications'
-  - --colormap: viridis
-  - --smooth-sigma-distance: 1.5
-  - --region-grow-threshold: 0.5
+  - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+  - --output-folder: '%YAML%/quantification_bulk'
+  - --use-clustering
+  - --subtract-t0
+  - --clustering-eps: 0.20
+  - --clustering-min-samples: 30
+  - --clustering-intensity-threshold: 50.0
   - --split-char: '__'
-  - --metadata-columns: Group,Replicate
+  - --metadata-columns: expID,Group,Replicate
 
-- name: Quantify with custom parameters
+- name: Quantify with T0 subtraction only (simple background removal)
   environment: uv@3.11:quantify-distance-heatmap
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
   - --input-search-pattern: '%YAML%/output_heatmaps/**/*_heatmap_data.tsv'
   - --output-folder: '%YAML%/output_quantifications'
-  - --smooth-sigma-distance: 2.0
-  - --region-grow-threshold: 0.6
-  - --parallel
+  - --subtract-t0
+  - --smooth-sigma-distance: 1.5
+
+- name: Quantify with origin-based seeding (avoids debris far from photoconversion site)
+  environment: uv@3.11:quantify-distance-heatmap
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
+  - --input-search-pattern: '%YAML%/output_heatmaps/**/*_heatmap_data.tsv'
+  - --output-folder: '%YAML%/output_quantifications'
+  - --enable-artifact-removal
+  - --search-n-bins: 20
+  - --smooth-sigma-distance: 1.5
 """
     )
     
@@ -644,16 +1604,30 @@ run:
     parser.add_argument('--mask-alpha', type=float, default=0.5,
                        help='Alpha transparency for mask overlay (default: 0.5)')
     parser.add_argument('--region-grow-threshold', type=float, default=0.5,
-                       help='Fraction of running maximum for region growing (default: 0.5)')
+                       help='Fraction of running maximum for region growing and artifact detection (default: 0.5)')
     parser.add_argument('--split-char', type=str, default='__',
                        help='Character(s) to split filename for metadata (default: "__")')
     parser.add_argument('--metadata-columns', type=str, default='Group',
                        help='Comma-separated list of metadata column names (default: "Group")')
+    parser.add_argument('--enable-artifact-removal', action='store_true',
+                       help='Enable origin-based seeding to avoid debris (finds seed near distance=0, T1)')
+    parser.add_argument('--search-n-bins', type=int, default=20,
+                       help='Number of distance bins from origin to search for seed when artifact removal enabled (default: 20)')
+    parser.add_argument('--use-clustering', action='store_true',
+                       help='Use DBSCAN clustering instead of region growing (more robust to separated dirt)')
+    parser.add_argument('--clustering-eps', type=float, default=0.20,
+                       help='DBSCAN epsilon (neighborhood radius) in normalized space (default: 0.20)')
+    parser.add_argument('--clustering-min-samples', type=int, default=30,
+                       help='DBSCAN minimum cluster size in pixels (default: 30)')
+    parser.add_argument('--clustering-intensity-threshold', type=float, default=50.0,
+                       help='Percentile threshold for pre-filtering pixels before clustering (default: 50.0)')
+    parser.add_argument('--subtract-t0', action='store_true',
+                       help='Subtract T0 background from all timepoints (removes static dirt/artifacts)')
     parser.add_argument('--force-show', action='store_true',
                        help='Display plots even when saving to file')
-    parser.add_argument('--parallel', action='store_true',
-                       help='Use parallel processing for multiple files')
-    parser.add_argument('--log-level', type=str, default='INFO',
+    parser.add_argument('--no-parallel', action='store_true',
+                       help='Disable parallel processing (processes files sequentially)')
+    parser.add_argument('--log-level', type=str, default='WARNING',
                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        help='Logging level (default: INFO)')
     
@@ -678,7 +1652,7 @@ run:
     os.makedirs(args.output_folder, exist_ok=True)
     
     # Process files
-    if args.parallel and len(tsv_files) > 1:
+    if not args.no_parallel and len(tsv_files) > 1:
         # Parallel processing with progress bar
         n_workers = min(cpu_count(), len(tsv_files))
         logging.info(f"Using {n_workers} parallel workers")
@@ -715,3 +1689,6 @@ run:
 
 if __name__ == "__main__":
     main()
+    
+
+

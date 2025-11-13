@@ -6,6 +6,8 @@ import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv
 import numpy as np
 import warnings
 
+import tifffile
+
 
 
 # Suppress all cryptography-related warnings (TripleDES, Blowfish deprecations from paramiko)
@@ -453,7 +455,8 @@ def show_image(
     mask: Union[BioImage, np.ndarray, str, None] = None,
     title: Optional[str] = None,
     alpha: float = 0.3,
-    timer: float = -1
+    timer: float = -1,
+    show_area_chart: Optional[bool] = None
 ) -> None:
     """
     Quick visualization of mask segmentation over time.
@@ -466,13 +469,17 @@ def show_image(
         image: BioImage, numpy array (TCZYX), or path to image file
         mask: Optional mask as BioImage, numpy array (TCZYX), or path to mask file
         title: Optional title for the figure. If None, uses image filename if available.
-        alpha: Transparency of mask overlay (0-1, default: 0.5)
+        alpha: Transparency of mask overlay (0-1, default: 0.3)
         timer: Duration to show the plot in seconds. If -1 (default), blocks until user closes.
                If > 0, auto-closes after the specified duration.
+        show_area_chart: Whether to include the area chart in the visualization. 
+                         If None (default), automatically includes area chart only if T>1.
+                         Set to True to force area chart display, False to skip it (shows only image overlays).
     
     Examples:
-        >>> show_image("path/to/image.tif", mask="path/to/mask.tif")
-        >>> show_image(img_array, mask=mask_array, title="My Segmentation")
+        >>> show_image("path/to/image.tif", mask="path/to/mask.tif")  # Auto-show area chart if T>1
+        >>> show_image(img_array, mask=mask_array, show_area_chart=True)  # Force area chart even if T=1
+        >>> show_image(img, mask=mask, show_area_chart=False)  # Skip area chart, show only overlays
         >>> show_image(img, mask=mask, timer=1.0)  # Auto-close after 1 second
     """
     import matplotlib.pyplot as plt
@@ -498,6 +505,13 @@ def show_image(
     
     T, C, Z, Y, X = img_data.shape
     
+    # Auto-determine whether to show area chart: default is show if T > 1
+    if show_area_chart is None:
+        show_area_chart = (T > 1)
+    
+    # Always show the plot - show_area_chart only controls the bottom chart panel
+    # (This used to skip display entirely, but that was confusing)
+    
     # Load and process mask if provided
     mask_data = None
     mT = T  # Default to image timepoints
@@ -520,16 +534,16 @@ def show_image(
         if (Y, X) != (mY, mX):
             raise ValueError(f"Image and mask XY dimensions must match. Got image: ({Y}, {X}), mask: ({mY}, {mX})")
     
-    # Create figure layout based on whether we have mask data
-    if mask_data is not None:
-        # With mask: 2x2 grid (top: first/last timepoint, bottom: area chart)
+    # Create figure layout based on whether we have mask data and area chart
+    if mask_data is not None and show_area_chart:
+        # With mask and area chart: 2x2 grid (top: first/last timepoint, bottom: area chart)
         fig = plt.figure(figsize=(10, 7))
         gs = fig.add_gridspec(2, 2, height_ratios=[1, 1], hspace=0.3, wspace=0.2)
         ax_first = fig.add_subplot(gs[0, 0])
         ax_last = fig.add_subplot(gs[0, 1])
         ax_chart = fig.add_subplot(gs[1, :])
     else:
-        # Without mask: just show first and last timepoint side by side
+        # Without mask or without area chart: just show first and last timepoint side by side
         fig, (ax_first, ax_last) = plt.subplots(1, 2, figsize=(10, 4))
         ax_chart = None
     
@@ -705,6 +719,43 @@ def save_imagej_roi(
     # Save to file
     roi.tofile(output_path)
 
+def save_mask(
+    mask: np.ndarray,
+    output_path: str,
+    as_binary: bool = False
+) -> None:
+    """
+    Save mask as ImageJ-compatible TIFF.
+    
+    Args:
+        mask: 5D mask (T, C, Z, Y, X) in TCZYX order
+        output_path: Output file path
+        as_binary: If True, convert to 0/255 binary, else keep as-is
+    """
+    if as_binary:
+        # Convert to binary (0 or 255) 8-bit mask
+        mask_out = (mask > 0).astype(np.uint8) * 255
+    else:
+        # For distance matrices, we want to preserve the float values
+        # But ImageJ works better with specific dtypes
+        if mask.dtype == np.float32 or mask.dtype == np.float64:
+            mask_out = mask.astype(np.float32)
+        else:
+            mask_out = mask
+    
+    # Remove C dimension (should be 1) and convert to TZYX for ImageJ
+    if mask_out.shape[1] == 1:
+        mask_out = mask_out[:, 0, :, :, :]  # (T, Z, Y, X)
+    
+    # Save as ImageJ-compatible TIFF
+    # ImageJ expects TZYX order for stacks
+    tifffile.imwrite(
+        output_path,
+        mask_out,
+        imagej=True,
+        metadata={'axes': 'TZYX'},
+        compression='deflate'
+    )
 
 def save_imagej_rois_from_mask(
     mask: Union[np.ndarray, BioImage],
@@ -741,7 +792,7 @@ def save_imagej_rois_from_mask(
         >>> # Save as a single zip archive
         >>> count = save_imagej_rois_from_mask(mask, "output_rois.zip")
     """
-    from skimage import measure
+    from cv2 import findContours, RETR_EXTERNAL, CHAIN_APPROX_NONE
     from roifile import ImagejRoi, roiwrite
     
     # Convert to numpy array if BioImage
@@ -764,6 +815,7 @@ def save_imagej_rois_from_mask(
     
     rois = []
     roi_count = 0
+    empty_count = 0
     
     for t in range(T):
         for c in range(C):
@@ -776,23 +828,28 @@ def save_imagej_rois_from_mask(
                         continue
                     
                     # Create binary mask for this label
-                    mask_single = (plane == label).astype(np.uint8)
+                    label_mask = (plane == label).astype(np.uint8)
                     
-                    # Find contours
-                    contours = measure.find_contours(mask_single, 0.5)
+                    if label_mask.sum() == 0:
+                        continue  # Skip if label has no pixels
+                    
+                    # Find contours using OpenCV
+                    contours, _ = findContours(label_mask, mode=RETR_EXTERNAL, method=CHAIN_APPROX_NONE)
                     
                     if not contours:
+                        empty_count += 1
                         continue
                     
-                    # Use the largest contour
-                    contour = max(contours, key=len)
+                    # Take the largest contour by number of points
+                    cmax = np.argmax([c.shape[0] for c in contours])
+                    pix = contours[cmax].astype(int).squeeze()
                     
-                    if len(contour) < 3:
+                    if pix.ndim != 2 or pix.shape[0] <= 4:
+                        empty_count += 1
                         continue
                     
-                    # Convert to ImageJ format (flip y,x to x,y)
-                    coords_xy = np.fliplr(contour).astype(np.int16)
-                    roi = ImagejRoi.frompoints(coords_xy)
+                    # Create ROI from contour points
+                    roi = ImagejRoi.frompoints(pix)
                     roi.position = z + 1  # ImageJ uses 1-based indexing
                     
                     if save_as_zip:
@@ -811,6 +868,9 @@ def save_imagej_rois_from_mask(
     # Save as zip if requested
     if save_as_zip and rois:
         roiwrite(output_path, rois)
+    
+    if empty_count > 0:
+        print(f"Empty outlines found, saved {roi_count} ImageJ ROIs (skipped {empty_count} empty contours).")
     
     return roi_count
 

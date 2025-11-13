@@ -19,6 +19,7 @@ import os
 import sys
 import argparse
 import logging
+from matplotlib import image
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -214,6 +215,7 @@ def quantify_per_maskindex(
         DataFrame with columns:
             - Mask_Index: The mask value (e.g., nucleus ID, distance bin)
             - Timepoint: Timepoint index (0, 1, 2, ...)
+            - Channel: The image channel that was quantified
             - Count: Number of pixels with this mask value
             - Min, Max, Mean, Median, Mode: Basic statistics
             - Std: Standard deviation
@@ -227,6 +229,18 @@ def quantify_per_maskindex(
     # Load data - use dask_data for lazy loading
     img = rp.load_tczyx_image(image_path)
     mask = rp.load_tczyx_image(mask_path)
+
+    # Create filtered mask - keep values < 100, set others to 0
+    # mask_filtered = mask.data.copy()
+    # mask_filtered[mask_filtered >= 100] = 0
+    # rp.show_image(
+    #     image=img,
+    #     mask=mask_filtered,
+    #     title="Image with Mask Overlay (values < 100)",
+    #     alpha=0.5,
+    #     timer=-1
+    # )
+    # Input was as expected 
     
     T, C, Z, Y, X = img.shape
     mT, mC, mZ, mY, mX = mask.shape
@@ -312,7 +326,8 @@ def quantify_per_maskindex(
         for idx, stats_values in stats_dict.items():
             row = {
                 'Mask_Index': idx,
-                'Timepoint': t
+                'Timepoint': t,
+                'Channel': channel
             }
             row.update(stats_values)
             
@@ -333,7 +348,7 @@ def quantify_per_maskindex(
     if metadata_dict:
         metadata_cols = list(metadata_dict.keys())
         sum_col_name = f'Sum_{max_sample_pixels}_Random' if use_sampling and max_sample_pixels > 0 else 'Sum_N_Random'
-        measurement_cols = ['Mask_Index', 'Timepoint', 'Count', 'Min', 'Max', 
+        measurement_cols = ['Mask_Index', 'Timepoint', 'Channel', 'Count', 'Min', 'Max', 
                            'Mean', 'Median', 'Mode', 'Std', 'Sum', sum_col_name]
         df = df[metadata_cols + measurement_cols]
     
