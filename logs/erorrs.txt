@@ -1,0 +1,31 @@
+PS C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline> & "C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\Activate.ps1"
+& : File C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\Activate.ps1 cannot be loaded because running scripts is disabled on this 
+system. For more information, see about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.
+At line:1 char:3
++ & "C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_co ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : SecurityError: (:) [], PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+PS C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline> python
+PS C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline> & 'c:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\python.exe'
+Python 3.11.13 (main, Sep  2 2025, 14:14:37) [MSC v.1944 64 bit (AMD64)] on win32
+
+
+
+
+PS C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline> & "C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\Activate.ps1"
+& : File C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\Activate.ps1 cannot be loaded because running scripts is disabled on this system. For more information, see about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.
+At line:1 char:3
++ & "C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_co ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : SecurityError: (:) [], PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+
+
+    ▶ Processing segment: convert_to_tif
+uv@3.11:convert-to-tif
+[note] Requesting UV_PYTHON= (override via UV_DEFAULT_PYTHON). 3.11 is recommended for best wheel coverage on Windows.
+Constructed command: [C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\.venv_convert-to-tif\Scripts\python.exe C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline\standard_code/python/convert_to_tif.py --input-search-pattern C:\Users\Nikon Analysis\Documents\biphub\test_files\del.tif --output-folder C:\Users\Nikon Analysis\Documents\biphub\test_files --no-parallel] with UV_PYTHON=
+Error executing command: exit status 0xc0000005
+2025/11/13 14:57:37 Error
+PS C:\Users\Nikon Analysis\Documents\biphub\git\run_pipeline> 

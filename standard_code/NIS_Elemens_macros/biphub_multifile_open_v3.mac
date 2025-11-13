@@ -56,7 +56,55 @@ int main() {
     }
     
     // Set run_pipeline.exe path (adjust if needed)
-    strcpy(run_pipeline_path, "C:/biphub/git/run_pipeline/run_pipeline.exe");
+    strcpy(run_pipeline_path, "C:/Users/Nikon Analysis/Documents/biphub/git/run_pipeline/run_pipeline.exe");
+    
+    // Build temp folder path from run_pipeline path
+    // Find last occurrence of "run_pipeline" and truncate after it, then add /temp
+    last_period = -1;
+    for (idx = 0; idx < strlen(run_pipeline_path); idx = idx + 1) {
+        if (run_pipeline_path[idx] == 114) {  // 'r'
+            // Check if this is "run_pipeline"
+            if ((idx + 12 < strlen(run_pipeline_path)) &&
+                (run_pipeline_path[idx + 1] == 117) &&  // 'u'
+                (run_pipeline_path[idx + 2] == 110) &&  // 'n'
+                (run_pipeline_path[idx + 3] == 95) &&   // '_'
+                (run_pipeline_path[idx + 4] == 112) &&  // 'p'
+                (run_pipeline_path[idx + 5] == 105) &&  // 'i'
+                (run_pipeline_path[idx + 6] == 112) &&  // 'p'
+                (run_pipeline_path[idx + 7] == 101) &&  // 'e'
+                (run_pipeline_path[idx + 8] == 108) &&  // 'l'
+                (run_pipeline_path[idx + 9] == 105) &&  // 'i'
+                (run_pipeline_path[idx + 10] == 110) && // 'n'
+                (run_pipeline_path[idx + 11] == 101)) { // 'e'
+                last_period = idx + 12;  // Position after "run_pipeline"
+            }
+        }
+    }
+    
+    // Build temp paths
+    if (last_period > 0) {
+        // Copy up to and including "run_pipeline"
+        for (idx = 0; idx < last_period; idx = idx + 1) {
+            temp_yaml_path[idx] = run_pipeline_path[idx];
+        }
+        temp_yaml_path[last_period] = 0;
+        
+        // Create temp directory if it doesn't exist
+        strcpy(temp_folder_path, temp_yaml_path);
+        strcat(temp_folder_path, "/temp");
+        MakeDirectory(temp_folder_path);
+        
+        // Now build the full paths
+        strcat(temp_yaml_path, "/temp/nis_converter_temp.yaml");
+        
+        // Build launcher path
+        for (idx = 0; idx < last_period; idx = idx + 1) {
+            temp_launcher_path[idx] = run_pipeline_path[idx];
+        }
+        temp_launcher_path[last_period] = 0;
+        strcat(temp_launcher_path, "/temp/nis_pipeline_launcher.py");
+    }
+    
     
     // Verify run_pipeline.exe exists
     if (!ExistFile(run_pipeline_path)) {
@@ -248,7 +296,8 @@ int main() {
                 }
                 
                 // Build YAML configuration for run_pipeline
-                strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+                // Now defined in the beguinning from run_pipeline path
+
                 
                 // Extract folder path
                 strcpy(temp_folder_path, selected_file);
@@ -284,7 +333,7 @@ int main() {
                 
                 // Create Python launcher script
                 if (ExistFile(temp_yaml_path)) {
-                    strcpy(temp_launcher_path, "C:/temp/nis_pipeline_launcher.py");
+                    // temp_launcher_path already built from run_pipeline_path at startup
                     
                     strcpy(python_launcher_script, "import subprocess\nimport sys\n\n");
                     strcat(python_launcher_script, "print('=' * 60)\n");
@@ -402,5 +451,5 @@ int main() {
     SetCommandText("Multi-file conversion completed!");
     WaitText(2, display_msg);
 }
-RunMacro("F:\BIPHUB-OYVIND\test_data\different_fileformats\Apsana_large_czi\29102025_Apsana-04_1\reassemble_to_nd2.mac");
- 
+//RunMacro("F:\BIPHUB-OYVIND\test_data\different_fileformats\Apsana_large_czi\29102025_Apsana-04_1\reassemble_to_nd2.mac");
+  

@@ -1,8 +1,8 @@
 run:
   - name: convert_to_tif
-    environment: uv:convert-to-tif
+    environment: uv@3.11:convert-to-tif
     commands:
       - python: '%REPO%/standard_code/python/convert_to_tif.py'
-      - --input-search-pattern: 'F:/BIPHUB-OYVIND/test_data/different_fileformats/DeltaVision example//EW25-63bDV_HeLa-CETN-mChTub_scr_si8_08_R3D_D3D_PRJ.dv'
-      - --output-folder: 'F:/BIPHUB-OYVIND/test_data/different_fileformats/DeltaVision example/'
+      - --input-search-pattern: 'C:\Users\Nikon Analysis\Documents\biphub\test_files\del.tif'
+      - --output-folder: 'C:\Users\Nikon Analysis\Documents\biphub\test_files'
       - --no-parallel
