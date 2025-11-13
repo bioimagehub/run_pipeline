@@ -58,7 +58,8 @@ int main() {
     // Set run_pipeline.exe path (adjust if needed)
     strcpy(run_pipeline_path, "C:/Users/Nikon Analysis/Documents/biphub/git/run_pipeline/run_pipeline.exe");
     
-    strcpy(temp_yaml_path, "C:/temp/nis_converter_temp.yaml");
+    // Build temp YAML path in run_pipeline/temp folder
+    strcpy(temp_yaml_path, "C:/Users/Nikon Analysis/Documents/biphub/git/run_pipeline/temp/nis_converter_temp.yaml");
     
     
     // Verify run_pipeline.exe exists
