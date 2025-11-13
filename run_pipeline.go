@@ -540,6 +540,42 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 	return cmdArgs
 }
 
+// ensurePythonVersion ensures the requested Python version is available via UV
+// Automatically downloads and installs Python if not found
+func ensurePythonVersion(uvExe, pythonVer string) error {
+	if pythonVer == "" {
+		return nil // No specific version requested
+	}
+
+	fmt.Printf("Ensuring Python %s is available...\n", pythonVer)
+
+	// Check if Python version is already installed using 'uv python list'
+	checkCmd := exec.Command(uvExe, "python", "list")
+	output, err := checkCmd.CombinedOutput()
+
+	if err == nil {
+		// Parse output to see if our version is listed
+		outputStr := string(output)
+		if strings.Contains(outputStr, pythonVer) {
+			fmt.Printf("✓ Python %s is already available\n", pythonVer)
+			return nil
+		}
+	}
+
+	// Python version not found, install it
+	fmt.Printf("Installing Python %s (this may take a moment)...\n", pythonVer)
+	installCmd := exec.Command(uvExe, "python", "install", pythonVer)
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+
+	if err := installCmd.Run(); err != nil {
+		return fmt.Errorf("failed to install Python %s: %w", pythonVer, err)
+	}
+
+	fmt.Printf("✓ Python %s installed successfully\n", pythonVer)
+	return nil
+}
+
 // ensureUvEnvironment ensures the environment-specific .venv exists with required dependency group installed
 // Creates separate .venv_<group> directories for isolation (like conda envs)
 // Only syncs if the specific .venv_<group> doesn't exist
@@ -571,13 +607,28 @@ func ensureUvEnvironment(mainProgramDir string, environment string) string {
 		log.Fatal("UV executable not found. Please install UV.")
 	}
 
-	// Step 1: Create the venv using uv venv
-	venvCmd := exec.Command(uvExe, "venv", venvPath)
+	// Extract Python version if specified (e.g., "uv@3.11:group")
+	pythonVer := extractPythonVersion(environment)
+
+	// Default to Python 3.11 if no version specified (best wheel coverage on Windows)
+	if pythonVer == "" {
+		pythonVer = "3.11"
+		fmt.Println("No Python version specified, defaulting to 3.11 (recommended for best compatibility)")
+	}
+
+	// Ensure the requested Python version is available
+	if err := ensurePythonVersion(uvExe, pythonVer); err != nil {
+		log.Fatalf("Failed to ensure Python version: %v", err)
+	}
+
+	// Step 1: Create the venv using uv venv with explicit Python version
+	venvCmd := exec.Command(uvExe, "venv", "--python", pythonVer, venvPath)
+	fmt.Printf("Running: %s venv --python %s %s\n", uvExe, pythonVer, venvPath)
+
 	venvCmd.Dir = mainProgramDir
 	venvCmd.Stdout = os.Stdout
 	venvCmd.Stderr = os.Stderr
 
-	fmt.Printf("Running: %s venv %s\n", uvExe, venvPath)
 	if err := venvCmd.Run(); err != nil {
 		log.Fatalf("Failed to create venv for '%s': %v", groupName, err)
 	}
@@ -617,6 +668,27 @@ func extractUvGroup(environment string) string {
 	// Handle "uv:group" format
 	if strings.HasPrefix(env, "uv:") {
 		return strings.TrimPrefix(env, "uv:")
+	}
+
+	return ""
+}
+
+// extractPythonVersion extracts the Python version from UV environment string
+// Examples: "uv@3.11:drift-correct" -> "3.11"
+//
+//	"uv:drift-correct" -> "" (no version specified)
+func extractPythonVersion(environment string) string {
+	env := strings.ToLower(environment)
+
+	// Handle "uv@version:group" format
+	if strings.HasPrefix(env, "uv@") {
+		parts := strings.Split(env, ":")
+		if len(parts) >= 2 {
+			// Extract version from "uv@3.11" part
+			versionPart := parts[0]
+			version := strings.TrimPrefix(versionPart, "uv@")
+			return version
+		}
 	}
 
 	return ""
