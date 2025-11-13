@@ -13,3 +13,4 @@ run:
       - --input-search-pattern: 'C:\Users\Nikon Analysis\Documents\biphub\test_files\del.tif'
       - --output-folder: 'C:\Users\Nikon Analysis\Documents\biphub\test_files'
       - --no-parallel
+      - --log-level: DEBUG

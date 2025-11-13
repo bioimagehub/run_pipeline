@@ -24,6 +24,8 @@ import extract_metadata
 # Module-level logger
 logger = logging.getLogger(__name__)
 
+print("test1")
+
 
 def project_z(data: np.ndarray, method: str) -> np.ndarray:
     """
@@ -369,6 +371,7 @@ def process_files(
 
 
 def main() -> None:
+    print("This should show")
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Minimalistic image converter to OME-TIFF with optional Z-projection.",
@@ -460,9 +463,21 @@ Examples:
         action="store_true",
         help="Print version and exit"
     )
+
+    parser.add_argument('--log-level', type=str, default='WARNING',
+                    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                    help='Logging level (default: INFO)')
+    
+
+
     
     args = parser.parse_args()
     
+    # Setup logging
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     if args.version:
         version_file = Path(__file__).parent.parent.parent / "VERSION"
         try:
@@ -472,12 +487,6 @@ Examples:
         print(f"convert_to_tif_2.py version: {version}")
         return
     
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
     
     # Process files
     process_files(
@@ -493,6 +502,8 @@ Examples:
         split=args.split
     )
 
-
+print('test 2')
 if __name__ == "__main__":
+    print("test 3")
     main()
+    print("test end")
