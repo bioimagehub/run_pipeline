@@ -88,6 +88,13 @@ int main() {
             temp_yaml_path[idx] = run_pipeline_path[idx];
         }
         temp_yaml_path[last_period] = 0;
+        
+        // Create temp directory if it doesn't exist
+        strcpy(temp_folder_path, temp_yaml_path);
+        strcat(temp_folder_path, "/temp");
+        MakeDirectory(temp_folder_path);
+        
+        // Now build the full paths
         strcat(temp_yaml_path, "/temp/nis_converter_temp.yaml");
         
         // Build launcher path
