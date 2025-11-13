@@ -50,7 +50,6 @@ convert-to-tif = [
 	"h5py",
 	"imaris-ims-file-reader",
 	"pystackreg",
-	"cupy-cuda12x",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
