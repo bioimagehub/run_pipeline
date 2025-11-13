@@ -208,7 +208,7 @@ def segment_by_clustering(
     min_samples: int = 30,
     quiet: bool = False,
     visualize: bool = False,
-    output_path: Optional[str] = None
+    output_path: str = ""
 ) -> np.ndarray:
     """
     Segment signal from dirt using DBSCAN clustering based on spatial-temporal features.
@@ -232,7 +232,7 @@ def segment_by_clustering(
         min_samples: Minimum cluster size in pixels (default: 30)
         quiet: Suppress logging
         visualize: Show clustering result using rp.show_image (default: False)
-        output_path: If provided and visualize=True, save visualization (optional)
+        output_path: Base path for saving visualization (required if visualize=True)
     
     Returns:
         Boolean mask (distance × timepoints) marking signal pixels
@@ -397,8 +397,8 @@ def segment_by_clustering(
     if visualize:
         log_info("Generating cluster visualization with color-coded clusters...")
         
-        # Create matplotlib figure with cluster colormap
-        fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+        # Create matplotlib figure with cluster colormap (reasonable screen size)
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
         
         # === PLOT 1: Heatmap ===
         ax1 = axes[0]
@@ -477,20 +477,29 @@ def segment_by_clustering(
         
         plt.tight_layout()
         
-        # Save or show
-        if output_path:
-            cluster_viz_path = output_path.replace('.png', '_clustering_debug.png')
-            plt.savefig(cluster_viz_path, dpi=300, bbox_inches='tight')
-            log_info(f"Saved cluster visualization: {cluster_viz_path}")
-            
-            # Also show briefly
-            plt.show(block=False)
-            plt.pause(5.0)
-            plt.close()
-            log_info(f"Cluster visualization displayed (5s timer)")
-        else:
-            plt.show()
-            log_info("Cluster visualization displayed (close window to continue)")
+        # Always save DBSCAN visualization
+        cluster_viz_path = output_path.replace('.png', '_dbscan.png')
+        
+        plt.savefig(cluster_viz_path, dpi=300, bbox_inches='tight')
+        log_info(f"Saved DBSCAN cluster visualization: {cluster_viz_path}")
+        
+        # Show briefly with fixed window handling
+        # Get the figure manager to prevent resizing
+        fig_manager = plt.get_current_fig_manager()
+        if hasattr(fig_manager, 'window'):
+            # Prevent window from being resizable (avoids growth issue)
+            try:
+                fig_manager.window.resizable(False, False)
+            except:
+                pass  # Some backends don't support this
+        
+        plt.show(block=False)
+        plt.pause(5.0)
+        
+        # Properly close figure and clear all references
+        plt.close(fig)
+        plt.close('all')  # Extra cleanup to ensure no empty windows
+        log_info(f"DBSCAN visualization displayed (5s timer)")
     
     return signal_mask
 
@@ -860,9 +869,10 @@ def visualize_artifact_detection(
 
 def quantify_signal_spread_and_decay(
     tsv_path: str,
-    output_path: str = None,
+    output_path: str,
     colormap: str = 'viridis',
     smooth_sigma_distance: float = 1.5,
+    smooth_sigma_time: float = 0.0,
     force_show: bool = False,
     mask_alpha: float = 0.5,
     region_grow_threshold: float = 0.5,
@@ -874,7 +884,6 @@ def quantify_signal_spread_and_decay(
     clustering_eps: float = 0.20,
     clustering_min_samples: int = 30,
     clustering_intensity_threshold: float = 50.0,
-    subtract_t0: bool = False,
     quiet: bool = False
 ) -> Dict:
     """
@@ -882,22 +891,24 @@ def quantify_signal_spread_and_decay(
     
     This function:
     1. Loads pre-computed heatmap data from TSV file
-    2. (Optional) Subtracts T0 background to remove static dirt/artifacts
-    3. (Optional) Uses DBSCAN clustering OR origin-based seeding to segment signal
-    4. Uses 'Sum_50_Random' column for quantification heatmap
-    5. Saves 'Max' column as max projection heatmap for visualization
-    6. Smooths heatmap in DISTANCE DIMENSION ONLY
-    7. Applies segmentation (clustering or region growing)
-    8. Measures center of mass, distance spread, and signal area per timepoint
-    9. Plots signal trajectory and spread bounds over time
-    10. Returns quantitative metrics
-    11. Saves raw heatmaps and metrics as files
+    2. Smooths heatmap in DISTANCE DIMENSION ONLY (before T0 subtraction)
+    3. Subtracts T0 background to remove static dirt/artifacts (always enabled)
+    4. Smooths heatmap in TIME DIMENSION (after T0 subtraction to avoid temporal bleeding of artifacts)
+    5. (Optional) Uses DBSCAN clustering OR origin-based seeding to segment signal
+    6. Uses 'Sum_50_Random' column for quantification heatmap
+    7. Saves 'Max' column as max projection heatmap for visualization
+    8. Applies segmentation (clustering or region growing)
+    9. Measures center of mass, distance spread, and signal area per timepoint
+    10. Plots signal trajectory and spread bounds over time
+    11. Returns quantitative metrics
+    12. Saves raw heatmaps and metrics as files
     
     Args:
         tsv_path: Path to the TSV file with heatmap data (from v2)
-        output_path: Optional path to save plots. If None, displays interactively.
+        output_path: Path to save plots and outputs (required)
         colormap: Matplotlib colormap name (default: 'viridis')
         smooth_sigma_distance: Gaussian smoothing sigma in distance dimension (default: 1.5)
+        smooth_sigma_time: Gaussian smoothing sigma in time dimension, applied AFTER T0 subtraction (default: 0.0 = no time smoothing)
         force_show: Display plots even when saving (default: False)
         mask_alpha: Alpha transparency for mask overlay (default: 0.5)
         region_grow_threshold: Fraction of running maximum for region growing (default: 0.5)
@@ -909,7 +920,6 @@ def quantify_signal_spread_and_decay(
         clustering_eps: DBSCAN epsilon (neighborhood radius) in normalized space (default: 0.20)
         clustering_min_samples: DBSCAN minimum cluster size (default: 30)
         clustering_intensity_threshold: Percentile for pre-filtering pixels before clustering (default: 50.0)
-        subtract_t0: Subtract T0 background from all timepoints (default: False)
         quiet: Suppress info logging (default: False, used for parallel processing)
     
     Returns:
@@ -994,8 +1004,7 @@ def quantify_signal_spread_and_decay(
     log_info(f"DEBUG - After pivot.values: shape={heatmap_data.shape}, sum={np.nansum(heatmap_data)}, non-zero={np.count_nonzero(~np.isnan(heatmap_data) & (heatmap_data != 0))}")
     
     # Save raw heatmap BEFORE any processing (including T0)
-    if output_path:
-        raw_heatmap_rand_path = output_path.replace('.png', '_raw_heatmap_rand.tif')
+    raw_heatmap_rand_path = output_path.replace('.png', '_raw_heatmap_rand.tif')
         
         # Convert to uint16 for saving (scale to full range)
         heatmap_min = np.nanmin(heatmap_data)
@@ -1014,9 +1023,9 @@ def quantify_signal_spread_and_decay(
         
         rp.save_tczyx_image(heatmap_img, raw_heatmap_rand_path)
         log_info(f"Saved raw heatmap (random sampling, before artifact removal) as TIF: {raw_heatmap_rand_path}")
-        
-        # === GENERATE HEATMAP FROM MAXIMUM RADIAL INTENSITY (highest value at each distance bin) ===
-        if 'Max' in df.columns:
+    
+    # === GENERATE HEATMAP FROM MAXIMUM RADIAL INTENSITY (highest value at each distance bin) ===
+    if 'Max' in df.columns:
             log_info("Generating max projection heatmap...")
             
             pivot_max_df = df.pivot(index='Mask_Index', columns='Timepoint', values='Max')
@@ -1055,29 +1064,38 @@ def quantify_signal_spread_and_decay(
     # This works relly welluntil now
 
 
-    # === T0 BACKGROUND SUBTRACTION (OPTIONAL) ===
+    # === T0 BACKGROUND SUBTRACTION (ALWAYS ENABLED) ===
+    subtract_t0 = True  # This is not optional anymore
     if subtract_t0:
         heatmap_full_smoothed = subtract_t0_background(heatmap_full_smoothed, quiet=quiet)
         
         # Save T0-subtracted heatmap
-        if output_path:
-            t0_subtracted_path = output_path.replace('.png', '_t0_subtracted.tif')
-            
-            heatmap_t0sub_min = np.nanmin(heatmap_full_smoothed)
-            heatmap_t0sub_max = np.nanmax(heatmap_full_smoothed)
-            
-            if heatmap_t0sub_max > heatmap_t0sub_min:
-                heatmap_t0sub_scaled = ((heatmap_full_smoothed - heatmap_t0sub_min) / (heatmap_t0sub_max - heatmap_t0sub_min) * 65535).astype(np.uint16)
-            else:
-                heatmap_t0sub_scaled = np.zeros_like(heatmap_full_smoothed, dtype=np.uint16)
-            
-            heatmap_t0sub_flipped = np.flipud(heatmap_t0sub_scaled)
-            heatmap_t0sub_img = heatmap_t0sub_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
-            
-            # rp.show_image(heatmap_t0sub_img, title="T0-Subtracted Heatmap (flipped Y)", timer=2.0)
-            # This works really well until now
-            rp.save_tczyx_image(heatmap_t0sub_img, t0_subtracted_path)
-            log_info(f"Saved T0-subtracted heatmap as TIF: {t0_subtracted_path}")
+        t0_subtracted_path = output_path.replace('.png', '_t0_subtracted.tif')
+        
+        heatmap_t0sub_min = np.nanmin(heatmap_full_smoothed)
+        heatmap_t0sub_max = np.nanmax(heatmap_full_smoothed)
+        
+        if heatmap_t0sub_max > heatmap_t0sub_min:
+            heatmap_t0sub_scaled = ((heatmap_full_smoothed - heatmap_t0sub_min) / (heatmap_t0sub_max - heatmap_t0sub_min) * 65535).astype(np.uint16)
+        else:
+            heatmap_t0sub_scaled = np.zeros_like(heatmap_full_smoothed, dtype=np.uint16)
+        
+        heatmap_t0sub_flipped = np.flipud(heatmap_t0sub_scaled)
+        heatmap_t0sub_img = heatmap_t0sub_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
+        
+        # rp.show_image(heatmap_t0sub_img, title="T0-Subtracted Heatmap (flipped Y)", timer=2.0)
+        # This works really well until now
+        rp.save_tczyx_image(heatmap_t0sub_img, t0_subtracted_path)
+        log_info(f"Saved T0-subtracted heatmap as TIF: {t0_subtracted_path}")
+    
+    # === TIME SMOOTHING (AFTER T0 SUBTRACTION) ===
+    # Apply temporal smoothing AFTER T0 subtraction to avoid bleeding artifacts into signal timepoints
+    if smooth_sigma_time > 0:
+        log_info(f"Applying Gaussian smoothing in TIME dimension (σ_time={smooth_sigma_time})")
+        heatmap_full_smoothed = gaussian_filter(heatmap_full_smoothed, sigma=[0, smooth_sigma_time])
+        log_info(f"Time smoothing complete. Heatmap shape: {heatmap_full_smoothed.shape}")
+    else:
+        log_info("Time smoothing DISABLED (σ_time=0)")
     
     # === PREPARE DATA FOR QUANTIFICATION (EXCLUDE T0) ===
     if T > 1:
@@ -1219,6 +1237,21 @@ def quantify_signal_spread_and_decay(
         final_mask = mask
     
     log_info(f"Final mask: {np.sum(final_mask)} pixels")
+    
+    # === SAVE SEGMENTATION MASK ===
+    mask_path = output_path.replace('.png', '_heatmap_mask.tif')
+    
+    # Convert boolean mask to uint8 (0 or 255)
+    mask_uint8 = (final_mask * 255).astype(np.uint8)
+    
+    # Flip Y axis to match saved heatmap orientation
+    mask_flipped = np.flipud(mask_uint8)
+    
+    # Reshape to TCZYX format
+    mask_img = mask_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
+    
+    rp.save_tczyx_image(mask_img, mask_path)
+    log_info(f"Saved segmentation mask as TIF: {mask_path}")
     
     # === CALCULATE QUANTIFICATION METRICS ===
     if np.sum(final_mask) == 0:
@@ -1421,52 +1454,48 @@ def quantify_signal_spread_and_decay(
     metadata_str = ", ".join([f"{k}={v}" for k, v in experiment_info.items()])
     fig.suptitle(f'{base_filename}\n{metadata_str}', fontsize=16, fontweight='bold')
     
-    # Save or show
-    if output_path:
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        log_info(f"Saved visualization: {output_path}")
-        
-        if force_show:
-            plt.show()
-        else:
-            plt.close()
-    else:
+    # Save plot
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    log_info(f"Saved visualization: {output_path}")
+    
+    if force_show:
         plt.show()
+    else:
+        plt.close()
     
     # === SAVE METRICS AS TSV ===
-    if output_path:
-        metrics_path = output_path.replace('.png', '_metrics.tsv')
+    metrics_path = output_path.replace('.png', '_metrics.tsv')
         
-        # Create metrics dataframe
-        metrics_df = pd.DataFrame({
-            'Timepoint': timepoints_arr,
-            'Distance_Peak': distance_peak,
-            'Distance_Spread_Lower': distance_spread_lower,
-            'Distance_Spread_Upper': distance_spread_upper,
-            'Distance_Spread': distance_spread,
-            'Signal_Area': signal_area,
-            'Total_Intensity': temporal_intensity
-        })
-        
-        # Add metadata columns at the beginning
-        metrics_df.insert(0, 'Base_Filename', base_filename)
-        for i, (key, value) in enumerate(experiment_info.items(), start=1):
-            metrics_df.insert(i, key, value)
-        
-        # Add summary metrics as additional columns (same value repeated for all rows)
-        metrics_df['Signal_Duration'] = signal_duration
-        metrics_df['Time_to_50_Percent'] = time_to_50_percent
-        metrics_df['Time_to_Disappearance'] = time_to_disappearance
-        metrics_df['Decay_Rate'] = decay_rate
-        metrics_df['Intensity_T1'] = intensity_T1
-        metrics_df['Intensity_T10'] = intensity_T10
-        metrics_df['Intensity_T20'] = intensity_T20
-        metrics_df['Smooth_Sigma_Distance'] = smooth_sigma_distance
-        metrics_df['Region_Grow_Threshold'] = region_grow_threshold
-        
-        # Save
-        metrics_df.to_csv(metrics_path, sep='\t', index=False)
-        log_info(f"Saved metrics: {metrics_path}")
+    # Create metrics dataframe
+    metrics_df = pd.DataFrame({
+        'Timepoint': timepoints_arr,
+        'Distance_Peak': distance_peak,
+        'Distance_Spread_Lower': distance_spread_lower,
+        'Distance_Spread_Upper': distance_spread_upper,
+        'Distance_Spread': distance_spread,
+        'Signal_Area': signal_area,
+        'Total_Intensity': temporal_intensity
+    })
+    
+    # Add metadata columns at the beginning
+    metrics_df.insert(0, 'Base_Filename', base_filename)
+    for i, (key, value) in enumerate(experiment_info.items(), start=1):
+        metrics_df.insert(i, key, value)
+    
+    # Add summary metrics as additional columns (same value repeated for all rows)
+    metrics_df['Signal_Duration'] = signal_duration
+    metrics_df['Time_to_50_Percent'] = time_to_50_percent
+    metrics_df['Time_to_Disappearance'] = time_to_disappearance
+    metrics_df['Decay_Rate'] = decay_rate
+    metrics_df['Intensity_T1'] = intensity_T1
+    metrics_df['Intensity_T10'] = intensity_T10
+    metrics_df['Intensity_T20'] = intensity_T20
+    metrics_df['Smooth_Sigma_Distance'] = smooth_sigma_distance
+    metrics_df['Region_Grow_Threshold'] = region_grow_threshold
+    
+    # Save
+    metrics_df.to_csv(metrics_path, sep='\t', index=False)
+    log_info(f"Saved metrics: {metrics_path}")
     
     # Return metrics dictionary
     return {
@@ -1522,6 +1551,7 @@ def process_single_tsv(
             output_path=output_path,
             colormap=args.colormap,
             smooth_sigma_distance=args.smooth_sigma_distance,
+            smooth_sigma_time=args.smooth_sigma_time,
             force_show=args.force_show,
             mask_alpha=args.mask_alpha,
             region_grow_threshold=args.region_grow_threshold,
@@ -1533,7 +1563,6 @@ def process_single_tsv(
             clustering_eps=args.clustering_eps,
             clustering_min_samples=args.clustering_min_samples,
             clustering_intensity_threshold=args.clustering_intensity_threshold,
-            subtract_t0=args.subtract_t0,
             quiet=quiet
         )
         
@@ -1555,7 +1584,7 @@ def main():
 Example YAML config for run_pipeline.exe:
 ---
 run:
-- name: Quantify with DBSCAN clustering and T0 subtraction (recommended for dirt removal)
+- name: Quantify with DBSCAN clustering (recommended, T0 subtraction always enabled)
   environment: uv@3.11:quantify-distance-heatmap
   commands:
   - python
@@ -1563,22 +1592,23 @@ run:
   - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
   - --output-folder: '%YAML%/quantification_bulk'
   - --use-clustering
-  - --subtract-t0
   - --clustering-eps: 0.20
   - --clustering-min-samples: 30
   - --clustering-intensity-threshold: 50.0
+  - --smooth-sigma-distance: 3.0
+  - --smooth-sigma-time: 0.0
   - --split-char: '__'
   - --metadata-columns: expID,Group,Replicate
 
-- name: Quantify with T0 subtraction only (simple background removal)
+- name: Quantify with time smoothing (reduces noise in temporal dimension)
   environment: uv@3.11:quantify-distance-heatmap
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
   - --input-search-pattern: '%YAML%/output_heatmaps/**/*_heatmap_data.tsv'
   - --output-folder: '%YAML%/output_quantifications'
-  - --subtract-t0
   - --smooth-sigma-distance: 1.5
+  - --smooth-sigma-time: 1.0
 
 - name: Quantify with origin-based seeding (avoids debris far from photoconversion site)
   environment: uv@3.11:quantify-distance-heatmap
@@ -1601,6 +1631,8 @@ run:
                        help='Matplotlib colormap name (default: viridis)')
     parser.add_argument('--smooth-sigma-distance', type=float, default=1.5,
                        help='Gaussian smoothing sigma in distance dimension (default: 1.5)')
+    parser.add_argument('--smooth-sigma-time', type=float, default=0.0,
+                       help='Gaussian smoothing sigma in time dimension, applied AFTER T0 subtraction (default: 0.0 = disabled)')
     parser.add_argument('--mask-alpha', type=float, default=0.5,
                        help='Alpha transparency for mask overlay (default: 0.5)')
     parser.add_argument('--region-grow-threshold', type=float, default=0.5,
@@ -1621,8 +1653,6 @@ run:
                        help='DBSCAN minimum cluster size in pixels (default: 30)')
     parser.add_argument('--clustering-intensity-threshold', type=float, default=50.0,
                        help='Percentile threshold for pre-filtering pixels before clustering (default: 50.0)')
-    parser.add_argument('--subtract-t0', action='store_true',
-                       help='Subtract T0 background from all timepoints (removes static dirt/artifacts)')
     parser.add_argument('--force-show', action='store_true',
                        help='Display plots even when saving to file')
     parser.add_argument('--no-parallel', action='store_true',

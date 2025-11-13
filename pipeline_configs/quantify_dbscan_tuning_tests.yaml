@@ -1,6 +1,7 @@
 # DBSCAN Parameter Tuning Tests for quantify_distance_heatmap_v3.py
 # Use these to systematically find optimal clustering parameters
 # Run each test sequentially and examine the log output
+# NOTE: T0 background subtraction is ALWAYS ENABLED (no longer optional)
 
 run:
   # ============================================
@@ -16,7 +17,6 @@ run:
       - --colormap: viridis
       - --smooth-sigma-distance: 3
       - --use-clustering
-      - --subtract-t0
       - --clustering-eps: 0.20
       - --clustering-min-samples: 30
       - --clustering-intensity-threshold: 50
@@ -38,7 +38,6 @@ run:
       - --colormap: viridis
       - --smooth-sigma-distance: 3
       - --use-clustering
-      - --subtract-t0
       - --clustering-eps: 0.12
       - --clustering-min-samples: 40
       - --clustering-intensity-threshold: 60
@@ -60,7 +59,7 @@ run:
       - --colormap: viridis
       - --smooth-sigma-distance: 3
       - --use-clustering
-      - --subtract-t0
+
       - --clustering-eps: 0.08
       - --clustering-min-samples: 50
       - --clustering-intensity-threshold: 70
@@ -82,7 +81,7 @@ run:
       - --colormap: viridis
       - --smooth-sigma-distance: 3
       - --use-clustering
-      - --subtract-t0
+
       - --clustering-eps: 0.05
       - --clustering-min-samples: 100
       - --clustering-intensity-threshold: 80
@@ -104,7 +103,7 @@ run:
       - --colormap: viridis
       - --smooth-sigma-distance: 3
       - --use-clustering
-      - --subtract-t0
+
       - --clustering-eps: 0.18
       - --clustering-min-samples: 35
       - --clustering-intensity-threshold: 55
@@ -126,7 +125,7 @@ run:
       - --colormap: viridis
       - --smooth-sigma-distance: 3
       - --use-clustering
-      - --subtract-t0
+
       - --clustering-eps: 0.30
       - --clustering-min-samples: 20
       - --clustering-intensity-threshold: 40
