@@ -3,6 +3,6 @@ run:
     environment: uv@3.11:convert-to-tif
     commands:
       - python: '%REPO%/standard_code/python/convert_to_tif.py'
-      - --input-search-pattern: 'C:\Users\Nikon Analysis\Documents\biphub\test_files\trus1.nd2'
+      - --input-search-pattern: 'C:\Users\Nikon Analysis\Documents\biphub\test_files\del.tif'
       - --output-folder: 'C:\Users\Nikon Analysis\Documents\biphub\test_files'
       - --no-parallel
