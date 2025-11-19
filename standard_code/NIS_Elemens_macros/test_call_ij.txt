@@ -1,0 +1,1 @@
+"D:\biphub\Program_Files\Fiji\fiji-windows-x64.exe" --headless --run "ij_bridge_bioformats.py" "filePath="D:\biphub\test_files\230705_mNG-DFCP1_LT_LC3_CM_chol_2h_1.ims"'

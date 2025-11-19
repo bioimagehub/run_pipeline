@@ -1,0 +1,64 @@
+// Simple ImageJ Bridge Test
+// Opens a TIFF file and saves it to output folder
+
+int main() {
+    char imagej_macro_path[300];
+    char imagej_macro_content[1000];
+    char write_macro_command[1500];
+    char log_file_path[300];
+    char log_command[1500];
+    
+    SetCommandText("Testing ImageJ Bridge - Simple TIFF open/save");
+    
+    // Set up log file
+    strcpy(log_file_path, "D:/biphub/git/run_pipeline/standard_code/NIS_Elemens_macros/test_imagej_bridge_simple.log");
+    
+    // Initialize log
+    strcpy(log_command, "import datetime; f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'w'); f.write('=== ImageJ Bridge Simple Test ===\\n'); f.write(f'Started: {datetime.datetime.now()}\\n\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    // Set up ImageJ macro path
+    strcpy(imagej_macro_path, "D:/temp/ij_bridge_bioformats.ijm");
+    
+    // Create simple ImageJ macro
+    strcpy(imagej_macro_content, "// Simple ImageJ test macro\n");
+    strcat(imagej_macro_content, "open('D:/biphub/test_files/trus1.tif');\n");
+    strcat(imagej_macro_content, "saveAs('Tiff', 'D:/temp/ij_bridge_output/trus1_test.tif');\n");
+    strcat(imagej_macro_content, "close();\n");
+    
+    // Write the macro
+    strcpy(write_macro_command, "with open('");
+    strcat(write_macro_command, imagej_macro_path);
+    strcat(write_macro_command, "', 'w') as f: f.write('''");
+    strcat(write_macro_command, imagej_macro_content);
+    strcat(write_macro_command, "''')");
+    
+    Python_RunString(write_macro_command);
+    Wait(0.1);
+    
+    // Log macro creation
+    strcpy(log_command, "f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'a'); f.write('Created ImageJ macro\\n'); f.write('Launching ImageJ...\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    SetCommandText("Launching ImageJ with macro...");
+    
+    // Launch ImageJ with the macro using headless mode
+    strcpy(write_macro_command, "import subprocess; result = subprocess.run(['D:/biphub/Program_Files/Fiji/fiji-windows-x64.exe', '--headless', '--console', '-macro', '");
+    strcat(write_macro_command, imagej_macro_path);
+    strcat(write_macro_command, "'], capture_output=True, text=True); print('STDOUT:', result.stdout); print('STDERR:', result.stderr); print('Return code:', result.returncode)");
+    
+    Python_RunString(write_macro_command);
+    
+    // Log completion
+    strcpy(log_command, "f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'a'); f.write('ImageJ launched\\n'); f.write('Check D:/temp/ij_bridge_output/trus1_test.tif for output\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    SetCommandText("ImageJ launched - check output folder");
+    WaitText(2, "Test complete - check D:/temp/ij_bridge_output/trus1_test.tif");
+}

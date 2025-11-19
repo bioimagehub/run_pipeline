@@ -1,12 +1,13 @@
 // BiPHub Multi-File Image Converter V3
-// Converts multiple image files to OME-TIFF then ND2 format
+// Converts multiple image files using split TIFF mode + auto-reassembly
 // Uses YAML config + run_pipeline.exe for robust environment management
-// V3 uses standard OME-TIFF conversion (no split mode)
+// V3 adds support for --split mode with automatic ND2 reassembly
 // 
 // Key differences from V2:
-// - Simplified: converts to OME-TIFF then opens in NIS and saves as ND2
+// - Uses --split flag for large file handling (creates split TIFF folders)
+// - Automatically detects and runs reassemble_to_nd2.mac scripts
+// - Handles multi-scene files with _1, _2, etc. suffixes
 // - Uses hardcoded D:/temp/ paths for reliability (matching V2 approach)
-// - Standard workflow: exotic format -> OME-TIFF -> ND2
 
 import("NkWindow.dll");
 import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
@@ -22,7 +23,6 @@ int main() {
     char basename[1000];
     char split_folder[1000];
     char reassembly_macro[1000];
-    char tmp_ome_tif[1000];
     char tmp_nd2[1000];
     char temp_folder_path[1000];
     char yaml_content[3000];
@@ -285,7 +285,7 @@ int main() {
                     write_yaml_command[strlen(write_yaml_command)] = temp_folder_path[idx];
                     write_yaml_command[strlen(write_yaml_command) + 1] = 0;
                 }
-                strcat(write_yaml_command, "'\n      - --no-parallel\n''')");
+                strcat(write_yaml_command, "'\n      - --no-parallel\n      - --split\n''')");
                 
                 Python_RunString(write_yaml_command);
                 Wait(0.2);
@@ -327,76 +327,51 @@ int main() {
                     // Execute launcher script
                     if (ExistFile(temp_launcher_path)) {
                         Python_RunFile(temp_launcher_path);
-                        Wait(0.5);
+                        Wait(0.1);
                         
-                        // Standard conversion: Look for OME-TIFF output and convert to ND2
+                        // With --split mode, look for split folders and reassembly macros
                         // Try single scene first (no suffix)
-                        strcpy(tmp_ome_tif, basename);
-                        strcat(tmp_ome_tif, ".tif");
+                        strcpy(split_folder, basename);
+                        strcpy(reassembly_macro, split_folder);
+                        strcat(reassembly_macro, "/reassemble_to_nd2.mac");
                         
-                        if (ExistFile(tmp_ome_tif)) {
-                            // Found single scene file
-                            strcpy(tmp_nd2, basename);
-                            strcat(tmp_nd2, ".nd2");
-                            
-                            OpenDocument(tmp_ome_tif, 0);
-                            Wait(0.1);
-                            ImageSaveAs(tmp_nd2, 14, 0);
-                            DeleteFile(tmp_ome_tif);
-                            CloseAllDocuments(2);
+                        SetCommandText(reassembly_macro);
+                        WaitText(0, "reassembly_macro"); 
+                        
+                        if (ExistFile(reassembly_macro)) {
+                            // Found reassembly macro for single scene - run it
+                            SetCommandText("Running reassembly macro...");
+                            RunMacro(reassembly_macro);
+                            Wait(0.5);
                         } else {
-                            // No base file found, try multi-scene files (_1.tif, _2.tif, etc.)
+                            // No single scene, try multi-scene folders (_1, _2, etc.)
                             scene_num = 1;
-                            
                             while (scene_num <= 100) {
-                                // Build scene filename: basename_X.tif
-                                strcpy(tmp_ome_tif, basename);
-                                strcat(tmp_ome_tif, "_");
+                                strcpy(split_folder, basename);
+                                strcat(split_folder, "_");
                                 
-                                // Add scene number
                                 if (scene_num < 10) {
-                                    idx = strlen(tmp_ome_tif);
-                                    tmp_ome_tif[idx] = 48 + scene_num;
-                                    tmp_ome_tif[idx + 1] = 0;
+                                    idx = strlen(split_folder);
+                                    split_folder[idx] = 48 + scene_num;
+                                    split_folder[idx + 1] = 0;
                                 } else {
-                                    idx = strlen(tmp_ome_tif);
-                                    tmp_ome_tif[idx] = 48 + (scene_num / 10);
-                                    tmp_ome_tif[idx + 1] = 48 + (scene_num % 10);
-                                    tmp_ome_tif[idx + 2] = 0;
+                                    idx = strlen(split_folder);
+                                    split_folder[idx] = 48 + (scene_num / 10);
+                                    split_folder[idx + 1] = 48 + (scene_num % 10);
+                                    split_folder[idx + 2] = 0;
                                 }
                                 
-                                strcat(tmp_ome_tif, ".tif");
+                                strcpy(reassembly_macro, split_folder);
+                                strcat(reassembly_macro, "/reassemble_to_nd2.mac");
                                 
-                                // Check if this scene exists
-                                if (ExistFile(tmp_ome_tif)) {
-                                    // Build corresponding ND2 filename
-                                    strcpy(tmp_nd2, basename);
-                                    strcat(tmp_nd2, "_");
-                                    
-                                    // Add same scene number
-                                    if (scene_num < 10) {
-                                        idx = strlen(tmp_nd2);
-                                        tmp_nd2[idx] = 48 + scene_num;
-                                        tmp_nd2[idx + 1] = 0;
-                                    } else {
-                                        idx = strlen(tmp_nd2);
-                                        tmp_nd2[idx] = 48 + (scene_num / 10);
-                                        tmp_nd2[idx + 1] = 48 + (scene_num % 10);
-                                        tmp_nd2[idx + 2] = 0;
-                                    }
-                                    
-                                    strcat(tmp_nd2, ".nd2");
-                                    
-                                    // Process this scene
-                                    OpenDocument(tmp_ome_tif, 0);
-                                    Wait(0.1);
-                                    ImageSaveAs(tmp_nd2, 14, 0);
-                                    DeleteFile(tmp_ome_tif);
-                                    CloseAllDocuments(2);
-                                    
+                                
+                                if (ExistFile(reassembly_macro)) {
+                                    SetCommandText("Running reassembly macro for scene...");
+                                    RunMacro(reassembly_macro);
+                                    Wait(0.5);
                                     scene_num = scene_num + 1;
                                 } else {
-                                    // Scene not found, exit loop
+                                    // No more scenes found
                                     scene_num = 101;
                                 }
                             }

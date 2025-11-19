@@ -24,7 +24,6 @@ import extract_metadata
 # Module-level logger
 logger = logging.getLogger(__name__)
 
-print("test1")
 
 
 def project_z(data: np.ndarray, method: str) -> np.ndarray:
@@ -146,6 +145,18 @@ def convert_single_file(
             dask_data = img.dask_data
             data = dask_data.compute()
             
+            logger.info(f"Loaded data shape: {data.shape}, ndim: {data.ndim}")
+            
+            # Handle RGB images (6D: TCZYXS where S=3 for RGB)
+            if data.ndim == 6 and data.shape[-1] == 3:
+                logger.info("Detected RGB image - converting to separate channels")
+                # Reshape from (T, C, Z, Y, X, 3) to (T, C*3, Z, Y, X)
+                T, C, Z, Y, X, S = data.shape
+                # Split RGB into separate channels: R, G, B
+                data = data.transpose(0, 1, 5, 2, 3, 4)  # (T, C, S, Z, Y, X)
+                data = data.reshape(T, C * S, Z, Y, X)  # (T, C*3, Z, Y, X)
+                logger.info(f"Converted RGB to {C * S} channels, new shape: {data.shape}")
+            
             # Extract metadata for this scene before projection
             # This includes physical pixel sizes, channel names, and other OME metadata
             physical_pixel_sizes = None
@@ -181,6 +192,9 @@ def convert_single_file(
                             z_axis,
                             data
                         )
+                        logger.info(f"After projection, data shape: {data.shape}, ndim: {data.ndim}")
+            
+            logger.info(f"Data shape before save: {data.shape}, ndim: {data.ndim}, projection_method: {projection_method}")
             
             # Save scene data with metadata preservation
             os.makedirs(os.path.dirname(scene_output_path), exist_ok=True)
@@ -188,29 +202,52 @@ def convert_single_file(
             # Check if split mode is enabled
             if split:
                 # Save each T, C, Z slice as individual file
-                # Create folder named after the scene output file (keeps scenes separate)
+                # Use same naming scheme as ij_bridge_bioformats.py: basename_Z#_C#.ome.tif
+                # This allows NIS-Elements to auto-detect and merge files properly
                 split_folder = os.path.splitext(scene_output_path)[0]
                 os.makedirs(split_folder, exist_ok=True)
-                logger.info(f"Split mode: Saving individual slices to {split_folder}")
                 
-                T, C, Z, Y, X = data.shape
+                # Get basename for files (without path and extension)
+                basename = os.path.splitext(os.path.basename(scene_output_path))[0]
+                
+                logger.info(f"Split mode: Saving individual slices to {split_folder}")
+                logger.info(f"Using basename: {basename}")
+                
+                # Handle both 5D (TCZYX) and 4D (TCYX after projection) data
+                if data.ndim == 5:
+                    T, C, Z, Y, X = data.shape
+                elif data.ndim == 4:
+                    # After Z-projection, data is TCYX
+                    T, C, Y, X = data.shape
+                    Z = 1
+                    # Reshape to 5D for uniform processing
+                    data = data[:, :, np.newaxis, :, :]
+                else:
+                    raise ValueError(f"Unexpected data dimensions: {data.ndim}D (expected 4D or 5D)")
+                
                 logger.info(f"Scene {scene_idx}, Dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
                 
-                for t in range(T):
+                # Save files using NIS-Elements compatible naming: basename_Z#_C#.ome.tif
+                # This matches what Bio-Formats Exporter creates and what NIS-Elements expects
+                for z in range(Z):
                     for c in range(C):
-                        for z in range(Z):
-                            # Extract single YX slice
-                            slice_data = data[t, c, z, :, :]
-                            
-                            # Build filename: T0001_C0001_Z0001_S0001.tif
-                            # Keep S tag for future flexibility even though scenes are in separate folders
-                            slice_filename = f"T{t:04d}_C{c:04d}_Z{z:04d}_S{scene_idx:04d}.tif"
+                        # For multi-timepoint, we need T in filename too
+                        if T > 1:
+                            # Extended format for timepoints: basename_T#_Z#_C#.ome.tif
+                            for t in range(T):
+                                slice_data = data[t, c, z, :, :]
+                                slice_filename = f"{basename}_T{t}_Z{z}_C{c}.ome.tif"
+                                slice_path = os.path.join(split_folder, slice_filename)
+                                tifffile.imwrite(slice_path, slice_data, photometric='minisblack')
+                        else:
+                            # Standard format (matches Bio-Formats Exporter): basename_Z#_C#.ome.tif
+                            slice_data = data[0, c, z, :, :]
+                            slice_filename = f"{basename}_Z{z}_C{c}.ome.tif"
                             slice_path = os.path.join(split_folder, slice_filename)
-                            
-                            # Save as simple 2D TIFF using tifffile for maximum compatibility
                             tifffile.imwrite(slice_path, slice_data, photometric='minisblack')
                 
-                logger.info(f"Saved {T * C * Z} individual slice files for scene {scene_idx}")
+                logger.info(f"Saved {Z * C * T} individual slice files for scene {scene_idx}")
+                logger.info(f"NIS-Elements should auto-detect and merge when opening: {basename}_Z0_C0.ome.tif")
                 
             else:
                 # Standard save mode (single file)
@@ -371,7 +408,6 @@ def process_files(
 
 
 def main() -> None:
-    print("This should show")
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Minimalistic image converter to OME-TIFF with optional Z-projection.",
@@ -502,8 +538,5 @@ Examples:
         split=args.split
     )
 
-print('test 2')
 if __name__ == "__main__":
-    print("test 3")
     main()
-    print("test end")
