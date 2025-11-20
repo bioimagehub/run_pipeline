@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"gopkg.in/yaml.v3"
 )
 
 // Global logger and debug mode flag
@@ -560,42 +561,65 @@ func (a *App) ReadFile(filePath string) (string, error) {
 	return string(data), nil
 }
 
-// RunSingleNode creates a temporary YAML file with a single node and executes it
+// RunSingleNode executes a single node by temporarily adding a 'stop' step after it in the main YAML
 func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) {
 	appLogger.Printf("Running single node: %s (ID: %s)\n", node.Name, node.ID)
 
-	// Get the directory of the current YAML file
-	var yamlDir string
-	if yamlFilePath != "" {
-		yamlDir = filepath.Dir(yamlFilePath)
-	} else {
-		// Fallback to pipeline_configs directory
-		exePath, err := os.Executable()
-		if err != nil {
-			return "", fmt.Errorf("failed to get executable path: %w", err)
+	if yamlFilePath == "" {
+		return "", fmt.Errorf("no YAML file loaded - save your pipeline first before running nodes")
+	}
+
+	// Load the current pipeline YAML
+	yamlPipeline, err := a.readYAMLPipeline(yamlFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load pipeline: %w", err)
+	}
+
+	// Find the index of this node in the pipeline
+	nodeIndex := -1
+	for i, step := range yamlPipeline.Run {
+		if step.NodeID == node.ID {
+			nodeIndex = i
+			break
 		}
-		projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(exePath))))
-		yamlDir = filepath.Join(projectRoot, "pipeline_configs")
 	}
 
-	// Create temporary YAML file path
-	tmpYamlPath := filepath.Join(yamlDir, "tmp_yaml_config.yaml")
-
-	// Convert node to YAML step
-	step := ConvertNodeToYAMLStep(node)
-
-	// Create minimal YAML pipeline with just this step
-	yamlPipeline := &YAMLPipeline{
-		PipelineName: fmt.Sprintf("Test: %s", node.Name),
-		Run:          []YAMLStep{*step},
+	if nodeIndex == -1 {
+		return "", fmt.Errorf("node not found in pipeline - save your changes first")
 	}
 
-	// Write temporary YAML file
-	if err := WriteYAMLPipeline(yamlPipeline, tmpYamlPath); err != nil {
-		return "", fmt.Errorf("failed to write temporary YAML: %w", err)
+	// Create a backup of the original YAML
+	originalSteps := yamlPipeline.Run
+
+	// Insert a 'force' step right before the target node to ensure it runs
+	// Then insert a 'stop' step right after it
+	forceStep := YAMLStep{
+		Name:    "__temp_force__",
+		Type:    "force",
+		Message: fmt.Sprintf("Force reprocessing: %s", node.Name),
 	}
 
-	appLogger.Printf("Created temporary YAML at: %s\n", tmpYamlPath)
+	stopStep := YAMLStep{
+		Name:    "__temp_stop__",
+		Type:    "stop",
+		Message: fmt.Sprintf("Stopped after running: %s", node.Name),
+	}
+
+	// Build new steps list with force before and stop after the target node
+	newSteps := make([]YAMLStep, 0, len(originalSteps)+2)
+	newSteps = append(newSteps, originalSteps[:nodeIndex]...)
+	newSteps = append(newSteps, forceStep)
+	newSteps = append(newSteps, originalSteps[nodeIndex])
+	newSteps = append(newSteps, stopStep)
+	newSteps = append(newSteps, originalSteps[nodeIndex+1:]...)
+	yamlPipeline.Run = newSteps
+
+	// Write modified YAML temporarily
+	if err := WriteYAMLPipeline(yamlPipeline, yamlFilePath); err != nil {
+		return "", fmt.Errorf("failed to write modified YAML: %w", err)
+	}
+
+	appLogger.Printf("Inserted force+stop steps around node '%s' in: %s\n", node.Name, yamlFilePath)
 
 	// Find run_pipeline.exe
 	exePath, err := os.Executable()
@@ -607,93 +631,47 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 
 	// Check if run_pipeline.exe exists
 	if _, err := os.Stat(runPipelinePath); os.IsNotExist(err) {
-		os.Remove(tmpYamlPath) // Clean up temp file
+		// Restore original YAML before returning error
+		yamlPipeline.Run = originalSteps
+		WriteYAMLPipeline(yamlPipeline, yamlFilePath)
 		return "", fmt.Errorf("run_pipeline.exe not found at: %s", runPipelinePath)
 	}
 
-	appLogger.Printf("Executing: %s %s\n", runPipelinePath, tmpYamlPath)
+	appLogger.Printf("Executing: %s %s\n", runPipelinePath, yamlFilePath)
 
-	// Define status file path
-	statusFilePath := filepath.Join(yamlDir, "tmp_yaml_config_status.yaml")
-
-	// Remove old status file if it exists
-	os.Remove(statusFilePath)
-
-	// Execute run_pipeline.exe with the temporary YAML in a new visible terminal window
-	// Use cmd.exe /k to keep the window open after execution so user can see output
-	// Build the command string properly with escaped quotes
-	cmdStr := fmt.Sprintf(`%s %s`, runPipelinePath, tmpYamlPath)
-	appLogger.Printf("Command string: %s\n", cmdStr)
-	cmd := exec.Command("cmd", "/c", "start", "cmd", "/k", cmdStr)
+	// Execute run_pipeline.exe with the modified YAML
+	// The 'stop' step will halt execution after the target node
+	cmd := exec.Command("cmd", "/c", "start", "cmd", "/k", runPipelinePath, yamlFilePath)
 	cmd.Dir = projectRoot
 
 	// Launch the terminal (non-blocking)
 	runErr := cmd.Start()
 	if runErr != nil {
+		// Restore original YAML before returning error
+		yamlPipeline.Run = originalSteps
+		WriteYAMLPipeline(yamlPipeline, yamlFilePath)
 		appLogger.Printf("[ERROR] Failed to launch terminal: %v\n", runErr)
 		return "", fmt.Errorf("failed to launch terminal: %w", runErr)
 	}
 
-	appLogger.Printf("Launched execution in new terminal window. Monitoring status file...\n")
-
-	// Poll the status file until run_duration appears (indicating completion)
+	appLogger.Printf("Launched execution in new terminal window.\n")
 	outputStr := "Execution started in new terminal window...\n"
-	maxWaitTime := 30 * time.Minute // Maximum wait time
-	pollInterval := 500 * time.Millisecond
-	startTime := time.Now()
+	outputStr += fmt.Sprintf("Running node: %s\n", node.Name)
+	outputStr += "A 'force' step has been added before this node to ensure it runs.\n"
+	outputStr += "A 'stop' step has been added after this node to halt execution.\n"
+	outputStr += "Both steps will be automatically removed after execution starts.\n"
 
-	for {
-		// Check if we've exceeded max wait time
-		if time.Since(startTime) > maxWaitTime {
-			outputStr += "Warning: Maximum wait time exceeded. Process may still be running.\n"
-			appLogger.Printf("[WARN] Maximum wait time exceeded while monitoring status file\n")
-			break
-		}
+	// Wait a moment for the process to start
+	time.Sleep(2 * time.Second)
 
-		// Check if status file exists and contains run_duration
-		if data, err := os.ReadFile(statusFilePath); err == nil {
-			content := string(data)
-			if strings.Contains(content, "run_duration:") {
-				// Execution completed!
-				appLogger.Printf("Status file indicates execution completed\n")
-
-				// Parse duration from status file if possible
-				if idx := strings.Index(content, "run_duration:"); idx != -1 {
-					line := content[idx:]
-					if endIdx := strings.Index(line, "\n"); endIdx != -1 {
-						duration := strings.TrimSpace(strings.TrimPrefix(line[:endIdx], "run_duration:"))
-						outputStr += fmt.Sprintf("Execution completed successfully in %s\n", duration)
-					} else {
-						outputStr += "Execution completed successfully\n"
-					}
-				} else {
-					outputStr += "Execution completed successfully\n"
-				}
-				break
-			}
-		}
-
-		// Wait before next poll
-		time.Sleep(pollInterval)
-	}
-
-	// Clean up temporary file
-	removeErr := os.Remove(tmpYamlPath)
-	if removeErr != nil {
-		appLogger.Printf("[WARN] Failed to remove temporary YAML: %v\n", removeErr)
+	// Restore the original YAML (remove the force and stop steps)
+	yamlPipeline.Run = originalSteps
+	restoreErr := WriteYAMLPipeline(yamlPipeline, yamlFilePath)
+	if restoreErr != nil {
+		appLogger.Printf("[WARN] Failed to restore original YAML: %v\n", restoreErr)
+		outputStr += "\nWarning: Failed to restore original YAML. You may need to manually remove the '__temp_force__' and '__temp_stop__' steps.\n"
 	} else {
-		appLogger.Printf("Cleaned up temporary YAML file\n")
-	}
-
-	// Clean up status file created by run_pipeline
-	statusRemoveErr := os.Remove(statusFilePath)
-	if statusRemoveErr != nil {
-		// Only log if file exists (not all runs create status files)
-		if !os.IsNotExist(statusRemoveErr) {
-			appLogger.Printf("[WARN] Failed to remove temporary status YAML: %v\n", statusRemoveErr)
-		}
-	} else {
-		appLogger.Printf("Cleaned up temporary status YAML file\n")
+		appLogger.Printf("Restored original YAML (removed force and stop steps)\n")
 	}
 
 	// Resolve output glob patterns to show actual files created
@@ -702,8 +680,22 @@ func (a *App) RunSingleNode(node *CLINode, yamlFilePath string) (string, error) 
 		outputStr = outputStr + "\n\n" + outputFilesInfo
 	}
 
-	appLogger.Printf("Execution completed successfully\n")
 	return outputStr, nil
+}
+
+// readYAMLPipeline reads and parses a YAML pipeline file
+func (a *App) readYAMLPipeline(filePath string) (*YAMLPipeline, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read YAML file: %w", err)
+	}
+
+	var yamlPipeline YAMLPipeline
+	if err := yaml.Unmarshal(data, &yamlPipeline); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	return &yamlPipeline, nil
 }
 
 // resolveOutputGlobPatterns resolves glob patterns in output sockets to show actual files
