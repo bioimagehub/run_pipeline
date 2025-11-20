@@ -71,5 +71,52 @@ if imps and len(imps) > 0:
     writer = FileWriter(done_file)
     writer.write("done")
     writer.close()
+    
+    # Check for NIS-Elements and open first exported file
+    nis_path = "C:\\Program Files\\NIS-Elements\\nis_ar.exe"
+    nis_exe = File(nis_path)
+    
+    if nis_exe.exists():
+        print("Found NIS-Elements at: " + nis_path)
+        
+        # Find first .ome.tif file in output folder
+        output_files = output_dir.listFiles()
+        first_ome_tif = None
+        for f in output_files:
+            if f.getName().endswith(".ome.tif"):
+                first_ome_tif = f
+                break
+        
+        if first_ome_tif:
+            print("Opening in NIS-Elements: " + first_ome_tif.getAbsolutePath())
+            
+            # Create NIS-Elements macro to save as .nd2
+            # Build output path: same as input but with .nd2 extension
+            nd2_output = os.path.splitext(input_path)[0] + ".nd2"
+            # Escape backslashes for macro string
+            nd2_output_escaped = nd2_output.replace("\\", "\\\\")
+            
+            macro_path = os.path.join(outputFolder, "tmp_nis_macro.mac")
+            macro_file = File(macro_path)
+            from java.io import FileWriter
+            macro_writer = FileWriter(macro_file)
+            macro_content = 'ImageSaveAs("' + nd2_output_escaped + '",14,0);\n'
+            macro_content += 'CloseAllDocuments(0);\n'
+            macro_writer.write(macro_content)
+            macro_writer.close()
+            print("Created NIS macro: " + macro_path)
+            print("Macro will save to: " + nd2_output)
+            
+            # Build command to open file in NIS-Elements and execute macro
+            import subprocess
+            cmd = [nis_path, "-f", first_ome_tif.getAbsolutePath(), "-mv", macro_path]
+            subprocess.Popen(cmd)
+            print("NIS-Elements launched with file and executing macro to save as .nd2")
+        else:
+            print("No .ome.tif files found in output folder")
+    else:
+        print("Could not find NIS-Elements at: " + nis_path)
+        print("You can manually select a file from the output folder and open it in NIS-Elements:")
+        print("  Output folder: " + outputFolder)
 else:
     print("ERROR: Could not open image: " + str(filePath))
