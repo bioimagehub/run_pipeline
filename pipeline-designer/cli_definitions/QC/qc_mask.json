@@ -1,0 +1,118 @@
+{
+    "id": "qc_mask",
+    "name": "Qc Mask",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: qc_mask",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/plots/qc_mask.py",
+    "helpCommand": "python standard_code/python/plots/qc_mask.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob pattern for input images",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob pattern for mask images",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Folder to save plots. If not specified, displays interactively.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--mode",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Processing mode: \"all\" = all files, \"examples[N]\" = first, middle, last N files (default: 3), \"first[N]\" = first N files (default: 3), \"random[N]\" = N random files (default: 3), \"group[N]\" = N samples per experimental group (default: group1)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search for files",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--alpha",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Transparency of mask overlay (0-1, default: 0.5)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--channel",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Which channel to display. If not specified, shows all channels (default: all)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--z-slice",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Which Z slice to display. If not specified, uses maximum intensity projection.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--colormap",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Colormap for mask labels: \"random\" (shuffled hues, adjacent labels dissimilar - default), \"hsv\" (sequential hues), or any matplotlib colormap name (e.g., \"tab20\", \"Set3\")",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--qc-key",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable interactive QC mode with this key (e.g., \"nuc_segmentation\"). Allows navigation with arrow keys and QC recording with mouse clicks.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:38:27.069543",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

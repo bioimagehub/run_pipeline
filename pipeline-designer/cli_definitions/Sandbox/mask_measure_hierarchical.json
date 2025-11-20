@@ -1,0 +1,78 @@
+{
+    "id": "mask_measure_hierarchical",
+    "name": "Measure hierarchical masks (objects within objects)",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_measure_hierarchical",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/mask_measure_hierarchical.py",
+    "helpCommand": "python standard_code/python/mask_measure_hierarchical.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "%ILASTIK_TEST_DATA%/input_tif/*.tif",
+            "description": "Glob pattern for input images, e.g. \"folder/*.tif\"",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-search-patterns",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "None",
+            "description": "[MASK_SEARCH_PATTERNS ...] List of glob patterns for masks. First pattern is parent mask, rest are child masks. Use * wildcard to match input filename prefix. Example: \"folder/*_nuc.tif\" \"folder/*_spot1.tif\" \"folder/*_spot2.tif\"",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "%ILASTIK_TEST_DATA%/results_hierarchical",
+            "description": "Path to output folder. Defaults to the folder of the first mask.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search for files",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing (default: parallel enabled)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--channel",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Specific channel index to measure (0-based). If not provided, measures all channels.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:18.949187",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

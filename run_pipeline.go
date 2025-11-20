@@ -87,61 +87,43 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 	//   %REPO%/path -> resolved relative to mainProgramDir (repo/program root)
 	//   %YAML%/path -> resolved relative to folder containing the YAML file
 	//   %VAR%/path  -> resolved using variable VAR from .env file
-	// These tokens can appear anywhere in the string and will be replaced
+	// These take precedence when present at the start of the string.
+	if strings.HasPrefix(v, "%REPO%") {
+		sub := strings.TrimPrefix(v, "%REPO%")
+		sub = strings.TrimLeft(sub, "/\\")
+		return filepath.Join(mainProgramDir, filepath.FromSlash(sub))
+	}
+	if strings.HasPrefix(v, "%YAML%") {
+		sub := strings.TrimPrefix(v, "%YAML%")
+		sub = strings.TrimLeft(sub, "/\\")
+		return filepath.Join(yamlDir, filepath.FromSlash(sub))
+	}
 
-	result := v
-
-	// Replace %REPO% tokens anywhere in the string
-	result = strings.ReplaceAll(result, "%REPO%/", filepath.FromSlash(mainProgramDir+"/"))
-	result = strings.ReplaceAll(result, "%REPO%\\", filepath.FromSlash(mainProgramDir+"\\"))
-	result = strings.ReplaceAll(result, "%REPO%", mainProgramDir)
-
-	// Replace %YAML% tokens anywhere in the string
-	result = strings.ReplaceAll(result, "%YAML%/", filepath.FromSlash(yamlDir+"/"))
-	result = strings.ReplaceAll(result, "%YAML%\\", filepath.FromSlash(yamlDir+"\\"))
-	result = strings.ReplaceAll(result, "%YAML%", yamlDir)
-
-	// Replace custom environment variables from .env file
-	// Find all %VAR% patterns and replace them
-	for {
-		start := strings.Index(result, "%")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(result[start+1:], "%")
-		if end == -1 {
-			break
-		}
-		end += start + 1
-
-		varName := result[start+1 : end]
-		// Skip if it's one of the reserved tokens we already handled
-		if varName == "REPO" || varName == "YAML" {
-			// Move past this token to avoid infinite loop
-			result = result[:start] + "<<" + varName + ">>" + result[end+1:]
-			continue
-		}
-
-		envValue := getEnvValue(varName)
-		if envValue != "" {
-			result = result[:start] + envValue + result[end+1:]
-		} else {
-			// Move past this unknown token to avoid infinite loop
-			result = result[:start] + "<<" + varName + ">>" + result[end+1:]
+	// Check for custom environment variables from .env file
+	if strings.HasPrefix(v, "%") && strings.Contains(v[1:], "%") {
+		// Extract variable name between % signs
+		endIdx := strings.Index(v[1:], "%")
+		if endIdx != -1 {
+			varName := v[1 : endIdx+1]
+			envValue := getEnvValue(varName)
+			if envValue != "" {
+				sub := v[endIdx+2:] // Everything after the second %
+				sub = strings.TrimLeft(sub, "/\\")
+				if sub == "" {
+					return envValue // Just return the env value if no path follows
+				}
+				return filepath.Join(envValue, filepath.FromSlash(sub))
+			}
 		}
 	}
 
-	// Restore the placeholder tokens (in case they were valid but unknown)
-	result = strings.ReplaceAll(result, "<<REPO>>", "%REPO%")
-	result = strings.ReplaceAll(result, "<<YAML>>", "%YAML%")
-
 	// Backward-compatible behavior for leading ./
-	if strings.HasPrefix(result, "./") {
+	if strings.HasPrefix(v, "./") {
 		if !warnedDotSlash {
 			fmt.Println("[deprecated] Use %REPO%/ or %YAML%/ instead of './'")
 			warnedDotSlash = true
 		}
-		vTrim := strings.TrimPrefix(result, "./")
+		vTrim := strings.TrimPrefix(v, "./")
 		if strings.HasSuffix(vTrim, ".py") || strings.HasSuffix(vTrim, ".ijm") || strings.HasSuffix(vTrim, ".exe") {
 			return filepath.Join(mainProgramDir, vTrim)
 		}
@@ -149,7 +131,7 @@ func resolvePath(v string, mainProgramDir, yamlDir string) string {
 	}
 
 	// No changes for other paths (absolute or bare)
-	return result
+	return v
 }
 
 // askForAnacondaPath prompts the user for the Anaconda installation path and validates it.
@@ -361,6 +343,71 @@ func getVersion() string {
 	return getGitVersion()
 }
 
+// launchPipelineDesigner launches the pipeline designer GUI application
+// If yamlPath is provided, it will be opened in the designer
+// If yamlPath is empty, the user will be prompted to choose a save location
+func launchPipelineDesigner(mainProgramDir string, yamlPath string) {
+	// Look for the pipeline designer executable
+	designerPaths := []string{
+		filepath.Join(mainProgramDir, "pipeline-designer", "build", "bin", "pipeline-designer.exe"),
+		filepath.Join(mainProgramDir, "pipeline-designer", "pipeline-designer.exe"),
+		filepath.Join(mainProgramDir, "build", "bin", "pipeline-designer.exe"),
+		filepath.Join(mainProgramDir, "pipeline-designer.exe"),
+	}
+
+	var designerExe string
+	for _, path := range designerPaths {
+		if isFile(path) {
+			designerExe = path
+			break
+		}
+	}
+
+	if designerExe == "" {
+		fmt.Println("Error: Pipeline Designer executable not found.")
+		fmt.Println("Expected location: pipeline-designer/build/bin/pipeline-designer.exe")
+		fmt.Println("\nTo build the designer, run:")
+		fmt.Println("  cd pipeline-designer")
+		fmt.Println("  .\\build.ps1")
+		log.Fatal("Pipeline Designer not found")
+	}
+
+	fmt.Printf("Launching Pipeline Designer: %s\n", designerExe)
+
+	// Prepare command arguments
+	var cmdArgs []string
+	if yamlPath != "" {
+		// If a YAML file was provided, pass it as an argument
+		absYamlPath, err := filepath.Abs(yamlPath)
+		if err == nil {
+			cmdArgs = []string{absYamlPath}
+			fmt.Printf("Opening YAML file: %s\n", absYamlPath)
+		}
+	} else {
+		// No YAML file specified - designer will prompt for save location
+		fmt.Println("Starting designer - you will be prompted to choose where to save your pipeline")
+	}
+
+	// Launch the designer
+	cmd := exec.Command(designerExe, cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Start()
+	if err != nil {
+		log.Fatalf("Error launching Pipeline Designer: %v", err)
+	}
+
+	fmt.Println("Pipeline Designer launched successfully")
+	fmt.Println("You can close this window or press Ctrl+C to exit")
+
+	// Wait for the designer to exit
+	err = cmd.Wait()
+	if err != nil {
+		log.Printf("Pipeline Designer exited with error: %v", err)
+	}
+}
+
 // computeSegmentHash creates a deterministic hash of a segment's content
 // Includes: name, type, message, environment, and all commands
 // This hash is used to detect if a segment has been modified
@@ -540,42 +587,6 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 	return cmdArgs
 }
 
-// ensurePythonVersion ensures the requested Python version is available via UV
-// Automatically downloads and installs Python if not found
-func ensurePythonVersion(uvExe, pythonVer string) error {
-	if pythonVer == "" {
-		return nil // No specific version requested
-	}
-
-	fmt.Printf("Ensuring Python %s is available...\n", pythonVer)
-
-	// Check if Python version is already installed using 'uv python list'
-	checkCmd := exec.Command(uvExe, "python", "list")
-	output, err := checkCmd.CombinedOutput()
-
-	if err == nil {
-		// Parse output to see if our version is listed
-		outputStr := string(output)
-		if strings.Contains(outputStr, pythonVer) {
-			fmt.Printf("✓ Python %s is already available\n", pythonVer)
-			return nil
-		}
-	}
-
-	// Python version not found, install it
-	fmt.Printf("Installing Python %s (this may take a moment)...\n", pythonVer)
-	installCmd := exec.Command(uvExe, "python", "install", pythonVer)
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-
-	if err := installCmd.Run(); err != nil {
-		return fmt.Errorf("failed to install Python %s: %w", pythonVer, err)
-	}
-
-	fmt.Printf("✓ Python %s installed successfully\n", pythonVer)
-	return nil
-}
-
 // ensureUvEnvironment ensures the environment-specific .venv exists with required dependency group installed
 // Creates separate .venv_<group> directories for isolation (like conda envs)
 // Only syncs if the specific .venv_<group> doesn't exist
@@ -607,28 +618,13 @@ func ensureUvEnvironment(mainProgramDir string, environment string) string {
 		log.Fatal("UV executable not found. Please install UV.")
 	}
 
-	// Extract Python version if specified (e.g., "uv@3.11:group")
-	pythonVer := extractPythonVersion(environment)
-
-	// Default to Python 3.11 if no version specified (best wheel coverage on Windows)
-	if pythonVer == "" {
-		pythonVer = "3.11"
-		fmt.Println("No Python version specified, defaulting to 3.11 (recommended for best compatibility)")
-	}
-
-	// Ensure the requested Python version is available
-	if err := ensurePythonVersion(uvExe, pythonVer); err != nil {
-		log.Fatalf("Failed to ensure Python version: %v", err)
-	}
-
-	// Step 1: Create the venv using uv venv with explicit Python version
-	venvCmd := exec.Command(uvExe, "venv", "--python", pythonVer, venvPath)
-	fmt.Printf("Running: %s venv --python %s %s\n", uvExe, pythonVer, venvPath)
-
+	// Step 1: Create the venv using uv venv
+	venvCmd := exec.Command(uvExe, "venv", venvPath)
 	venvCmd.Dir = mainProgramDir
 	venvCmd.Stdout = os.Stdout
 	venvCmd.Stderr = os.Stderr
 
+	fmt.Printf("Running: %s venv %s\n", uvExe, venvPath)
 	if err := venvCmd.Run(); err != nil {
 		log.Fatalf("Failed to create venv for '%s': %v", groupName, err)
 	}
@@ -668,27 +664,6 @@ func extractUvGroup(environment string) string {
 	// Handle "uv:group" format
 	if strings.HasPrefix(env, "uv:") {
 		return strings.TrimPrefix(env, "uv:")
-	}
-
-	return ""
-}
-
-// extractPythonVersion extracts the Python version from UV environment string
-// Examples: "uv@3.11:drift-correct" -> "3.11"
-//
-//	"uv:drift-correct" -> "" (no version specified)
-func extractPythonVersion(environment string) string {
-	env := strings.ToLower(environment)
-
-	// Handle "uv@version:group" format
-	if strings.HasPrefix(env, "uv@") {
-		parts := strings.Split(env, ":")
-		if len(parts) >= 2 {
-			// Extract version from "uv@3.11" part
-			versionPart := parts[0]
-			version := strings.TrimPrefix(versionPart, "uv@")
-			return version
-		}
 	}
 
 	return ""
@@ -865,77 +840,30 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 
 // Function to prepare command arguments for ImageJ execution
 func makeImageJCommand(segment Segment, imageJPath, mainProgramDir, yamlDir string) []string {
-	// ImageJ2 scripts (.py, .js, .groovy) need: ImageJ-win64.exe --ij2 --headless --console --run script.py "key='value',key='value'"
-	// Note: Values must be quoted with single quotes for ImageJ2 parser
-	// Legacy macros (.ijm) need: ImageJ-win64.exe --headless --console -macro macro.ijm "key=value,key=value"
-
-	var scriptPath string
-	var argPairs []string
-	var isImageJ2Script bool
+	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"} // Initialize command arguments
 
 	// Loop through each command in the segment's command list
-	for i, cmd := range segment.Commands {
+	for _, cmd := range segment.Commands {
 		switch v := cmd.(type) {
 		case string:
-			// First string is always the script/macro path
-			if i == 0 {
-				resolved := resolvePath(v, mainProgramDir, yamlDir)
-				// Convert backslashes to forward slashes for ImageJ compatibility
-				scriptPath = filepath.ToSlash(resolved)
-
-				// Detect if this is an ImageJ2 script (Python, JavaScript, Groovy, etc) or legacy macro
-				lowerPath := strings.ToLower(scriptPath)
-				isImageJ2Script = strings.HasSuffix(lowerPath, ".py") ||
-					strings.HasSuffix(lowerPath, ".js") ||
-					strings.HasSuffix(lowerPath, ".groovy") ||
-					strings.HasSuffix(lowerPath, ".clj")
-			} else {
-				// Additional strings are passed as-is (legacy support)
-				resolved := resolvePath(v, mainProgramDir, yamlDir)
-				resolved = filepath.ToSlash(resolved)
-				if isImageJ2Script {
-					argPairs = append(argPairs, fmt.Sprintf("'%s'", resolved))
-				} else {
-					argPairs = append(argPairs, resolved)
-				}
-			}
+			// Resolve paths for string commands and add to cmdArgs with proper encapsulation
+			resolved := resolvePath(v, mainProgramDir, yamlDir)
+			cmdArgs = append(cmdArgs, "--run", fmt.Sprintf("\"%s\"", resolved))
 
 		case map[interface{}]interface{}:
-			// For map commands, convert to "key=value" pairs
+			// For map commands, loop through entries
 			for flag, value := range v {
+				// Append the flag in the required format
 				if value != nil && value != "null" {
-					flagStr := fmt.Sprintf("%v", flag)
-					valStr := fmt.Sprintf("%v", value)
-					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
-					// Convert backslashes to forward slashes to avoid parse errors
-					resolved = filepath.ToSlash(resolved)
-					// Build key=value pair - ImageJ2 needs values quoted
-					if isImageJ2Script {
-						argPairs = append(argPairs, fmt.Sprintf("%s='%s'", flagStr, resolved))
-					} else {
-						argPairs = append(argPairs, fmt.Sprintf("%s=%s", flagStr, resolved))
-					}
+					valStr := fmt.Sprintf("%v", value) // Convert value to string
+					// Append it in the required format as "key='value'"
+					cmdArgs = append(cmdArgs, fmt.Sprintf("\"%s='%s'\"", flag, valStr))
 				}
 			}
 
 		default:
 			log.Fatalf("unexpected type %v", reflect.TypeOf(v)) // Handle unexpected command types
 		}
-	}
-
-	// Build command based on script type
-	var cmdArgs []string
-	if isImageJ2Script {
-		// ImageJ2 script: use --ij2 and --run
-		cmdArgs = []string{imageJPath, "--ij2", "--headless", "--console", "--run", scriptPath}
-	} else {
-		// Legacy macro: use -macro
-		cmdArgs = []string{imageJPath, "--headless", "--console", "-macro", scriptPath}
-	}
-
-	// Join all argument pairs with commas and add as single argument
-	if len(argPairs) > 0 {
-		cmdArgs = append(cmdArgs, strings.Join(argPairs, ","))
 	}
 
 	return cmdArgs
@@ -954,7 +882,7 @@ func main() {
 	// Initialize a variable to hold the path to the YAML configuration file
 	var yamlPath string
 	forceReprocessing := false // Initialize the force reprocessing flag
-	printHashOnly := false     // Initialize the print-hash flag
+	designMode := false        // Initialize the design mode flag
 
 	// Check if a path is passed as a command-line argument
 	for _, arg := range os.Args[1:] {
@@ -963,8 +891,8 @@ func main() {
 			fmt.Println("  your_program [options] <path_to_yaml>")
 			fmt.Println("")
 			fmt.Println("Options:")
+			fmt.Println("  -d, --design              Launch the visual pipeline designer GUI.")
 			fmt.Println("  -f, --force_reprocessing  Process segments even if they have been previously processed.")
-			fmt.Println("  --print-hash              Print content hash for each segment without executing.")
 			fmt.Println("  -h, --help                Show help information.")
 			fmt.Println("")
 			fmt.Println("Arguments:")
@@ -985,10 +913,10 @@ func main() {
 			fmt.Println("run:")
 			fmt.Println("- name: Collapse folder structure and save as .tif\n  environment: convert_to_tif\n  commands:\n    - python\n    - ./standard_code/python/convert_to_tif.py\n    - --input-file-or-folder: ./input\n    - --extension: .ims\n    - --projection-method: max\n    - --search-subfolders\n    - --collapse-delimiter: __\n- name: Enable force mode mid-pipeline\n  type: force\n  message: 'Reprocessing all subsequent steps.'\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
 			os.Exit(0)
+		} else if arg == "--design" || arg == "-d" {
+			designMode = true
 		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
-		} else if arg == "--print-hash" {
-			printHashOnly = true
 		} else {
 			yamlPath = arg // Assume the next argument is the YAML file path
 
@@ -997,6 +925,12 @@ func main() {
 				log.Fatalf("The specified YAML path is not a valid file: %v", yamlPath)
 			}
 		}
+	}
+
+	// Handle design mode
+	if designMode {
+		launchPipelineDesigner(mainProgramDir, yamlPath)
+		return
 	}
 
 	// TODO Check if the yaml file is inside the main program directory
@@ -1014,31 +948,6 @@ func main() {
 	err = yaml.Unmarshal(data, &config)
 	if err != nil {
 		log.Fatalf("error unmarshalling YAML: %v", err)
-	}
-
-	// If --print-hash flag is set, print hashes and exit
-	if printHashOnly {
-		fmt.Printf("# Content hashes for segments in: %s\n", yamlPath)
-		fmt.Println("# Copy this to your status file if needed\n")
-		fmt.Println("segments:")
-
-		for _, segment := range config.Run {
-			// Skip control types (pause, stop, force)
-			stepType := strings.ToLower(segment.Type)
-			if stepType == "pause" || stepType == "stop" || stepType == "force" {
-				continue
-			}
-
-			hash := computeSegmentHash(segment)
-
-			fmt.Printf("- name: %s\n", segment.Name)
-			fmt.Printf("  content_hash: %s\n", hash)
-			fmt.Printf("  last_processed: \"\"\n")
-			fmt.Printf("  code_version: \"\"\n")
-			fmt.Printf("  run_duration: \"\"\n")
-		}
-
-		os.Exit(0)
 	}
 
 	// Get the directory of the YAML file for resolving data paths
@@ -1238,27 +1147,6 @@ func main() {
 			fmt.Println("")
 			fmt.Println("")
 			continue
-		} else if segment.Environment == "" {
-			// No environment specified - execute directly
-			// Build command args from segment commands
-			for _, cmd := range segment.Commands {
-				switch v := cmd.(type) {
-				case string:
-					resolved := resolvePath(v, mainProgramDir, yamlDir)
-					cmdArgs = append(cmdArgs, resolved)
-				case map[interface{}]interface{}:
-					for flag, value := range v {
-						cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
-						if value != nil && value != "null" {
-							valStr := fmt.Sprintf("%v", value)
-							resolved := resolvePath(valStr, mainProgramDir, yamlDir)
-							cmdArgs = append(cmdArgs, resolved)
-						}
-					}
-				default:
-					log.Fatalf("unexpected type %v", reflect.TypeOf(v))
-				}
-			}
 		} else {
 			anacondaPath, err := find_anaconda_path.FindAnacondaPath()
 			if err != nil {

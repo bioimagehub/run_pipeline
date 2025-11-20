@@ -1,0 +1,58 @@
+{
+    "id": "copy_files_with_extension",
+    "name": "Copy Files With Extension",
+    "icon": "\ud83d\udcc1",
+    "color": "#4ec9b0",
+    "description": "CLI tool: copy_files_with_extension",
+    "environment": "uv@3.11:default",
+    "executable": "python",
+    "script": "standard_code/python/copy_files_with_extension.py",
+    "helpCommand": "python standard_code/python/copy_files_with_extension.py --help",
+    "arguments": [
+        {
+            "flag": "--input-folders",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "[INPUT_FOLDERS ...]",
+            "validation": "must_exist",
+            "userOverride": false
+        },
+        {
+            "flag": "--suffixes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "[SUFFIXES ...] Suffixes to copy from input folders, e.g. --suffixes _mask1 _mask2, or of several from the same folder",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--suffixes",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "mask1,_mask2 _mask3,mask4",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Path to the output folder where processed images will be saved",
+            "validation": "create_if_missing",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:11:31.805184",
+    "outputFilesDefined": false,
+    "category": "Input/Output"
+}

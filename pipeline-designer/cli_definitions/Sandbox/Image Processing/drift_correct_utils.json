@@ -1,0 +1,17 @@
+{
+    "id": "drift_correct_utils",
+    "name": "Drift Correct Utils",
+    "icon": "\ud83c\udfa8",
+    "color": "#569cd6",
+    "description": "CLI tool: drift_correct_utils",
+    "environment": "uv@3.11:drift-correct",
+    "executable": "python",
+    "script": "standard_code/python/drift_correct_utils.py",
+    "helpCommand": "python standard_code/python/drift_correct_utils.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:37:19.967711",
+    "outputFilesDefined": false,
+    "category": "Image Processing"
+}

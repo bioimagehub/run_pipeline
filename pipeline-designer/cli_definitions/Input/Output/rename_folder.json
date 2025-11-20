@@ -1,0 +1,38 @@
+{
+    "id": "rename_folder",
+    "name": "Rename Folder",
+    "icon": "\ud83d\udcc1",
+    "color": "#4ec9b0",
+    "description": "CLI tool: rename_folder",
+    "environment": "uv@3.11:default",
+    "executable": "python",
+    "script": "standard_code/python/rename_folder.py",
+    "helpCommand": "python standard_code/python/rename_folder.py --help",
+    "arguments": [
+        {
+            "flag": "--old-folder-path",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "The path to the folder to rename or move",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--new-folder-path",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "The new path for the folder",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:39.866236",
+    "outputFilesDefined": false,
+    "category": "Input/Output"
+}

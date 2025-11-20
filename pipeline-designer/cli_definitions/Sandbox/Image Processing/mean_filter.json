@@ -1,0 +1,58 @@
+{
+    "id": "mean_filter",
+    "name": "Mean Filter",
+    "icon": "🎨",
+    "color": "#569cd6",
+    "description": "CLI tool: mean_filter",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/mean_filter.py",
+    "helpCommand": "python standard_code/python/mean_filter.py --help",
+    "arguments": [
+        {
+            "flag": "--input-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/input/*.tif",
+            "description": "Glob pattern for input images (e.g., './input/*.tif')",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/output/filtered",
+            "description": "Output folder for filtered images",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--size",
+            "type": "int",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "3",
+            "description": "Size of the mean filter kernel (default: 3)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Filtered TIF files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*_mean.tif",
+            "description": "Glob pattern for mean filtered output TIF files. <output_folder> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:38:05.740806",
+    "outputFilesDefined": false,
+    "category": "Image Processing"
+}

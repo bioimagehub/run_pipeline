@@ -1,0 +1,134 @@
+.path-tokens {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.path-tokens-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.path-tokens-header:hover h3 {
+  color: #0d6efd;
+}
+
+.path-tokens-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #495057;
+  transition: color 0.2s ease;
+}
+
+.hint {
+  font-size: 11px;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.tokens-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.token-item {
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.token-item:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 2px 4px rgba(13, 110, 253, 0.1);
+  transform: translateY(-1px);
+}
+
+.token-item.copied {
+  background: #d1e7dd;
+  border-color: #198754;
+}
+
+.token-badge {
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 13px;
+  font-weight: bold;
+  color: #0d6efd;
+  background: #e7f1ff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  min-width: 100px;
+  text-align: center;
+}
+
+.token-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.token-description {
+  font-size: 12px;
+  color: #495057;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.token-path {
+  font-size: 11px;
+  color: #6c757d;
+  font-family: 'Courier New', Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copied-indicator {
+  color: #198754;
+  font-weight: bold;
+  font-size: 16px;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.tokens-help {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #dee2e6;
+}
+
+.tokens-help p {
+  margin: 4px 0;
+  font-size: 11px;
+  color: #6c757d;
+}
+
+.tokens-help strong {
+  color: #495057;
+  font-family: 'Courier New', Consolas, monospace;
+}

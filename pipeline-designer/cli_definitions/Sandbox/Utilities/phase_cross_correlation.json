@@ -1,0 +1,17 @@
+{
+    "id": "phase_cross_correlation",
+    "name": "Phase Cross Correlation",
+    "icon": "\ud83d\udd27",
+    "color": "#858585",
+    "description": "CLI tool: phase_cross_correlation",
+    "environment": "uv@3.11:drift-correct",
+    "executable": "python",
+    "script": "standard_code/python/phase_cross_correlation.py",
+    "helpCommand": "python standard_code/python/phase_cross_correlation.py --help",
+    "arguments": [],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:37:24.596854",
+    "outputFilesDefined": false,
+    "category": "Utilities"
+}

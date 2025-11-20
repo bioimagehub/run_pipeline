@@ -1,0 +1,128 @@
+{
+    "id": "plot_segmentation_contours",
+    "name": "Plot Segmentation Contours",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: plot_segmentation_contours",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/plot_segmentation_contours.py",
+    "helpCommand": "python standard_code/python/plot_segmentation_contours.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob pattern for input images (e.g., \"./input/*.tif\")",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Glob pattern for mask images (e.g., \"./output/*_mask.tif\")",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--qc-key",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "QC key to use for filtering (e.g., \"nuc_segmentation\", \"track_completeness\"). Images with failed status will be excluded.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "-o",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": ", --output OUTPUT Output path for the plot (PNG). If not specified, displays interactively.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search for files",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mode",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "File selection mode: \"all\" = all files, \"examples[N]\" = first, middle, last N files, \"first[N]\" = first N files, \"random[N]\" = N random files, \"group[N]\" = N samples per experimental group (default: all)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--linewidth",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Line width for contours (default: 2.0)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--alpha",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "0.5",
+            "description": "Alpha transparency for average masks (default: 0.5)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--colormap",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "tab10",
+            "description": "Matplotlib colormap for group colors (default: tab10)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--force-show",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Display plot interactively even when saving",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--log-level",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "{DEBUG,INFO,WARNING,ERROR} Logging level (default: INFO)",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:38:20.503728",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}

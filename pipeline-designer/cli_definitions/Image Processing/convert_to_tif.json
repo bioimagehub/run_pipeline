@@ -1,0 +1,132 @@
+{
+    "id": "convert_to_tif",
+    "name": "Convert to tif",
+    "icon": "\ud83c\udfa8",
+    "color": "#569cd6",
+    "description": "CLI tool: convert_to_tif",
+    "environment": "uv@3.11:convert-to-tif",
+    "executable": "python",
+    "script": "standard_code/python/convert_to_tif.py",
+    "helpCommand": "python standard_code/python/convert_to_tif.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": true,
+            "defaultValue": "%YAML%/input/*.ims",
+            "description": "Input file pattern (supports wildcards, e.g., 'data/*.tif' or 'data/**/*.tif' for recursive search). Use '**' to search subfolders recursively.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--collapse-delimiter",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "__",
+            "description": "Delimiter for collapsing subfolder structure in output filenames when using '**' (default: __). Example: 'folder1/folder2/image.tif' becomes 'folder1__folder2__image.tif'",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--projection-method",
+            "type": "string",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "None",
+            "description": "{None,max,sum,mean,median,min,std} Z projection method over Z axis if Z>1",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--multipoint-files",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "(not implemented) multiple scenes to separate files",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "unused; kept for CLI compatibility",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-file-name-extension",
+            "type": "string",
+            "socketSide": "input", 
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output-folder",
+            "type": "path",
+            "socketSide": "input", 
+            "isRequired": false,
+            "defaultValue": "<input_search_pattern:dirname>_tif",
+            "description": "Output folder path (default: derived from input folder with '_tif' suffix)",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--dry-run",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Print planned actions but do not write any files.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--version",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Print version and exit.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "TIF files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*<output_file_name_extension>.tif",
+            "description": "Glob pattern for output TIF files. <output_folder> and <output_file_name_extension> are set by the corresponding input arguments. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        },
+                {
+            "flag": "Yaml files",
+            "type": "glob_pattern",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output_folder>/*<output_file_name_extension>_metadata.yaml",
+            "description": "Glob pattern for output YAML files. <output_folder> and <output_file_name_extension> are set by the corresponding input arguments. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+
+
+
+
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:11:25.226767",
+    "outputFilesDefined": false,
+    "category": "Image Processing"
+}

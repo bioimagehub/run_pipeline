@@ -1,0 +1,78 @@
+{
+    "id": "mask_measure",
+    "name": "Measure masks against input images",
+    "icon": "\ud83d\udd2c",
+    "color": "#c586c0",
+    "description": "CLI tool: mask_measure",
+    "environment": "uv@3.11:segmentation",
+    "executable": "python",
+    "script": "standard_code/python/mask_measure.py",
+    "helpCommand": "python standard_code/python/mask_measure.py --help",
+    "arguments": [
+        {
+            "flag": "--input-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "%YAML%/input_tif/*.tif",
+            "description": "Glob pattern for input images, e.g. \"folder/*.tif\" or \"folder/somefile*.tif\". Use a single file path for one image.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--mask-search-pattern",
+            "type": "glob_pattern",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "%YAML%/output_summary/*_cp_masks_nuc.tif",
+            "description": "[MASK_SEARCH_PATTERN] Glob pattern for mask images, e.g. \"folder/*_nuc.tif\". The * will be replaced with the prefix of the input image before the * in its pattern.",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--output",
+            "type": "path",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "%YAML%/output/measurements",
+            "description": "Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the mask.",
+            "validation": "create_if_missing",
+            "userOverride": false
+        },
+        {
+            "flag": "--search-subfolders",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Enable recursive search (only relevant if pattern does not already include \"**\")",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "--no-parallel",
+            "type": "bool",
+            "socketSide": "input",
+            "isRequired": false,
+            "defaultValue": "",
+            "description": "Disable parallel processing (default: parallel enabled)",
+            "validation": "",
+            "userOverride": false
+        },
+        {
+            "flag": "Measurement CSV files",
+            "type": "string",
+            "socketSide": "output",
+            "isRequired": false,
+            "defaultValue": "<output>/**/*.csv",
+            "description": "Glob pattern for measurement CSV output files. <output> is set by the corresponding input argument. This field is locked and not user-editable.",
+            "validation": "",
+            "userOverride": false
+        }
+    ],
+    "version": "1.0.0",
+    "author": "BIPHUB",
+    "lastParsed": "2025-10-27T16:12:14.587080",
+    "outputFilesDefined": false,
+    "category": "Segmentation"
+}
