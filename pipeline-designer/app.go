@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 )
@@ -274,8 +275,9 @@ func (a *App) CountFilesMatchingPattern(pattern string, yamlFilePath string) int
 	appLogger.Printf("[COUNT_FILES] YAML directory: '%s'\n", envVars["YAML"])
 	appLogger.Printf("[COUNT_FILES] Resolved pattern: '%s'\n", resolvedPattern)
 
-	// Use filepath.Glob to match files
-	matches, err := filepath.Glob(resolvedPattern)
+	// Use doublestar.FilepathGlob to support ** recursive patterns (like Python's glob)
+	// This matches the behavior of Python's glob.glob with recursive=True
+	matches, err := doublestar.FilepathGlob(resolvedPattern)
 	if err != nil {
 		appLogger.Printf("[COUNT_FILES] Error: %v\n", err)
 		return 0
@@ -748,8 +750,8 @@ func resolveOutputGlobPatterns(node *CLINode, baseDir string) string {
 			pattern = filepath.Join(baseDir, pattern)
 		}
 
-		// Resolve the glob pattern
-		matches, err := filepath.Glob(pattern)
+		// Resolve the glob pattern using doublestar for ** support
+		matches, err := doublestar.FilepathGlob(pattern)
 		if err != nil {
 			appLogger.Printf("[WARN] Failed to resolve glob pattern '%s': %v\n", pattern, err)
 			continue
