@@ -172,6 +172,9 @@ def subtract_t0_background(
         logging.warning("Only one timepoint - cannot perform T0 subtraction")
         return heatmap_data.copy()
     
+    # Ensure we're working with float type (not boolean or integer)
+    heatmap_data = heatmap_data.astype(np.float64)
+    
     log_info("=" * 60)
     log_info("T0 BACKGROUND SUBTRACTION")
     log_info("=" * 60)
@@ -998,40 +1001,40 @@ def quantify_signal_spread_and_decay(
     log_info(f"Loaded heatmap: {num_distance_bins} distance bins × {T} timepoints")
     log_info(f"Distance range: {distance_bins[0]:.2f} to {distance_bins[-1]:.2f}")
     
-    # Convert to numpy array
-    heatmap_data = pivot_df.values  # shape: (num_distance_bins, num_timepoints)
+    # Convert to numpy array with explicit float64 dtype to avoid boolean arrays
+    heatmap_data = pivot_df.values.astype(np.float64)  # shape: (num_distance_bins, num_timepoints)
     
-    log_info(f"DEBUG - After pivot.values: shape={heatmap_data.shape}, sum={np.nansum(heatmap_data)}, non-zero={np.count_nonzero(~np.isnan(heatmap_data) & (heatmap_data != 0))}")
+    log_info(f"DEBUG - After pivot.values: shape={heatmap_data.shape}, dtype={heatmap_data.dtype}, sum={np.nansum(heatmap_data)}, non-zero={np.count_nonzero(~np.isnan(heatmap_data) & (heatmap_data != 0))}")
     
     # Save raw heatmap BEFORE any processing (including T0)
     raw_heatmap_rand_path = output_path.replace('.png', '_raw_heatmap_rand.tif')
         
-        # Convert to uint16 for saving (scale to full range)
-        heatmap_min = np.nanmin(heatmap_data)
-        heatmap_max = np.nanmax(heatmap_data)
-        
-        log_info(f"DEBUG - Scaling range (rand): [{heatmap_min}, {heatmap_max}]")
-        
-        if heatmap_max > heatmap_min:
-            heatmap_scaled = ((heatmap_data - heatmap_min) / (heatmap_max - heatmap_min) * 65535).astype(np.uint16)
-        else:
-            heatmap_scaled = np.zeros_like(heatmap_data, dtype=np.uint16)
-        
-        # Reshape to TCZYX format and save
-        heatmap_flipped = np.flipud(heatmap_scaled)
-        heatmap_img = heatmap_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
-        
-        rp.save_tczyx_image(heatmap_img, raw_heatmap_rand_path)
-        log_info(f"Saved raw heatmap (random sampling, before artifact removal) as TIF: {raw_heatmap_rand_path}")
+    # Convert to uint16 for saving (scale to full range)
+    heatmap_min = np.nanmin(heatmap_data)
+    heatmap_max = np.nanmax(heatmap_data)
     
+    log_info(f"DEBUG - Scaling range (rand): [{heatmap_min}, {heatmap_max}]")
+    
+    if heatmap_max > heatmap_min:
+        heatmap_scaled = ((heatmap_data - heatmap_min) / (heatmap_max - heatmap_min) * 65535).astype(np.uint16)
+    else:
+        heatmap_scaled = np.zeros_like(heatmap_data, dtype=np.uint16)
+    
+    # Reshape to TCZYX format and save
+    heatmap_flipped = np.flipud(heatmap_scaled)
+    heatmap_img = heatmap_flipped[np.newaxis, np.newaxis, np.newaxis, :, :]
+    
+    rp.save_tczyx_image(heatmap_img, raw_heatmap_rand_path)
+    log_info(f"Saved raw heatmap (random sampling, before artifact removal) as TIF: {raw_heatmap_rand_path}")
+
     # === GENERATE HEATMAP FROM MAXIMUM RADIAL INTENSITY (highest value at each distance bin) ===
     if 'Max' in df.columns:
             log_info("Generating max projection heatmap...")
             
             pivot_max_df = df.pivot(index='Mask_Index', columns='Timepoint', values='Max')
-            heatmap_max_data = pivot_max_df.values
+            heatmap_max_data = pivot_max_df.values.astype(np.float64)  # Explicit float64 conversion
             
-            log_info(f"Max projection heatmap - min: {np.nanmin(heatmap_max_data)}, max: {np.nanmax(heatmap_max_data)}")
+            log_info(f"Max projection heatmap - dtype={heatmap_max_data.dtype}, min: {np.nanmin(heatmap_max_data)}, max: {np.nanmax(heatmap_max_data)}")
             
             # Scale to uint16
             heatmap_max_min = np.nanmin(heatmap_max_data)
@@ -1272,13 +1275,13 @@ def quantify_signal_spread_and_decay(
         intensity_T10 = np.nan
         intensity_T20 = np.nan
     else:
-        # Initialize metrics arrays
-        distance_peak = np.full(T_quantify, np.nan)
-        distance_spread_lower = np.full(T_quantify, np.nan)
-        distance_spread_upper = np.full(T_quantify, np.nan)
-        distance_spread = np.full(T_quantify, np.nan)
-        signal_area = np.zeros(T_quantify)
-        temporal_intensity = np.zeros(T_quantify)
+        # Initialize metrics arrays with explicit float64 dtype
+        distance_peak = np.full(T_quantify, np.nan, dtype=np.float64)
+        distance_spread_lower = np.full(T_quantify, np.nan, dtype=np.float64)
+        distance_spread_upper = np.full(T_quantify, np.nan, dtype=np.float64)
+        distance_spread = np.full(T_quantify, np.nan, dtype=np.float64)
+        signal_area = np.zeros(T_quantify, dtype=np.float64)
+        temporal_intensity = np.zeros(T_quantify, dtype=np.float64)
         
         # Calculate per-timepoint metrics
         for t in range(T_quantify):
@@ -1465,7 +1468,7 @@ def quantify_signal_spread_and_decay(
     
     # === SAVE METRICS AS TSV ===
     metrics_path = output_path.replace('.png', '_metrics.tsv')
-        
+    
     # Create metrics dataframe
     metrics_df = pd.DataFrame({
         'Timepoint': timepoints_arr,

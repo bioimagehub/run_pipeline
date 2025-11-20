@@ -1,0 +1,6 @@
+segments:
+- name: Test v4 quantification (clean metrics)
+  content_hash: b7e89c6a6a7a692417bd4beaefb4ef75bed4213c1d3d73eff381905d7a4ebefb
+  last_processed: "2025-11-13"
+  code_version: 0.0.13
+  run_duration: 1m26.5554926s
