@@ -879,20 +879,22 @@ func main() {
 		log.Fatalf("Error changing directory: %v", err)
 	}
 
-	// Initialize a variable to hold the path to the YAML configuration file
-	var yamlPath string
-	forceReprocessing := false // Initialize the force reprocessing flag
-	designMode := false        // Initialize the design mode flag
+	// Initialize CLI flag state
+	var yamlPath string        // Path to YAML config
+	forceReprocessing := false // --force_reprocessing / -f
+	designMode := false        // --design / -d
+	printHash := false         // --print-hash / -ph: preview status YAML without executing
 
 	// Check if a path is passed as a command-line argument
 	for _, arg := range os.Args[1:] {
 		if arg == "-h" || arg == "--help" {
 			fmt.Println("Usage:")
-			fmt.Println("  your_program [options] <path_to_yaml>")
+			fmt.Println("  run_pipeline.exe [options] <path_to_yaml>")
 			fmt.Println("")
 			fmt.Println("Options:")
 			fmt.Println("  -d, --design              Launch the visual pipeline designer GUI.")
 			fmt.Println("  -f, --force_reprocessing  Process segments even if they have been previously processed.")
+			fmt.Println("  -ph, --print-hash         Print a preview of the *_status.yaml file (no execution).")
 			fmt.Println("  -h, --help                Show help information.")
 			fmt.Println("")
 			fmt.Println("Arguments:")
@@ -917,6 +919,8 @@ func main() {
 			designMode = true
 		} else if arg == "--force_reprocessing" || arg == "-f" {
 			forceReprocessing = true
+		} else if arg == "--print-hash" || arg == "-ph" {
+			printHash = true
 		} else {
 			yamlPath = arg // Assume the next argument is the YAML file path
 
@@ -948,6 +952,35 @@ func main() {
 	err = yaml.Unmarshal(data, &config)
 	if err != nil {
 		log.Fatalf("error unmarshalling YAML: %v", err)
+	}
+
+	// If --print-hash was requested, output a synthesized status YAML and exit early
+	if printHash {
+		// Build status preview without executing anything
+		preview := Status{Segments: make([]SegmentStatus, 0)}
+		codeVersion := getVersion()
+		processedDate := time.Now().Format("2006-01-02")
+		for _, segment := range config.Run {
+			stepType := strings.ToLower(segment.Type)
+			if stepType == "pause" || stepType == "stop" || stepType == "force" {
+				continue // Skip control steps in status
+			}
+			hash := computeSegmentHash(segment)
+			preview.Segments = append(preview.Segments, SegmentStatus{
+				Name:          segment.Name,
+				ContentHash:   hash,
+				LastProcessed: processedDate,
+				CodeVersion:   codeVersion,
+				RunDuration:   "", // Unknown until executed
+			})
+		}
+		out, err := yaml.Marshal(&preview)
+		if err != nil {
+			log.Fatalf("error marshalling preview status YAML: %v", err)
+		}
+		fmt.Println("# Preview of status file (no execution performed)")
+		fmt.Print(string(out))
+		return
 	}
 
 	// Get the directory of the YAML file for resolving data paths
