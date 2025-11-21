@@ -11,7 +11,7 @@
 
 run:
 - name: Fill greyscale holes (2D mode - slice by slice)
-  environment: uv@3.11:fill-greyscale-holes
+  environment: uv:segmentation
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
