@@ -1,0 +1,50 @@
+---
+# Fill Holes in Greyscale Images Pipeline
+# 
+# Fills dark regions (holes) in greyscale images while preserving intensity.
+# Perfect for filling nucleoli inside nuclei or other dark internal structures.
+#
+# Example use case: Confocal nucleus images where nucleoli appear as dark holes
+#
+# Author: BIPHUB - Bioimage Informatics Hub, University of Oslo
+# License: MIT
+
+run:
+- name: Fill greyscale holes (2D mode - slice by slice)
+  environment: uv@3.11:fill-greyscale-holes
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern
+  - '%YAML%/input_data/**/*.tif'
+  - --output-folder
+  - '%YAML%/output_filled'
+  - --suffix
+  - '_filled'
+  - --search-subfolders
+
+# Alternative: 3D mode for Z-stacks
+# Uncomment to process entire Z-stacks as 3D volumes
+# - name: Fill greyscale holes (3D mode - volumetric)
+#   environment: uv@3.11:fill-greyscale-holes
+#   commands:
+#   - python
+#   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+#   - --input-search-pattern
+#   - '%YAML%/input_data/**/*.tif'
+#   - --output-folder
+#   - '%YAML%/output_filled_3d'
+#   - --mode-3d
+
+# Alternative: Process specific channels only
+# - name: Fill greyscale holes (channel 0 only)
+#   environment: uv@3.11:fill-greyscale-holes
+#   commands:
+#   - python
+#   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+#   - --input-search-pattern
+#   - '%YAML%/input_data/**/*.tif'
+#   - --output-folder
+#   - '%YAML%/output_filled_ch0'
+#   - --channels
+#   - '0'
