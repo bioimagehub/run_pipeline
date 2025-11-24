@@ -14,6 +14,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+from matplotlib.patches import Circle
 from pathlib import Path
 from typing import Tuple, Optional, List
 import logging
@@ -30,6 +31,57 @@ except ImportError:
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, parent_dir)
     import bioimage_pipeline_utils as rp
+
+def extract_roi_positions(yaml_path: str) -> Optional[List[Tuple[float, float]]]:
+    """
+    Extract ROI positions from metadata YAML file.
+    
+    Args:
+        yaml_path: Path to metadata YAML file
+        
+    Returns:
+        List of (x_pixels, y_pixels) tuples, or None if no ROIs found
+    """
+    if not yaml_path or not os.path.exists(yaml_path):
+        return None
+    
+    try:
+        import yaml
+        with open(yaml_path, 'r') as f:
+            metadata = yaml.safe_load(f)
+        
+        # Navigate to ROIs in metadata
+        if not metadata or 'Image metadata' not in metadata:
+            return None
+        
+        image_metadata = metadata['Image metadata']
+        if 'ROIs' not in image_metadata or not image_metadata['ROIs']:
+            return None
+        
+        # ROI positions are already in pixel coordinates
+        roi_positions = []
+        for roi_entry in image_metadata['ROIs']:
+            if 'Roi' not in roi_entry:
+                continue
+            
+            roi = roi_entry['Roi']
+            positions = roi.get('Positions', {})
+            
+            # ROI positions are already in pixels
+            x_pixels = positions.get('x', None)
+            y_pixels = positions.get('y', None)
+            
+            logging.info(f"ROI position from YAML: x={x_pixels}, y={y_pixels} (pixels)")
+            
+            if x_pixels is not None and y_pixels is not None:
+                roi_positions.append((x_pixels, y_pixels))
+                logging.info(f"Added ROI at ({x_pixels:.1f}, {y_pixels:.1f}) pixels")
+        
+        return roi_positions if roi_positions else None
+        
+    except Exception as e:
+        logging.warning(f"Failed to extract ROI from {yaml_path}: {e}")
+        return None
 
 def create_label_colormap(num_labels: int, background_color: Tuple[float, float, float, float] = (0, 0, 0, 0), 
                          colormap: str = 'hsv', alpha: float = 0.5) -> ListedColormap:
@@ -122,7 +174,8 @@ def plot_image_with_mask(
     alpha: float = 0.5,
     channel: int = None,
     z_slice: Optional[int] = None,
-    colormap: str = 'random'
+    colormap: str = 'random',
+    roi_positions: Optional[List[Tuple[float, float]]] = None
 ) -> None:
     """
     Create a plot showing first, middle, and last timepoints with mask overlays.
@@ -136,6 +189,7 @@ def plot_image_with_mask(
         channel: Which channel to display. If None, displays all channels (default: None)
         z_slice: Which Z slice to display. If None, uses maximum intensity projection.
         colormap: Color generation strategy for mask labels (default: 'random')
+        roi_positions: Optional list of (x, y) pixel coordinates for ROI markers
     """
     logging.info(f"Loading image: {image_path}")
     img = rp.load_tczyx_image(image_path)
@@ -314,6 +368,26 @@ def plot_image_with_mask(
             ax.imshow(mask_overlay, cmap=mask_cmap, alpha=1.0, interpolation='nearest', 
                      vmin=0, vmax=max_label)
             
+            # Overlay ROI markers if provided
+            if roi_positions:
+                for roi_x, roi_y in roi_positions:
+                    # Validate coordinates are within image bounds
+                    if 0 <= roi_x < X and 0 <= roi_y < Y:
+                        # Draw larger crosshair using line plots (in data coordinates)
+                        line_length = max(Y, X) * 0.03  # 3% of image size
+                        ax.plot([roi_x - line_length, roi_x + line_length], [roi_y, roi_y], 
+                               'r-', linewidth=2, alpha=0.8)  # Horizontal line
+                        ax.plot([roi_x, roi_x], [roi_y - line_length, roi_y + line_length], 
+                               'r-', linewidth=2, alpha=0.8)  # Vertical line
+                        # Draw circle around ROI
+                        circle_radius = line_length * 1.5
+                        circle = Circle((roi_x, roi_y), circle_radius, 
+                                       color='red', fill=False, linewidth=2, alpha=0.8)
+                        ax.add_patch(circle)
+                        logging.info(f"Plotted ROI marker at ({roi_x:.1f}, {roi_y:.1f}) - image bounds: ({X}, {Y})")
+                    else:
+                        logging.warning(f"ROI position ({roi_x:.1f}, {roi_y:.1f}) is outside image bounds ({X}, {Y})")
+            
             # Count objects in this timepoint
             n_objects = len(np.unique(mask_2d)) - 1  # Subtract background
             
@@ -363,7 +437,7 @@ def plot_image_with_mask(
 
 
 def interactive_qc(
-    file_pairs: List[Tuple[str, str]],
+    file_pairs: List[Tuple[str, str, Optional[str]]],
     qc_key: str,
     input_search_pattern: str,
     mask_search_pattern: str,
@@ -385,7 +459,7 @@ def interactive_qc(
     - Right click: Mark as FAIL
     
     Args:
-        file_pairs: List of tuples (image_path, mask_path)
+        file_pairs: List of tuples (image_path, mask_path, yaml_path). yaml_path is optional and can be None.
         qc_key: Key to store QC results under (e.g., 'nuc_segmentation')
         input_search_pattern: Original input search pattern for documentation
         mask_search_pattern: Original mask search pattern for documentation
@@ -477,7 +551,10 @@ def interactive_qc(
         if fig is not None:
             plt.close(fig)
         
-        image_path, mask_path = file_pairs[index]
+        image_path, mask_path, yaml_path = file_pairs[index]
+        
+        # Extract ROI positions if YAML provided
+        roi_positions = extract_roi_positions(yaml_path) if yaml_path else None
         
         # Load existing QC status if available
         existing_qc = load_existing_qc(image_path)
@@ -630,6 +707,26 @@ def interactive_qc(
                 ax.imshow(mask_overlay, cmap=mask_cmap, alpha=1.0, interpolation='nearest', 
                          vmin=0, vmax=max_label)
                 
+                # Overlay ROI markers if provided
+                if roi_positions:
+                    for roi_x, roi_y in roi_positions:
+                        # Validate coordinates are within image bounds
+                        if 0 <= roi_x < X and 0 <= roi_y < Y:
+                            # Draw larger crosshair using line plots (in data coordinates)
+                            line_length = max(Y, X) * 0.03  # 3% of image size
+                            ax.plot([roi_x - line_length, roi_x + line_length], [roi_y, roi_y], 
+                                   'r-', linewidth=2, alpha=0.8)  # Horizontal line
+                            ax.plot([roi_x, roi_x], [roi_y - line_length, roi_y + line_length], 
+                                   'r-', linewidth=2, alpha=0.8)  # Vertical line
+                            # Draw circle around ROI
+                            circle_radius = line_length * 1.5
+                            circle = Circle((roi_x, roi_y), circle_radius, 
+                                           color='red', fill=False, linewidth=2, alpha=0.8)
+                            ax.add_patch(circle)
+                            logging.info(f"Plotted ROI marker at ({roi_x:.1f}, {roi_y:.1f}) - image bounds: ({X}, {Y})")
+                        else:
+                            logging.warning(f"ROI position ({roi_x:.1f}, {roi_y:.1f}) is outside image bounds ({X}, {Y})")
+                
                 # Count objects in this timepoint
                 n_objects = len(np.unique(mask_2d)) - 1
                 
@@ -743,7 +840,7 @@ def interactive_qc(
         if event.inaxes is None:
             return
         
-        image_path, _ = file_pairs[current_index]
+        image_path, _, _ = file_pairs[current_index]
         
         if event.button == 1:  # Left click = PASS
             save_qc_result(image_path, "pass")
@@ -900,6 +997,23 @@ Examples:
   # Use matplotlib categorical colormaps
   python plot_mask.py --input-search-pattern "./images/*.tif" --mask-search-pattern "./masks/*_mask.tif" --colormap tab20
   python plot_mask.py --input-search-pattern "./images/*.tif" --mask-search-pattern "./masks/*_mask.tif" --colormap Set3
+  
+  # Show with ROI markers from metadata YAML files
+  python plot_mask.py --input-search-pattern "./images/*.tif" --mask-search-pattern "./masks/*_mask.tif" --yaml-search-pattern "./metadata/*_metadata.yaml"
+  
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: QC mask overlay with ROI markers
+  environment: uv@3.11:qc-mask
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/qc_mask.py'
+  - --input-search-pattern: '%YAML%/input_tif/**/*.tif'
+  - --mask-search-pattern: '%YAML%/output_masks/**/*_mask.tif'
+  - --yaml-search-pattern: '%YAML%/input_tif/*_metadata.yaml'
+  - --mode: group1
+  - --colormap: random
         """
     )
     
@@ -927,13 +1041,16 @@ Examples:
     parser.add_argument('--qc-key', type=str, default=None,
                        help='Enable interactive QC mode with this key (e.g., "nuc_segmentation"). '
                             'Allows navigation with arrow keys and QC recording with mouse clicks.')
+    parser.add_argument('--yaml-search-pattern', type=str, default=None,
+                       help='Optional glob pattern for metadata YAML files. If provided, ROI positions will be extracted '
+                            'and displayed as markers on the plots.')
     
     args = parser.parse_args()
 
 
-    # Setup logging
+    # Setup logging - use INFO level to see ROI extraction details
     logging.basicConfig(
-        level=logging.ERROR,
+        level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     
@@ -954,12 +1071,16 @@ Examples:
         'mask': args.mask_search_pattern
     }
     
+    # Add optional YAML pattern if provided
+    if args.yaml_search_pattern:
+        search_patterns['yaml'] = args.yaml_search_pattern
+    
     grouped_files = rp.get_grouped_files_to_process(search_patterns, args.search_subfolders)
     
     if not grouped_files:
         raise FileNotFoundError(f"No matching image-mask pairs found!")
     
-    # Convert grouped files to list of tuples for backward compatibility
+    # Convert grouped files to list of tuples (image, mask, yaml)
     file_pairs = []
     for basename, files in grouped_files.items():
         if 'image' not in files:
@@ -968,7 +1089,9 @@ Examples:
         if 'mask' not in files:
             logging.warning(f"Missing mask for basename '{basename}', skipping.")
             continue
-        file_pairs.append((files['image'], files['mask']))
+        # YAML is optional
+        yaml_path = files.get('yaml', None)
+        file_pairs.append((files['image'], files['mask'], yaml_path))
     
     if not file_pairs:
         raise ValueError(f"No complete image-mask pairs found!")
@@ -1091,9 +1214,12 @@ Examples:
         return
     
     # Process each pair
-    for img_path, mask_path in selected_pairs:
+    for img_path, mask_path, yaml_path in selected_pairs:
         logging.info(f"\n{'='*60}")
         logging.info(f"Processing: {Path(img_path).name}")
+        
+        # Extract ROI positions if YAML provided
+        roi_positions = extract_roi_positions(yaml_path) if yaml_path else None
         
         if args.output_folder:
             output_name = f"{Path(img_path).stem}_overlay.png"
@@ -1109,7 +1235,8 @@ Examples:
                 alpha=args.alpha,
                 channel=args.channel,
                 z_slice=args.z_slice,
-                colormap=args.colormap
+                colormap=args.colormap,
+                roi_positions=roi_positions
             )
         except Exception as e:
             logging.error(f"Error processing {Path(img_path).name}: {e}")

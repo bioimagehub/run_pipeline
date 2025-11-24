@@ -173,7 +173,8 @@ def process_single_image(
     input_path: str,
     output_path: str,
     channels: Optional[list[int]] = None,
-    mode_3d: bool = False
+    mode_3d: bool = False,
+    show_progress: bool = True
 ) -> None:
     """
     Process a single image file: load, fill holes, save.
@@ -189,6 +190,8 @@ def process_single_image(
     mode_3d : bool
         If True, treat each Z-stack as a 3D volume for hole filling.
         If False, process each Z-slice independently as 2D.
+    show_progress : bool
+        If True, show tqdm progress bar. If False, suppress progress bar.
         
     Notes
     -----
@@ -220,7 +223,7 @@ def process_single_image(
     # Process each timepoint and channel
     total_operations = T * len(channels_to_process)
     
-    with tqdm(total=total_operations, desc="Filling holes") as pbar:
+    with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
         for t in range(T):
             for c in channels_to_process:
                 # Extract the data for this T,C
@@ -351,6 +354,12 @@ Notes:
         help='Process Z-stacks as 3D volumes instead of individual 2D slices. Use when holes span multiple Z-slices.'
     )
     
+    parser.add_argument(
+        '--no-parallel',
+        action='store_true',
+        help='Do not use parallel processing.'
+    )
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -372,11 +381,9 @@ Notes:
     os.makedirs(args.output_folder, exist_ok=True)
     logging.info(f"Output folder: {args.output_folder}")
     
-    # Process each file
-    for i, input_path in enumerate(input_files, 1):
-        logging.info(f"\n{'='*70}")
-        logging.info(f"Processing file {i}/{len(input_files)}")
-        
+    # Define processing function for a single file
+    def process_file_wrapper(input_path):
+        """Wrapper function for processing a single file (used for parallel processing)."""
         # Generate output path
         input_name = Path(input_path).stem
         output_name = f"{input_name}{args.suffix}.tif"
@@ -387,13 +394,29 @@ Notes:
                 input_path=input_path,
                 output_path=output_path,
                 channels=args.channels,
-                mode_3d=args.mode_3d
+                mode_3d=args.mode_3d,
+                show_progress=args.no_parallel  # Only show per-file progress in sequential mode
             )
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
             import traceback
             logging.error(traceback.format_exc())
-            continue
+    
+    # Process files (with or without parallel processing)
+    if not args.no_parallel:
+        from joblib import Parallel, delayed
+        logging.info(f"Processing {len(input_files)} files in parallel...")
+        # Progress bar tracks completed files, not internal progress
+        Parallel(n_jobs=-1)(
+            delayed(process_file_wrapper)(file) 
+            for file in tqdm(input_files, desc="Processing files", unit="file")
+        )
+    else:
+        logging.info(f"Processing {len(input_files)} files sequentially...")
+        for i, input_path in enumerate(input_files, 1):
+            logging.info(f"\n{'='*70}")
+            logging.info(f"Processing file {i}/{len(input_files)}")
+            process_file_wrapper(input_path)
     
     logging.info(f"\n{'='*70}")
     logging.info("Processing complete!")
