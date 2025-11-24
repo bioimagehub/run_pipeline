@@ -147,20 +147,12 @@ def convert_single_file(
             
             logger.info(f"Loaded data shape: {data.shape}, ndim: {data.ndim}")
             
-            # Handle RGB images (6D: TCZYXS where S=3 for RGB)
-            if data.ndim == 6 and data.shape[-1] == 3:
-                logger.info("Detected RGB image - converting to separate channels")
-                # Reshape from (T, C, Z, Y, X, 3) to (T, C*3, Z, Y, X)
-                T, C, Z, Y, X, S = data.shape
-                # Split RGB into separate channels: R, G, B
-                data = data.transpose(0, 1, 5, 2, 3, 4)  # (T, C, S, Z, Y, X)
-                data = data.reshape(T, C * S, Z, Y, X)  # (T, C*3, Z, Y, X)
-                logger.info(f"Converted RGB to {C * S} channels, new shape: {data.shape}")
-            
-            # Extract metadata for this scene before projection
+            # Extract metadata for this scene BEFORE any RGB conversion
             # This includes physical pixel sizes, channel names, and other OME metadata
             physical_pixel_sizes = None
             channel_names = None
+            original_channel_count = data.shape[1] if data.ndim >= 2 else 1  # Get C from TCZYX
+            
             try:
                 if hasattr(img, 'physical_pixel_sizes'):
                     physical_pixel_sizes = img.physical_pixel_sizes
@@ -170,6 +162,29 @@ def convert_single_file(
                 logger.info(f"Extracted metadata - Pixel sizes: {physical_pixel_sizes}, Channels: {channel_names}")
             except Exception as e:
                 logger.warning(f"Could not extract metadata: {e}")
+            
+            # Handle RGB images (6D: TCZYXS where S=3 for RGB)
+            if data.ndim == 6 and data.shape[-1] == 3:
+                logger.info("Detected RGB image - converting to separate channels")
+                # Reshape from (T, C, Z, Y, X, 3) to (T, C*3, Z, Y, X)
+                T, C, Z, Y, X, S = data.shape
+                # Split RGB into separate channels: R, G, B
+                data = data.transpose(0, 1, 5, 2, 3, 4)  # (T, C, S, Z, Y, X)
+                data = data.reshape(T, C * S, Z, Y, X)  # (T, C*3, Z, Y, X)
+                logger.info(f"Converted RGB to {C * S} channels, new shape: {data.shape}")
+                
+                # Update channel names for RGB split
+                if channel_names and len(channel_names) == C:
+                    # Expand channel names: each channel becomes R, G, B variants
+                    new_channel_names = []
+                    for ch_name in channel_names:
+                        new_channel_names.extend([f"{ch_name}_R", f"{ch_name}_G", f"{ch_name}_B"])
+                    channel_names = new_channel_names
+                    logger.info(f"Updated channel names for RGB: {channel_names}")
+                elif C == 1:
+                    # Simple case: single channel RGB becomes R, G, B
+                    channel_names = ["Red", "Green", "Blue"]
+                    logger.info(f"Set default RGB channel names: {channel_names}")
             
             # Apply projection if requested
             if projection_method:
