@@ -11,7 +11,7 @@ from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
 
 # Load the image
-path = r"E:\Coen\Sarah\6849908-IMB-Coen-Sarah-Photoconv_global\output_masks_simple_threshold\SP20250625__L58R__R2__SP20250625_PC_R2_L58R_001_bleach_corrected_mask.tif"
+path = r"E:\Coen\Sarah\6849908-IMB-Coen-Sarah-Photoconv_global\masks_nuc\SP20250625__L58R__R2__SP20250625_PC_R2_L58R_001_bleach_corrected_filled_Probabilities.tif"
 mask = tifffile.imread(path)
 print(f"Original mask shape: {mask.shape}")
 

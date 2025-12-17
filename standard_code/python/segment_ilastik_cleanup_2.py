@@ -1,29 +1,5 @@
 """
-Ilastik Probability Map Cleanup and Segmentation
-=================================================
 
-Python rewrite of debug_segmentation.ijm for processing Ilastik probability maps.
-
-This module processes HDF5 probability maps from Ilastik, performing per-slice
-segmentation following ImageJ "stack" conventions (T and Z dimensions processed
-independently).
-
-Processing pipeline per XY slice:
-1. Thresholding of probability maps
-2. Size and edge-based filtering (per XY slice)
-3. Iterative watershed segmentation with erosion/dilation
-4. Perimeter-based quality control (per XY slice)
-5. Convex hull fallback for failed segmentations
-
-The goal is to extract a single, high-quality cell mask per slice that:
-- Does not touch XY image edges
-- Has area within specified bounds (minsize - maxsize, per XY slice)
-- Has perimeter within specified bounds (minperim - maxperim, per XY slice)
-
-Data format: TCZYX dimension order for consistency with pipeline standards.
-When "stack" is mentioned (ImageJ convention), always loops over T and Z dimensions.
-
-MIT License - BIPHUB, University of Oslo
 """
 
 import os
@@ -49,7 +25,7 @@ def load_h5_probability_map(
     h5_path: str,
     dataset_name: str = "/exported_data",
     channel: int = 1,
-    threshold_lower: float = 0.5,
+    threshold_lower: float = 0.3,
     threshold_upper: float = 1.0
 ) -> np.ndarray:
     """
@@ -122,12 +98,6 @@ def check_on_edge(mask: np.ndarray) -> bool:
     
     return False
 
-
-def get_mask_area(mask: np.ndarray) -> int:
-    """Count non-zero pixels in mask."""
-    return np.sum(mask > 0)
-
-
 def get_largest_object(labeled_mask: np.ndarray) -> np.ndarray:
     """
     Keep only the largest connected component.
@@ -155,141 +125,6 @@ def get_largest_object(labeled_mask: np.ndarray) -> np.ndarray:
     largest_mask = (labeled_mask == largest_label).astype(np.uint8)
     
     return largest_mask
-
-
-def validate_object(
-    mask: np.ndarray,
-    minsize: int,
-    maxsize: int,
-    minperim: int,
-    maxperim: int,
-    check_on_edge_enabled: bool = True
-) -> Tuple[bool, dict]:
-    """
-    Validate object against size and perimeter criteria.
-    
-    Args:
-        mask: Binary 2D mask (Y, X) - single slice
-        minsize: Minimum area in pixels (per XY slice)
-        maxsize: Maximum area in pixels (per XY slice)
-        minperim: Minimum perimeter (per XY slice)
-        maxperim: Maximum perimeter (per XY slice)
-        check_on_edge_enabled: Whether to reject objects touching XY edges (default: True)
-    
-    Returns:
-        Tuple of (is_valid, metrics_dict)
-    """
-    metrics = {
-        'area': 0,
-        'perimeter': 0,
-        'on_edge': False,
-        'is_empty': False
-    }
-    
-    # Check if empty
-    if mask.max() == 0:
-        metrics['is_empty'] = True
-        logger.debug("Validation failed: Empty mask")
-        return False, metrics
-    
-    # Check edges (only if enabled)
-    if check_on_edge_enabled and check_on_edge(mask):
-        metrics['on_edge'] = True
-        logger.debug("Validation failed: Object touches edge")
-        return False, metrics
-    
-    # Calculate area (2D area for this slice)
-    area = get_mask_area(mask)
-    metrics['area'] = area
-    
-    if area < minsize:
-        logger.debug(f"Validation failed: area ({area}) < minsize ({minsize})")
-        return False, metrics
-    
-    if area > maxsize:
-        logger.debug(f"Validation failed: area ({area}) > maxsize ({maxsize})")
-        return False, metrics
-    
-    # Get perimeter using skimage
-    props = measure.regionprops((mask > 0).astype(int))
-    if len(props) == 0:
-        logger.debug("Validation failed: No region properties found")
-        return False, metrics
-    
-    perimeter = props[0].perimeter
-    metrics['perimeter'] = perimeter
-    
-    if perimeter < minperim:
-        logger.debug(f"Validation failed: perimeter ({perimeter:.1f}) < minperim ({minperim})")
-        return False, metrics
-    
-    if perimeter > maxperim:
-        logger.debug(f"Validation failed: perimeter ({perimeter:.1f}) > maxperim ({maxperim})")
-        return False, metrics
-    
-    logger.info(f"Validation passed: area={area}, perimeter={perimeter:.1f}")
-    return True, metrics
-
-
-def validate_mask(
-    mask: np.ndarray,
-    minsize: int,
-    maxsize: int,
-    minperim: int,
-    maxperim: int,
-    nObjects: int = 1,
-    check_on_edge_enabled: bool = True
-) -> bool:
-    """
-    Validate entire 5D mask (TCZYX) across all T,Z slices.
-    
-    All slices must pass validation criteria for the function to return True.
-    
-    Args:
-        mask: 5D mask array in TCZYX order
-        minsize: Minimum object area (per XY slice)
-        maxsize: Maximum object area (per XY slice)
-        minperim: Minimum perimeter (per XY slice)
-        maxperim: Maximum perimeter (per XY slice)
-        nObjects: Expected number of objects per slice (default: 1). Only nObjects=1 is currently supported.
-        check_on_edge_enabled: Whether to reject objects touching XY edges (default: True)
-    
-    Returns:
-        True if all slices pass validation, False otherwise
-    """
-    if nObjects != 1:
-        logger.warning(f"nObjects={nObjects} specified but only nObjects=1 is currently supported")
-    
-    T, C, Z, Y, X = mask.shape
-    
-    for t in range(T):
-        for z in range(Z):
-            slice_2d = mask[t, 0, z, :, :].copy()
-            
-            # Validate against size and perimeter criteria
-            is_valid, metrics = validate_object(
-                slice_2d,
-                minsize,
-                maxsize,
-                minperim,
-                maxperim,
-                check_on_edge_enabled=check_on_edge_enabled
-            )
-            
-            if not is_valid:
-                logger.warning(f"Validation failed at T={t}, Z={z}: {metrics}")
-                return False
-            
-            # Check number of objects (currently only nObjects=1 supported)
-            if nObjects == 1:
-                labeled, num_objects = ndimage.label(slice_2d > 0)
-                if num_objects != 1:
-                    logger.warning(f"Validation failed at T={t}, Z={z}: Expected {nObjects} object(s), found {num_objects}")
-                    return False
-    
-    logger.info("Validation passed: All slices meet criteria")
-    return True
-
 
 def particle_filter(
     mask: np.ndarray,
@@ -347,81 +182,6 @@ def particle_filter(
     
     return filtered_mask
 
-
-def erode_preserve_border(mask: np.ndarray) -> np.ndarray:
-    """
-    Erode mask (simple erosion for 2D slices).
-    
-    Args:
-        mask: Binary 2D mask (Y, X)
-    
-    Returns:
-        Eroded mask (Y, X)
-    """
-    # Simple erosion for 2D
-    eroded = morphology.binary_erosion(mask)
-    return eroded.astype(np.uint8)
-
-
-def apply_convex_hull_per_slice(mask: np.ndarray) -> np.ndarray:
-    """
-    Apply convex hull to a 2D slice.
-    
-    Args:
-        mask: Binary 2D mask (Y, X)
-    
-    Returns:
-        Mask with convex hull applied (Y, X)
-    """
-    if mask.max() > 0:
-        return convex_hull_image(mask > 0).astype(np.uint8)
-    return mask.astype(np.uint8)
-
-
-def grow_shrink_cycles(
-    mask: np.ndarray,
-    minsize: int,
-    maxsize: int,
-    minperim: int,
-    maxperim: int,
-    max_cycles: int = 10
-) -> Tuple[Optional[np.ndarray], int]:
-    """
-    Try grow-shrink cycles to find a valid mask.
-    
-    Tests cycles from 1 to max_cycles and returns the first one that passes validation.
-    
-    Args:
-        mask: Binary 2D mask (Y, X)
-        minsize: Minimum area (per XY slice)
-        maxsize: Maximum area (per XY slice)
-        minperim: Minimum perimeter (per XY slice)
-        maxperim: Maximum perimeter (per XY slice)
-        max_cycles: Maximum number of grow/shrink cycles to try
-    
-    Returns:
-        Tuple of (best_mask or None, num_cycles_used)
-    """
-    for cycles in range(1, max_cycles + 1):
-        test_mask = mask.copy()
-        
-        # Grow
-        for _ in range(cycles):
-            test_mask = morphology.binary_dilation(test_mask)
-        
-        # Shrink
-        for _ in range(cycles):
-            test_mask = morphology.binary_erosion(test_mask)
-        
-        # Validate
-        is_valid, metrics = validate_object(test_mask, minsize, maxsize, minperim, maxperim)
-        
-        if is_valid:
-            logger.info(f"Grow-shrink validation passed at {cycles} cycles")
-            return test_mask.astype(np.uint8), cycles
-    
-    logger.warning(f"Grow-shrink failed after {max_cycles} cycles")
-    return None, max_cycles
 
 
 def save_imagej_tif(
@@ -620,309 +380,18 @@ def _save_failed_file(h5_path: str, output_dir: str, output_mask: Optional[np.nd
         except Exception as e:
             logger.error(f"Could not save failed file: {e}")
 
-
-class IlastikCleanupPipeline:
-    """
-    Orchestrates the multi-step Ilastik probability map cleanup pipeline.
+def fill_holes(mask_tczyx: np.ndarray) -> np.ndarray:
+    """Fill holes in each 2D slice independently."""
+    T, C, Z, Y, X = mask_tczyx.shape
+    output = np.zeros_like(mask_tczyx)
     
-    Implements a sequence of processing stages with clear separation of concerns:
-    1. Fill holes in binary masks
-    2. Apply particle size filtering
-    3. Handle edge-touching objects
-    4. Validate results and apply fallback strategies
-    5. Fill temporal gaps if enabled
-    """
+    for t in range(T):
+        for z in range(Z):
+            output[t, 0, z, :, :] = ndimage.binary_fill_holes(
+                mask_tczyx[t, 0, z, :, :]
+            ).astype(np.uint8)
     
-    def __init__(
-        self,
-        minsize: int,
-        maxsize: int,
-        minperim: int,
-        maxperim: int,
-        max_watershed_rounds: int,
-        max_grow_shrink_cycles: int
-    ):
-        """Initialize pipeline with processing parameters."""
-        self.params = {
-            'minsize': minsize,
-            'maxsize': maxsize,
-            'minperim': minperim,
-            'maxperim': maxperim,
-            'max_watershed_rounds': max_watershed_rounds,
-            'max_grow_shrink_cycles': max_grow_shrink_cycles
-        }
-    
-    def process(
-        self,
-        mask_tczyx: np.ndarray,
-        max_time_gap: int = -1
-    ) -> tuple[np.ndarray, bool]:
-        """
-        Execute the full segmentation pipeline.
-        
-        Args:
-            mask_tczyx: 5D binary mask in TCZYX order
-            max_time_gap: Fill temporal gaps up to this many frames (-1 = disabled)
-        
-        Returns:
-            Tuple of (output_mask, all_slices_valid)
-        """
-        logger.info("=" * 60)
-        logger.info("Starting Ilastik cleanup pipeline")
-        logger.info("=" * 60)
-        
-        # Stage 1: Fill holes
-        logger.info("STAGE 1: Filling holes in mask...")
-        mask = self._fill_holes(mask_tczyx)
-        logger.info(f"  → {np.sum(mask > 0)} pixels after hole filling")
-        
-        # Stage 2: Apply particle filter + edge handling (integrated)
-        logger.info("STAGE 2: Filtering components (size + edge with watershed)...")
-        mask = self._apply_particle_filter(mask)
-        logger.info(f"  → {np.sum(mask > 0)} pixels after filtering")
-        
-        # Stage 3: Validate and apply fallbacks
-        logger.info("STAGE 3: Validating and applying fallback strategies...")
-        mask, all_valid = self._validate_and_fallback(mask)
-        logger.info(f"  → All slices valid: {all_valid}")
-        
-        # Stage 4: Fill temporal gaps if enabled
-        if max_time_gap > 0:
-            logger.info(f"STAGE 4: Filling temporal gaps (max_gap={max_time_gap})...")
-            mask, fill_count = fill_temporal_gaps(
-                mask,
-                max_time_gap,
-                require_matching_labels=False
-            )
-            logger.info(f"  → Filled {fill_count} pixels")
-        else:
-            logger.info("STAGE 4: Temporal gap filling disabled")
-        
-        # Stage 5: Final edge check - ensure no pixels touch edges
-        logger.info("STAGE 5: Final edge check...")
-        mask, edge_fixed = self._final_edge_check(mask)
-        if edge_fixed:
-            logger.info(f"  → Edge objects removed/split, re-validating...")
-            all_valid = self._validate_and_fallback_final(mask)
-        logger.info(f"  → Final edge check complete")
-        
-        logger.info("=" * 60)
-        logger.info(f"Pipeline complete: {np.sum(mask > 0)} total pixels")
-        logger.info("=" * 60)
-        
-        return mask, all_valid
-    
-    def _fill_holes(self, mask_tczyx: np.ndarray) -> np.ndarray:
-        """Fill holes in each 2D slice independently."""
-        T, C, Z, Y, X = mask_tczyx.shape
-        output = np.zeros_like(mask_tczyx)
-        
-        for t in range(T):
-            for z in range(Z):
-                output[t, 0, z, :, :] = ndimage.binary_fill_holes(
-                    mask_tczyx[t, 0, z, :, :]
-                ).astype(np.uint8)
-        
-        return output
-    
-    def _apply_particle_filter(self, mask_tczyx: np.ndarray) -> np.ndarray:
-        """
-        Simplified filtering with single-pass watershed and final constraints.
-        
-        Per-slice steps:
-        1. Label components and check if any are oversized or edge-touching
-        2. If needed, apply watershed to the entire slice mask to split objects
-        3. Relabel and keep only components within [minsize, maxsize] and not on edge
-        """
-        T, C, Z, Y, X = mask_tczyx.shape
-        output = np.zeros_like(mask_tczyx)
-
-        for t in range(T):
-            for z in range(Z):
-                slice_mask = mask_tczyx[t, 0, z, :, :].copy()
-                if slice_mask.max() == 0:
-                    output[t, 0, z, :, :] = np.zeros_like(slice_mask)
-                    continue
-
-                # Determine if watershed is needed
-                labeled, num_components = ndimage.label(slice_mask)
-                needs_watershed = False
-                if num_components > 0:
-                    props = measure.regionprops(labeled)
-                    for prop in props:
-                        area = prop.area
-                        comp_mask = (labeled == prop.label).astype(np.uint8)
-                        if area > self.params['maxsize'] or check_on_edge(comp_mask):
-                            needs_watershed = True
-                            break
-
-                work_mask = slice_mask
-                if needs_watershed:
-                    # Global watershed (ImageJ-style) on the slice
-                    distance = ndimage.distance_transform_edt(slice_mask)
-                    local_max = peak_local_max(distance, min_distance=1, threshold_rel=0.5, labels=slice_mask)
-                    if len(local_max) > 0:
-                        markers = np.zeros_like(slice_mask, dtype=int)
-                        for idx, peak in enumerate(local_max):
-                            markers[tuple(peak)] = idx + 1
-                        labels_ws = watershed(-distance, markers, mask=slice_mask)
-                        work_mask = (labels_ws > 0).astype(np.uint8)
-                        logger.debug(f"T={t}, Z={z}: Watershed applied, peaks={len(local_max)}")
-                    else:
-                        logger.debug(f"T={t}, Z={z}: Watershed skipped (no peaks)")
-
-                # Final filtering by size and edge constraints
-                result_mask = np.zeros_like(slice_mask)
-                labeled_final, num_final = ndimage.label(work_mask)
-                if num_final > 0:
-                    props_final = measure.regionprops(labeled_final)
-                    for prop in props_final:
-                        piece = (labeled_final == prop.label).astype(np.uint8)
-                        area = prop.area
-                        if self.params['minsize'] <= area <= self.params['maxsize'] and not check_on_edge(piece):
-                            result_mask[piece > 0] = 1
-                        else:
-                            logger.debug(f"T={t}, Z={z}: Reject piece label={prop.label} area={area} "
-                                         f"on_edge={check_on_edge(piece)}")
-
-                output[t, 0, z, :, :] = result_mask
-
-        return output
-    
-    def _validate_and_fallback(self, mask_tczyx: np.ndarray) -> tuple[np.ndarray, bool]:
-        """Validate each slice and apply fallback strategies on failure."""
-        T, C, Z, Y, X = mask_tczyx.shape
-        output = np.zeros_like(mask_tczyx)
-        all_valid = True
-        
-        for t in range(T):
-            for z in range(Z):
-                mask = mask_tczyx[t, 0, z, :, :].copy()
-                is_valid, metrics = validate_object(
-                    mask,
-                    self.params['minsize'],
-                    self.params['maxsize'],
-                    self.params['minperim'],
-                    self.params['maxperim']
-                )
-                
-                if not is_valid:
-                    all_valid = False
-                    logger.debug(f"T={t}, Z={z}: Validation failed - {metrics}")
-                    mask = self._try_fallbacks(mask)
-                
-                output[t, 0, z, :, :] = mask
-        
-        return output, all_valid
-    
-    def _try_fallbacks(self, mask: np.ndarray) -> np.ndarray:
-        """Try fallback strategies: convex hull, then grow-shrink cycles."""
-        # Fallback 1: Convex hull
-        logger.debug("Trying convex hull fallback...")
-        fallback = apply_convex_hull_per_slice(mask)
-        fallback = particle_filter(fallback, minsize=self.params['minsize'], 
-                                  maxsize=self.params['maxsize'], exclude_edges=True)
-        is_valid, _ = validate_object(fallback, self.params['minsize'], 
-                                      self.params['maxsize'], self.params['minperim'],
-                                      self.params['maxperim'])
-        if is_valid:
-            logger.debug("Convex hull fallback succeeded")
-            return fallback
-        
-        # Fallback 2: Grow-shrink cycles
-        logger.debug("Trying grow-shrink cycles...")
-        result, cycles = grow_shrink_cycles(
-            fallback,
-            self.params['minsize'],
-            self.params['maxsize'],
-            self.params['minperim'],
-            self.params['maxperim'],
-            self.params['max_grow_shrink_cycles']
-        )
-        
-        if result is not None:
-            logger.debug(f"Grow-shrink succeeded at {cycles} cycles")
-            return result
-        
-        logger.debug("All fallbacks failed, returning original mask")
-        return mask
-    
-    def _final_edge_check(self, mask_tczyx: np.ndarray) -> tuple[np.ndarray, bool]:
-        """
-        Final check to ensure no pixels touch edges. If found, attempt watershed to split them.
-        
-        Returns:
-            Tuple of (processed_mask, edge_was_fixed)
-        """
-        T, C, Z, Y, X = mask_tczyx.shape
-        output = np.zeros_like(mask_tczyx)
-        edge_found = False
-        
-        for t in range(T):
-            for z in range(Z):
-                mask = mask_tczyx[t, 0, z, :, :].copy()
-                
-                if check_on_edge(mask):
-                    edge_found = True
-                    logger.debug(f"T={t}, Z={z}: Found object touching edge, attempting watershed...")
-                    
-                    # Try watershed to split edge-touching objects
-                    watershed_result = self._apply_watershed(
-                        mask,
-                        self.params['max_watershed_rounds']
-                    )
-                    
-                    # Validate watershed result
-                    is_valid, _ = validate_object(
-                        watershed_result,
-                        self.params['minsize'],
-                        self.params['maxsize'],
-                        self.params['minperim'],
-                        self.params['maxperim'],
-                        check_on_edge_enabled=True
-                    )
-                    
-                    if is_valid:
-                        logger.debug(f"T={t}, Z={z}: Watershed successfully removed edge objects")
-                        output[t, 0, z, :, :] = watershed_result
-                    else:
-                        # If watershed fails, try fallbacks
-                        logger.debug(f"T={t}, Z={z}: Watershed didn't fix edges, trying fallbacks...")
-                        fallback = self._try_fallbacks(watershed_result)
-                        output[t, 0, z, :, :] = fallback
-                else:
-                    output[t, 0, z, :, :] = mask
-        
-        return output, edge_found
-    
-    def _validate_and_fallback_final(self, mask_tczyx: np.ndarray) -> bool:
-        """
-        Final validation check after edge correction.
-        
-        Returns:
-            True if all slices are valid, False otherwise
-        """
-        T, C, Z, Y, X = mask_tczyx.shape
-        all_valid = True
-        
-        for t in range(T):
-            for z in range(Z):
-                mask = mask_tczyx[t, 0, z, :, :].copy()
-                is_valid, metrics = validate_object(
-                    mask,
-                    self.params['minsize'],
-                    self.params['maxsize'],
-                    self.params['minperim'],
-                    self.params['maxperim'],
-                    check_on_edge_enabled=True
-                )
-                
-                if not is_valid:
-                    all_valid = False
-                    logger.debug(f"T={t}, Z={z}: Final validation failed - {metrics}")
-        
-        return all_valid
-
+    return output
 
 def process_single_file(
     h5_path: str,
@@ -942,13 +411,7 @@ def process_single_file(
 ) -> bool:
     """
     Process a single Ilastik probability map HDF5 file.
-    
-    Processes each T,Z slice independently following ImageJ "stack" convention.
-    All size/perimeter criteria are per XY slice.
-    
-    **GUARANTEED OUTPUT**: Always saves either a successful mask or a _failed file,
-    even if exceptions occur during processing.
-    
+        
     Args:
         h5_path: Path to HDF5 probability map
         output_dir: Output directory for results
@@ -1003,19 +466,113 @@ def process_single_file(
     try:
         # Load and threshold probability map
         logger.info("Loading and thresholding probability map...")
-        mask_tczyx = load_h5_probability_map(h5_path, channel=1, threshold_lower=0.5)
+        mask_tczyx = load_h5_probability_map(h5_path, channel=1, threshold_lower=0.3, threshold_upper=1.0)
         T, C, Z, Y, X = mask_tczyx.shape
         logger.info(f"Loaded mask shape (TCZYX): {mask_tczyx.shape}")
         
-        # Run the pipeline
-        pipeline = IlastikCleanupPipeline(
-            minsize, maxsize, minperim, maxperim,
-            max_watershed_rounds, max_grow_shrink_cycles
-        )
-        output_mask, all_valid = pipeline.process(mask_tczyx, max_time_gap)
+        # make a use connected components analysis for TZYX
+
+        # Fill holes
+        mask_tczyx = fill_holes(mask_tczyx)  
+
+
+        # Prepare output containers
+        labeled_tczyx = np.zeros_like(mask_tczyx, dtype=np.int32)
+
+        # 4D connectivity: consider neighbors in all four dimensions (3x3x3x3)
+        structure4d = np.ones((3, 3, 3, 3), dtype=np.uint8)
+
+        # Run per-channel (typically C=1)
+        total_components = 0
+        for c in range(C):
+            # Foreground in 4D: (T, Z, Y, X)
+            fg_4d = mask_tczyx[:, c, :, :, :].astype(bool)
+            labeled_4d, n_comp = ndimage.label(fg_4d, structure=structure4d)
+            labeled_tczyx[:, c, :, :, :] = labeled_4d
+            total_components += n_comp
+            logger.info(f"Channel {c}: found {n_comp} connected component(s)")
+
+        #rp.show_image(real_image, labeled_tczyx, title=f"Processed: {basename}")
+
         
+        for t in range(T):
+            for z in range(Z):
+                slice_2d = labeled_tczyx[t, 0, z, :, :]
+                props = measure.regionprops(slice_2d)
+                for prop in props:
+                    
+
+                    prop_on_edge = check_on_edge(slice_2d == prop.label)
+
+                    # 1 Remove labelled masks that are too small
+                    if prop.area < minsize:
+                        logger.debug(f"Removing small object {prop.label} (area={prop.area}) at T={t},Z={z}")
+                        slice_2d[slice_2d == prop.label] = 0
+
+                    # Watershed masks that are too large or touches edges (ImageJ-style EDM watershed)
+                    elif prop.area > maxsize or prop_on_edge:
+                        logger.debug(f"Applying watershed to split large/edge object {prop.label} (area={prop.area}) at T={t},Z={z}")
+                        obj_mask = (slice_2d == prop.label).astype(bool)
+                        
+                        # EDM: Euclidean Distance Map (same as ImageJ)
+                        distance = ndimage.distance_transform_edt(obj_mask)
+                        
+                        # Find maxima of EDM (ImageJ uses tolerance ~0.5)
+                        coords = peak_local_max(distance, min_distance=int(np.sqrt(minsize)/2), 
+                                               labels=obj_mask, exclude_border=False)
+                        
+                        if len(coords) > 1:
+                            # Create markers from maxima
+                            mask_markers = np.zeros(distance.shape, dtype=np.int32)
+                            mask_markers[tuple(coords.T)] = np.arange(1, len(coords) + 1)
+                            
+                            # Watershed segmentation from maxima (negative EDM as elevation)
+                            labels = watershed(-distance, mask_markers, mask=obj_mask)
+                            
+                            # Replace original with splits (validate: minsize AND not on edge)
+                            slice_2d[obj_mask] = 0
+                            next_label = int(slice_2d.max()) + 1
+                            for region in measure.regionprops(labels):
+                                split_mask = (labels == region.label)
+                                # Only keep if: size OK AND doesn't touch edges
+                                if region.area >= minsize and not check_on_edge(split_mask):
+                                    slice_2d[split_mask] = next_label
+                                    next_label += 1
+                            logger.debug(f"Watershed split {prop.label} (area={prop.area}) → {len(coords)} parts, kept {next_label - int(slice_2d.max()) - 1} valid at T={t},Z={z}")
+                        else:
+                            slice_2d[obj_mask] = 0  # Can't split, remove
+
+
+                labeled_tczyx[t, 0, z, :, :] = slice_2d     
+        
+        #rp.show_image(real_image, labeled_tczyx, title=f"After: {basename}")
+        
+        
+        # Binary output mask (components merged to 1)
+        output_mask = (labeled_tczyx > 0).astype(np.uint8)
+
+        
+        # Apply 2D particle filtering per slice
+        logger.info("Applying 2D particle filtering per slice...")
+        for t in range(T):
+            for z in range(Z):
+                slice_2d = output_mask[t, 0, z, :, :]
+                filtered_slice =  particle_filter(
+                    slice_2d,
+                    minsize=minsize,
+                    maxsize=maxsize,
+                    exclude_edges=True
+
+                )
+                output_mask[t, 0, z, :, :] = filtered_slice
+
+        rp.show_image(real_image, output_mask, title=f"After: {basename}")
+
+
+
+
         # Save results
-        if all_valid:
+        if np.sum(output_mask) > 0:
             logger.info(f"\n{'='*70}")
             logger.info("✓ SUCCESS: All slices passed validation")
             logger.info(f"{'='*70}")
