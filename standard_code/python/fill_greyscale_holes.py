@@ -175,7 +175,7 @@ def process_single_image(
     channels: Optional[list[int]] = None,
     mode_3d: bool = False,
     show_progress: bool = True
-) -> None:
+) -> bool:
     """
     Process a single image file: load, fill holes, save.
     
@@ -193,6 +193,11 @@ def process_single_image(
     show_progress : bool
         If True, show tqdm progress bar. If False, suppress progress bar.
         
+    Returns
+    -------
+    bool
+        True if processing succeeded, False otherwise.
+        
     Notes
     -----
     For multi-channel, multi-timepoint, or Z-stack images:
@@ -200,8 +205,13 @@ def process_single_image(
     - Can process each channel independently or all channels
     - Can process Z-slices as 2D or entire Z-stack as 3D
     """
-    logging.info(f"Loading image: {Path(input_path).name}")
-    img = rp.load_tczyx_image(input_path)
+    try:
+        logging.info(f"Loading image: {Path(input_path).name}")
+        img = rp.load_tczyx_image(input_path)
+    except Exception as e:
+        logging.error(f"Failed to load image {Path(input_path).name}: {e}")
+        logging.debug(f"File path: {input_path}", exc_info=True)
+        return False
     
     T, C, Z, Y, X = img.shape
     logging.info(f"  Shape: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
@@ -245,6 +255,24 @@ def process_single_image(
     logging.info(f"Saving filled image to: {Path(output_path).name}")
     rp.save_tczyx_image(output_data, output_path)
     logging.info("  Done!")
+    return True
+
+
+def _parse_channels(channel_str: str) -> list[int] | None:
+    """
+    Parse channels from string format like '0 2', '0,2', or None.
+    Handles both space-separated and comma-separated formats.
+    """
+    if channel_str is None:
+        return None
+    # Replace commas with spaces and split
+    parts = str(channel_str).replace(',', ' ').split()
+    if not parts:
+        return None
+    try:
+        return [int(p) for p in parts]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"Could not parse channels: {e}")
 
 
 def main():
@@ -260,33 +288,26 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
-  - --input-search-pattern
-  - '%YAML%/input_data/**/*nucleus*.tif'
-  - --output-folder
-  - '%YAML%/output_data'
+  - --input-search-pattern: '%YAML%/input_data/**/*nucleus*.tif'
+  - --output-folder: '%YAML%/output_data'
 
 - name: Fill holes in 3D Z-stacks (volumetric)
   environment: uv@3.11:fill-greyscale-holes
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
-  - --input-search-pattern
-  - '%YAML%/input_data/**/*.tif'
-  - --output-folder
-  - '%YAML%/output_data'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
   - --mode-3d
 
-- name: Fill holes in specific channel only
+- name: Fill holes in channels 0 and 2
   environment: uv@3.11:fill-greyscale-holes
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
-  - --input-search-pattern
-  - '%YAML%/input_data/**/*.tif'
-  - --output-folder
-  - '%YAML%/output_data'
-  - --channels
-  - '0'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --channels: '0 2'
 
 Description:
   Fills dark regions (holes) in greyscale images while preserving intensity.
@@ -342,10 +363,9 @@ Notes:
     
     parser.add_argument(
         '--channels',
-        type=int,
-        nargs='+',
+        type=_parse_channels,
         default=None,
-        help='Channel indices to process (0-based). If not specified, processes all channels. Example: --channels 0 2'
+        help='Channel indices to process (0-based). Space or comma separated. Examples: --channels "0 2" or --channels "0,2"'
     )
     
     parser.add_argument(
@@ -390,7 +410,7 @@ Notes:
         output_path = os.path.join(args.output_folder, output_name)
         
         try:
-            process_single_image(
+            return process_single_image(
                 input_path=input_path,
                 output_path=output_path,
                 channels=args.channels,
@@ -401,26 +421,34 @@ Notes:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
             import traceback
             logging.error(traceback.format_exc())
+            return False
     
     # Process files (with or without parallel processing)
     if not args.no_parallel:
         from joblib import Parallel, delayed
         logging.info(f"Processing {len(input_files)} files in parallel...")
         # Progress bar tracks completed files, not internal progress
-        Parallel(n_jobs=-1)(
+        results = Parallel(n_jobs=-1)(
             delayed(process_file_wrapper)(file) 
             for file in tqdm(input_files, desc="Processing files", unit="file")
         )
+        successful = sum(1 for r in results if r)
+        failed = len(results) - successful
     else:
         logging.info(f"Processing {len(input_files)} files sequentially...")
+        successful = 0
+        failed = 0
         for i, input_path in enumerate(input_files, 1):
             logging.info(f"\n{'='*70}")
             logging.info(f"Processing file {i}/{len(input_files)}")
-            process_file_wrapper(input_path)
+            if process_file_wrapper(input_path):
+                successful += 1
+            else:
+                failed += 1
     
     logging.info(f"\n{'='*70}")
     logging.info("Processing complete!")
-    logging.info(f"Processed {len(input_files)} files")
+    logging.info(f"Processed {len(input_files)} files: {successful} succeeded, {failed} failed")
     logging.info(f"Output saved to: {args.output_folder}")
 
 

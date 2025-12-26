@@ -1,0 +1,38 @@
+# Micro-SAM environment for segment anything microscopy segmentation
+# 
+# Installation from scratch:
+# conda env create -f micro_sam.yml
+#
+# Update existing environment:
+# conda env update -f micro_sam.yml --prune
+
+name: micro_sam
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pytorch=2.4.0
+  - torchvision=0.19.0
+  - pytorch-cuda=12.4
+  - micro_sam  # Main package from conda-forge
+  - numpy<2
+  - scikit-image
+  - scipy
+  - matplotlib
+  - tqdm
+  - pillow
+  - pyyaml
+  - roifile
+  - pip
+  - pip:
+      - bioio
+      - bioio-bioformats
+      - bioio_ome_tiff
+      - bioio-tifffile
+      - bioio_nd2
+      - bioio_lif
+      - bioio_czi
+      - bioio_dv

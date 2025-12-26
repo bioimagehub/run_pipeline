@@ -1,0 +1,19 @@
+run:
+- name: Correct 3D drift (ImageJ headless)
+  environment: imageJ
+  commands:
+  - "%REPO%/standard_code/imagej/correct_3d_drift_headless.py"
+  - input_path: 'C:/Users/oyvinode/Desktop/del_drift_correction_test/input/allLCISHGF_Acxtivator_t5s_005_2.nd2'
+  - output_path: 'C:/Users/oyvinode/Desktop/del_drift_correction_test/input_drift/allLCISHGF_Acxtivator_t5s_005_2_corrected.tif'
+  - channel: 1
+  - correct_only_xy: false
+  - multi_time_scale: false
+  - subpixel: false
+  - process: false
+  - background: 0
+  - z_min: 1
+  - max_shift_x: 50
+  - max_shift_y: 50
+  - max_shift_z: 50
+  - virtual: false
+  - only_compute: false

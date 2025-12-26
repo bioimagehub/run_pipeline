@@ -228,8 +228,9 @@ def quantify_per_maskindex(
     
     # Load data - use dask_data for lazy loading
     img = rp.load_tczyx_image(image_path)
+    #print("Image loaded:", img)
     mask = rp.load_tczyx_image(mask_path)
-
+    #print("Mask loaded:", mask)
     # Create filtered mask - keep values < 100, set others to 0
     # mask_filtered = mask.data.copy()
     # mask_filtered[mask_filtered >= 100] = 0

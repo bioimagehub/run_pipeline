@@ -1,0 +1,208 @@
+# Test configuration for Segment Anything Model (Micro-SAM) segmentation
+# 
+# This pipeline demonstrates different ways to use SAM for microscopy segmentation:
+# - Interactive mode with manual clicks
+# - Manual coordinate specification
+# - Different model sizes (vit_h, vit_l, vit_b)
+# - Channel and timepoint selection
+#
+# Author: BIPHUB, University of Oslo
+# License: MIT
+
+run:
+  # Example 1: Interactive mode - User clicks to select points
+  # Uncomment to use (comment out other examples)
+  - name: SAM Interactive Segmentation
+    environment: micro_sam
+    commands:
+      - python
+      - '%REPO%/standard_code/python/segment_sam.py'
+      - --input-search-pattern
+      - '%YAML%/test_data/**/*.tif'
+      - --output-folder
+      - '%YAML%/sam_output_interactive'
+      - --interactive
+      - --model-type
+      - vit_h
+      - --channels
+      - '0'
+
+  # Example 2: Manual points (nucleus segmentation)
+  # - name: SAM Manual Points - Nucleus
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_manual'
+  #     - --positive-points
+  #     - '512,384,10 600,400,10 450,350,10'
+  #     - --model-type
+  #     - vit_h
+  #     - --channels
+  #     - '0'
+
+  # Example 3: With negative points to refine segmentation
+  # - name: SAM with Negative Points
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_refined'
+  #     - --positive-points
+  #     - '512,384,10'
+  #     - --negative-points
+  #     - '100,100,10 900,900,10 50,50,10'
+  #     - --model-type
+  #     - vit_h
+  #     - --channels
+  #     - '0'
+
+  # Example 4: 2D image segmentation (no Z coordinate)
+  # - name: SAM 2D Segmentation
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data_2d/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_2d'
+  #     - --positive-points
+  #     - '512,384 600,400'
+  #     - --model-type
+  #     - vit_b
+
+  # Example 5: Fast model (vit_b) for quick testing
+  # - name: SAM Fast Model (vit_b)
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_fast'
+  #     - --positive-points
+  #     - '512,384,10'
+  #     - --model-type
+  #     - vit_b
+  #     - --channels
+  #     - '0'
+
+  # Example 6: Multi-channel processing
+  # - name: SAM Multi-channel
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_multichannel'
+  #     - --positive-points
+  #     - '512,384,10'
+  #     - --model-type
+  #     - vit_h
+  #     - --channels
+  #     - '0'
+  #     - '1'
+  #     - '2'
+
+  # Example 7: Specific timepoints in time-series
+  # - name: SAM Time-series Specific Frames
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data_timeseries/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_timeseries'
+  #     - --positive-points
+  #     - '512,384,5'
+  #     - --model-type
+  #     - vit_h
+  #     - --channels
+  #     - '0'
+  #     - --timepoints
+  #     - '0'
+  #     - '10'
+  #     - '20'
+  #     - '30'
+
+  # Example 8: Interactive with specific Z-slice
+  # - name: SAM Interactive Specific Z
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_interactive_z5'
+  #     - --interactive
+  #     - --interactive-z-slice
+  #     - '5'
+  #     - --model-type
+  #     - vit_h
+  #     - --channels
+  #     - '0'
+
+  # Example 9: Force reprocessing existing files
+  # - name: SAM Force Reprocess
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_force'
+  #     - --positive-points
+  #     - '512,384,10'
+  #     - --model-type
+  #     - vit_h
+  #     - --force
+
+  # Example 10: Dry run to preview
+  # - name: SAM Dry Run
+  #   environment: uv@3.11:micro-sam
+  #   commands:
+  #     - python
+  #     - '%REPO%/standard_code/python/segment_sam.py'
+  #     - --input-search-pattern
+  #     - '%YAML%/test_data/**/*.tif'
+  #     - --output-folder
+  #     - '%YAML%/sam_output_dryrun'
+  #     - --positive-points
+  #     - '512,384,10'
+  #     - --model-type
+  #     - vit_h
+  #     - --dry-run
+
+# Notes:
+# - First run downloads model weights (~2.4GB for vit_h, ~1.2GB for vit_l, ~350MB for vit_b)
+# - GPU strongly recommended (50-100x faster than CPU)
+# - Interactive mode applies points from first image to all images in batch
+# - Point format: "x,y,z" for 3D or "x,y" for 2D
+# - Positive points = foreground (objects to segment)
+# - Negative points = background (areas to exclude)
+# - Multiple points are space-separated: "512,384,10 600,400,10"
+#
+# Model comparison:
+# - vit_h (huge): Most accurate, slowest, ~2.4GB (recommended for production)
+# - vit_l (large): Balanced, medium speed, ~1.2GB
+# - vit_b (base): Fastest, lower accuracy, ~350MB (good for testing)
+#
+# Typical workflow:
+# 1. Use --dry-run to verify file paths
+# 2. Use --interactive or view in ImageJ to find point coordinates
+# 3. Run with vit_b for quick test
+# 4. Run with vit_h for final segmentation
+# 5. Add negative points if over-segmented

@@ -840,29 +840,41 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 
 // Function to prepare command arguments for ImageJ execution
 func makeImageJCommand(segment Segment, imageJPath, mainProgramDir, yamlDir string) []string {
-	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"} // Initialize command arguments
+	// Build ImageJ2 headless run: ImageJ.exe --ij2 --headless --console --run <script> "k='v',k2='v2'"
+	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"}
 
-	// Loop through each command in the segment's command list
+	var scriptPath string
+	var argPairs []string
+
+	// Loop through commands: first string = script path; maps = key/value args
 	for _, cmd := range segment.Commands {
 		switch v := cmd.(type) {
 		case string:
-			// Resolve paths for string commands and add to cmdArgs with proper encapsulation
-			resolved := resolvePath(v, mainProgramDir, yamlDir)
-			cmdArgs = append(cmdArgs, "--run", fmt.Sprintf("\"%s\"", resolved))
-
+			if scriptPath == "" {
+				scriptPath = resolvePath(v, mainProgramDir, yamlDir)
+			} else {
+				// Ignore additional strings for now
+			}
 		case map[interface{}]interface{}:
-			// For map commands, loop through entries
 			for flag, value := range v {
-				// Append the flag in the required format
-				if value != nil && value != "null" {
-					valStr := fmt.Sprintf("%v", value) // Convert value to string
-					// Append it in the required format as "key='value'"
-					cmdArgs = append(cmdArgs, fmt.Sprintf("\"%s='%s'\"", flag, valStr))
+				key := fmt.Sprintf("%v", flag)
+				if value != nil && fmt.Sprintf("%v", value) != "null" {
+					valStr := fmt.Sprintf("%v", value)
+					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+					// Compose key='value' pair (no extra quoting; exec.Command handles args)
+					argPairs = append(argPairs, fmt.Sprintf("%s='%s'", key, resolved))
 				}
 			}
-
 		default:
-			log.Fatalf("unexpected type %v", reflect.TypeOf(v)) // Handle unexpected command types
+			log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+		}
+	}
+
+	// Append the --run invocation once with a single comma-separated args string
+	if scriptPath != "" {
+		cmdArgs = append(cmdArgs, "--run", scriptPath)
+		if len(argPairs) > 0 {
+			cmdArgs = append(cmdArgs, strings.Join(argPairs, ","))
 		}
 	}
 

@@ -396,6 +396,7 @@ def fill_holes(mask_tczyx: np.ndarray) -> np.ndarray:
 def process_single_file(
     h5_path: str,
     output_dir: str,
+    median_kernel : Tuple[int, int, int, int] = (1, 1, 1, 1), # T,Z,Y,X (1 means no smoothing)
     minsize: int = 24000,
     maxsize: int = 120000,
     minperim: int = 750,
@@ -472,9 +473,22 @@ def process_single_file(
         
         # make a use connected components analysis for TZYX
 
-        # Fill holes
+        # Fill holes before median filtering to improve object solidity
         mask_tczyx = fill_holes(mask_tczyx)  
 
+        # Median filter to close small gaps
+        # use     median_kernel : Tuple[int, int, int, int] = (8, 1, 2, 2), # T,Z,Y,X 
+        # THis will smooth also in T direction to help closing small gaps that are only present in some frames
+        logger.info(f"Applying median filter to close small gaps (kernel TZYX={median_kernel})...")
+        
+        # Apply median filter with kernel specified as (T, Z, Y, X)
+        # mask_tczyx has shape (T, C, Z, Y, X), so we need to insert 1 for C dimension
+        kernel_tczyx = (median_kernel[0], 1, median_kernel[1], median_kernel[2], median_kernel[3])
+        mask_tczyx = ndimage.median_filter(mask_tczyx, size=kernel_tczyx)
+        logger.info(f"Median filter complete")
+
+        # Fill holes after median filtering to resolve any new holes
+        mask_tczyx = fill_holes(mask_tczyx)  
 
         # Prepare output containers
         labeled_tczyx = np.zeros_like(mask_tczyx, dtype=np.int32)
@@ -566,7 +580,7 @@ def process_single_file(
                 )
                 output_mask[t, 0, z, :, :] = filtered_slice
 
-        rp.show_image(real_image, output_mask, title=f"After: {basename}")
+        #rp.show_image(real_image, output_mask, title=f"After: {basename}")
 
 
 
@@ -615,6 +629,7 @@ def process_files(
     h5_pattern: str,
     output_folder: Optional[str] = None,
     yaml_pattern: Optional[str] = None,
+    median_kernel: Tuple[int, int, int, int] = (1, 1, 1, 1),
     minsize: int = 24000,
     maxsize: int = 120000,
     minperim: int = 750,
@@ -625,6 +640,7 @@ def process_files(
     output_suffix: str = "",
     debug_all: bool = False,
     debug_failed: bool = False,
+    no_parallel: bool = False,
     dry_run: bool = False
 ) -> None:
     """
@@ -648,6 +664,7 @@ def process_files(
         output_suffix: Suffix to add to successful output filenames (default: "")
         debug_all: Show all results (both successes and failures) with image overlay
         debug_failed: Show only failed results with image overlay
+        no_parallel: Disable parallel processing
         dry_run: Only print planned actions without executing
     """
     
@@ -696,44 +713,99 @@ def process_files(
     success_count = 0
     fail_count = 0
     
-    for basename, files in grouped_files.items():
-        # Check if we have required files
-        if 'h5' not in files:
-            logger.warning(f"Skipping {basename}: no H5 file found")
-            continue
+    # Sequential processing (no_parallel mode or single file)
+    if no_parallel or len(grouped_files) == 1:
+        logger.info("Processing files sequentially")
+        for basename, files in grouped_files.items():
+            # Check if we have required files
+            if 'h5' not in files:
+                logger.warning(f"Skipping {basename}: no H5 file found")
+                continue
+            
+            h5_path = files['h5']
+            image_path = files.get('image', None)
+            yaml_path = files.get('yaml', None)
+            
+            logger.info(f"Processing group: {basename}")
+            if image_path:
+                logger.info(f"  Image: {image_path}")
+            logger.info(f"  H5: {h5_path}")
+            if yaml_path:
+                logger.info(f"  YAML: {yaml_path}")
+            
+            success = process_single_file(
+                h5_path=h5_path,
+                output_dir=output_folder,
+                median_kernel=median_kernel,
+                minsize=minsize,
+                maxsize=maxsize,
+                minperim=minperim,
+                maxperim=maxperim,
+                max_watershed_rounds=max_watershed_rounds,
+                max_grow_shrink_cycles=max_grow_shrink_cycles,
+                max_time_gap=max_time_gap,
+                output_suffix=output_suffix,
+                debug_all=debug_all,
+                debug_failed=debug_failed,
+                image_path=image_path,
+                yaml_path=yaml_path
+            )
+            
+            if success:
+                success_count += 1
+            else:
+                fail_count += 1
         
-        h5_path = files['h5']
-        image_path = files.get('image', None)
-        yaml_path = files.get('yaml', None)
+        logger.info(f"Processing complete: {success_count} successful, {fail_count} failed")
+        return
+    
+    # Parallel processing
+    logger.info("Processing files in parallel")
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    
+    futures = []
+    with ProcessPoolExecutor() as executor:
+        for basename, files in grouped_files.items():
+            # Check if we have required files
+            if 'h5' not in files:
+                logger.warning(f"Skipping {basename}: no H5 file found")
+                continue
+            
+            h5_path = files['h5']
+            image_path = files.get('image', None)
+            yaml_path = files.get('yaml', None)
+            
+            future = executor.submit(
+                process_single_file,
+                h5_path=h5_path,
+                output_dir=output_folder,
+                median_kernel=median_kernel,
+                minsize=minsize,
+                maxsize=maxsize,
+                minperim=minperim,
+                maxperim=maxperim,
+                max_watershed_rounds=max_watershed_rounds,
+                max_grow_shrink_cycles=max_grow_shrink_cycles,
+                max_time_gap=max_time_gap,
+                output_suffix=output_suffix,
+                debug_all=debug_all,
+                debug_failed=debug_failed,
+                image_path=image_path,
+                yaml_path=yaml_path
+            )
+            futures.append((basename, future))
         
-        logger.info(f"Processing group: {basename}")
-        if image_path:
-            logger.info(f"  Image: {image_path}")
-        logger.info(f"  H5: {h5_path}")
-        if yaml_path:
-            logger.info(f"  YAML: {yaml_path}")
-        
-        success = process_single_file(
-            h5_path=h5_path,
-            output_dir=output_folder,
-            minsize=minsize,
-            maxsize=maxsize,
-            minperim=minperim,
-            maxperim=maxperim,
-            max_watershed_rounds=max_watershed_rounds,
-            max_grow_shrink_cycles=max_grow_shrink_cycles,
-            max_time_gap=max_time_gap,
-            output_suffix=output_suffix,
-            debug_all=debug_all,
-            debug_failed=debug_failed,
-            image_path=image_path,
-            yaml_path=yaml_path
-        )
-        
-        if success:
-            success_count += 1
-        else:
-            fail_count += 1
+        # Wait for results
+        for basename, future in futures:
+            try:
+                success = future.result()
+                if success:
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                logger.error(f"Error processing {basename}: {e}")
+                fail_count += 1
     
     logger.info(f"Processing complete: {success_count} successful, {fail_count} failed")
 
@@ -830,6 +902,18 @@ Examples:
         default=None,
         help="Output folder (default: image folder + '_masks')"
     )
+
+    parser.add_argument(
+        "--median-kernel",
+        type=str,
+        nargs='+',
+        metavar="T Z Y X",
+        default=["1", "1", "1", "1"],
+        help=(
+            "Median filter kernel in TZYX. Provide four ints (e.g., 8 1 2 2). "
+            "Use '1 1 1 1' to disable. Single quoted string like '8 1 2 2' also works."
+        ),
+    )
     
     parser.add_argument(
         "--minsize",
@@ -897,6 +981,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable parallel processing (process files sequentially)"
+    )
+    
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned file groupings without executing"
@@ -919,12 +1009,24 @@ Examples:
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
+    # Normalize median kernel to 4 integers (supports quoted string "8 1 2 2" or separate values)
+    mk_values: list[str] = []
+    for tok in args.median_kernel:
+        mk_values.extend(str(tok).split())
+    if len(mk_values) != 4:
+        parser.error("--median-kernel requires exactly 4 integers (T Z Y X), e.g., 8 1 2 2")
+    try:
+        median_kernel = tuple(int(v) for v in mk_values)
+    except ValueError:
+        parser.error("--median-kernel values must be integers")
+
     # Process files
     process_files(
         image_pattern=args.image_search_pattern,
         h5_pattern=args.probabilities_search_pattern,
         output_folder=args.output_folder,
         yaml_pattern=args.yaml_search_pattern,
+        median_kernel=median_kernel,
         minsize=args.minsize,
         maxsize=args.maxsize,
         minperim=args.minperim,
@@ -935,6 +1037,7 @@ Examples:
         output_suffix=args.output_suffix,
         debug_all=args.debug_all,
         debug_failed=args.debug_failed,
+        no_parallel=args.no_parallel,
         dry_run=args.dry_run
     )
 
