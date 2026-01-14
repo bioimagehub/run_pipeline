@@ -1,0 +1,479 @@
+// BiPHub Multi-File Image Converter V5
+// Opens multiple image files using bftools Bio-Formats directly
+// Splits into XY planes and saves as ND2 format in NIS-Elements
+// 
+// Key differences from V4:
+// - Uses bftools directly instead of Fiji headless mode
+// - Bio-Formats export_file utility with %%s %%t %%c %%z format strings
+// - Simpler workflow: exotic format -> bftools Bio-Formats -> NIS-Elements -> ND2
+// - Opens first split file in NIS Elements which auto-assembles entire stack
+//
+// PREREQUISITES:
+// 1. bftools must be installed at:
+//    D:/biphub/external/bftools/
+// 2. Temp folders must be created:
+//    - D:/temp/bftools_output/ (for Bio-Formats split TIFF output)
+
+import("NkWindow.dll");
+import long NkFile_GetOpenFileName(char * folder, char * name, long name_size, char * filter, long filter_index, char* title, long ofn_flags);
+
+int main() {
+    // ALL variable declarations at top (NIS Elements requirement)
+    char bftools_path[500];
+    char bftools_exe[800];
+    char file_paths[4000];
+    char filter_string[200];
+    char folder_path[800];
+    char current_file[300];
+    char full_path[1000];
+    char selected_file[1000];
+    char basename[1000];
+    char file_name_only[300];
+    char tmp_input_path[1000];
+    char tmp_output_path[1000];
+    char tmp_nd2[1000];
+    char display_msg[500];
+    char bftools_command[3000];
+    char output_folder[300];
+    char log_file_path[300];
+    char log_command[2500];
+    char format_string[200];
+    char python_command[3000];
+    int folder_len;
+    int file_count;
+    int current_file_num;
+    int pos;
+    int name_start;
+    int name_len;
+    int last_period;
+    int last_slash;
+    int idx;
+    int path_len;
+    int wait_cycles;
+    long dialog_result;
+    
+    SetCommandText("BiPHub Multi-File Converter V5 - bftools Bio-Formats");
+    
+    // Set up bftools path at top as variable
+    strcpy(bftools_path, "D:/biphub/external/bftools");
+    strcpy(bftools_exe, bftools_path);
+    strcat(bftools_exe, "/export_file.bat");
+    
+    // Set up output folder
+    strcpy(output_folder, "D:/temp/bftools_output");
+    
+    // Set up log file path (same directory as macro)
+    strcpy(log_file_path, "D:/biphub/git/run_pipeline/standard_code/NIS_Elemens_macros/biphub_multifile_open_v5.log");
+    
+    // Initialize log file
+    strcpy(log_command, "import datetime; f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'w'); f.write('=== BiPHub Multi-File Converter V5 Log ===\\n'); f.write(f'Started: {datetime.datetime.now()}\\n\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    // Log bftools setup
+    strcpy(log_command, "f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'a'); f.write('bftools path: ");
+    strcat(log_command, bftools_path);
+    strcat(log_command, "\\\\n'); f.write('Output folder: ");
+    strcat(log_command, output_folder);
+    strcat(log_command, "\\\\n\\\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    // Build file filter
+    strcpy(filter_string, "Image Files|*.czi;*.nd2;*.ims;*.tif;*.tiff;*.lsm;*.dv;*.lif;*.oib;*.oif;|All Files|*.*|");
+    
+    // Show multi-file selection dialog
+    dialog_result = NkFile_GetOpenFileName("", file_paths, 4000, filter_string, 1, "Select Multiple Image Files for Conversion", 524800);
+    
+    if (dialog_result == 0) {
+        SetCommandText("Conversion cancelled by user");
+        strcpy(log_command, "f = open('");
+        strcat(log_command, log_file_path);
+        strcat(log_command, "', 'a'); f.write('User cancelled file selection\\n'); f.close()");
+        Python_RunString(log_command);
+        return;
+    }
+    
+    // Parse selected files
+    strcpy(folder_path, file_paths);
+    folder_len = strlen(folder_path);
+    
+    // Remove trailing slash from folder_path if present
+    if (folder_len > 0) {
+        if ((folder_path[folder_len - 1] == 92) || (folder_path[folder_len - 1] == 47)) {
+            folder_path[folder_len - 1] = 0;
+            folder_len = folder_len - 1;
+        }
+    }
+    
+    // Check if single or multiple files selected
+    pos = folder_len + 1;
+    
+    if (file_paths[pos] == 0) {
+        // Single file selected - extract folder and filename
+        path_len = strlen(file_paths);
+        last_slash = -1;
+        
+        // Find last slash
+        for (idx = 0; idx < path_len; idx = idx + 1) {
+            if (file_paths[idx] == 92) {
+                last_slash = idx;
+            }
+            if (file_paths[idx] == 47) {
+                last_slash = idx;
+            }
+        }
+        
+        if (last_slash >= 0) {
+            // Extract folder
+            for (idx = 0; idx < last_slash; idx = idx + 1) {
+                folder_path[idx] = file_paths[idx];
+            }
+            folder_path[last_slash] = 0;
+            
+            // Extract filename (skip the slash)
+            idx = last_slash + 1;
+            name_len = 0;
+            while (idx < path_len) {
+                file_paths[folder_len + 1 + name_len] = file_paths[idx];
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            file_paths[folder_len + 1 + name_len] = 0;
+            file_paths[folder_len] = 0;
+        }
+        
+        file_count = 1;
+        pos = folder_len + 1;
+    } else {
+        // Multiple files - count them
+        file_count = 0;
+        idx = folder_len + 1;
+        while (idx < 3990) {
+            name_start = idx;
+            name_len = 0;
+            
+            while ((file_paths[idx] != 0) && (idx < 3990)) {
+                name_len = name_len + 1;
+                idx = idx + 1;
+            }
+            
+            if (name_len > 0) {
+                file_count = file_count + 1;
+                idx = idx + 1;
+            } else {
+                idx = 4000;
+            }
+        }
+        
+        pos = folder_len + 1;
+    }
+    
+    strcpy(display_msg, "Processing ");
+    if (file_count < 10) {
+        display_msg[11] = 48 + file_count;
+        display_msg[12] = 0;
+    } else {
+        display_msg[11] = 48 + (file_count / 10);
+        display_msg[12] = 48 + (file_count % 10);
+        display_msg[13] = 0;
+    }
+    strcat(display_msg, " files...");
+    SetCommandText(display_msg);
+    
+    // Log file count
+    strcpy(log_command, "f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'a'); f.write(f'Found {");
+    if (file_count < 10) {
+        log_command[strlen(log_command)] = 48 + file_count;
+        log_command[strlen(log_command)] = 0;
+    } else {
+        log_command[strlen(log_command)] = 48 + (file_count / 10);
+        log_command[strlen(log_command)] = 48 + (file_count % 10);
+        log_command[strlen(log_command)] = 0;
+    }
+    strcat(log_command, "} file(s) for processing\\\\n\\\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    // Process each file
+    current_file_num = 0;
+    
+    while ((pos > 0) && (pos < 3990)) {
+        // Extract filename
+        name_start = pos;
+        name_len = 0;
+        
+        while ((file_paths[pos] != 0) && (pos < 3990)) {
+            name_len = name_len + 1;
+            pos = pos + 1;
+        }
+        
+        if (name_len > 0) {
+            // Copy filename
+            for (idx = 0; idx < name_len; idx = idx + 1) {
+                current_file[idx] = file_paths[name_start + idx];
+            }
+            current_file[name_len] = 0;
+            
+            // Build full path
+            strcpy(full_path, folder_path);
+            strcat(full_path, "/");
+            strcat(full_path, current_file);
+            strcpy(selected_file, full_path);
+            
+            // Normalize all backslashes to forward slashes
+            for (idx = 0; idx < strlen(selected_file); idx = idx + 1) {
+                if (selected_file[idx] == 92) {
+                    selected_file[idx] = 47;
+                }
+            }
+            
+            current_file_num = current_file_num + 1;
+            
+            // Display progress
+            strcpy(display_msg, "Converting file ");
+            if (current_file_num < 10) {
+                display_msg[16] = 48 + current_file_num;
+                display_msg[17] = 0;
+            } else {
+                display_msg[16] = 48 + (current_file_num / 10);
+                display_msg[17] = 48 + (current_file_num % 10);
+                display_msg[18] = 0;
+            }
+            strcat(display_msg, " of ");
+            if (file_count < 10) {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + file_count;
+                display_msg[idx + 1] = 0;
+            } else {
+                idx = strlen(display_msg);
+                display_msg[idx] = 48 + (file_count / 10);
+                display_msg[idx + 1] = 48 + (file_count % 10);
+                display_msg[idx + 2] = 0;
+            }
+            strcat(display_msg, ": ");
+            strcat(display_msg, current_file);
+            SetCommandText(display_msg);
+            
+            // Log current file
+            strcpy(log_command, "f = open('");
+            strcat(log_command, log_file_path);
+            strcat(log_command, "', 'a'); f.write('--- File ");
+            if (current_file_num < 10) {
+                log_command[strlen(log_command)] = 48 + current_file_num;
+                log_command[strlen(log_command)] = 0;
+            } else {
+                log_command[strlen(log_command)] = 48 + (current_file_num / 10);
+                log_command[strlen(log_command)] = 48 + (current_file_num % 10);
+                log_command[strlen(log_command)] = 0;
+            }
+            strcat(log_command, " ---\\\\n'); f.write('Path: ");
+            strcat(log_command, selected_file);
+            strcat(log_command, "\\\\n'); f.close()");
+            Python_RunString(log_command);
+            
+            pos = pos + 1;
+        
+            // ==========================================
+            // CONVERSION LOGIC USING bftools Bio-Formats
+            // ==========================================
+            
+            // Verify input file exists
+            if (!ExistFile(selected_file)) {
+                SetCommandText("ERROR: File does not exist");
+                strcpy(log_command, "f = open('");
+                strcat(log_command, log_file_path);
+                strcat(log_command, "', 'a'); f.write('ERROR: File does not exist\\\\n'); f.close()");
+                Python_RunString(log_command);
+                WaitText(0, selected_file);
+                WaitText(0, "Skipping this file");
+            } else {
+                // Extract filename without extension for basename
+                path_len = strlen(selected_file);
+                last_period = -1;
+                last_slash = -1;
+                
+                // Find last period and last slash
+                for (idx = 0; idx < path_len; idx = idx + 1) {
+                    if (selected_file[idx] == 46) {
+                        last_period = idx;
+                    }
+                    if ((selected_file[idx] == 92) || (selected_file[idx] == 47)) {
+                        last_slash = idx;
+                    }
+                }
+                
+                // Extract filename only (without path)
+                if (last_slash >= 0) {
+                    idx = last_slash + 1;
+                    name_len = 0;
+                    while (idx < path_len) {
+                        file_name_only[name_len] = selected_file[idx];
+                        name_len = name_len + 1;
+                        idx = idx + 1;
+                    }
+                    file_name_only[name_len] = 0;
+                } else {
+                    strcpy(file_name_only, selected_file);
+                }
+                
+                // Create basename without extension
+                if (last_period >= 0) {
+                    name_len = 0;
+                    idx = last_slash + 1;
+                    while (idx < last_period) {
+                        basename[name_len] = selected_file[idx];
+                        name_len = name_len + 1;
+                        idx = idx + 1;
+                    }
+                    basename[name_len] = 0;
+                } else {
+                    strcpy(basename, file_name_only);
+                }
+                
+                // Set format string for bftools: %%s %%t %%c %%z (series_timepoint_channel_z.tif)
+                // This splits the image into individual XY planes
+                strcpy(format_string, "%%s_%%t_%%c_%%z.tif");
+                
+                // Build output path template
+                strcpy(tmp_output_path, output_folder);
+                strcat(tmp_output_path, "/");
+                strcat(tmp_output_path, basename);
+                strcat(tmp_output_path, "_");
+                strcat(tmp_output_path, format_string);
+                
+                SetCommandText("Converting with bftools Bio-Formats...");
+                xsxssx
+                // Log bftools execution
+                strcpy(log_command, "f = open('");
+                strcat(log_command, log_file_path);
+                strcat(log_command, "', 'a'); f.write('Processing file: ");
+                strcat(log_command, selected_file);
+                strcat(log_command, "\\\\n'); f.write('Executing bftools export_file...\\\\n'); f.write('Output pattern: ");
+                strcat(log_command, tmp_output_path);
+                strcat(log_command, "\\\\n'); f.close()");
+                Python_RunString(log_command);
+                
+                // Build and execute bftools command
+                // bftools export_file expects: "input_file" "output_pattern"
+                strcpy(bftools_command, "import subprocess, os; os.chdir('");
+                strcat(bftools_command, bftools_path);
+                strcat(bftools_command, "'); subprocess.run(['export_file.bat', '");
+                strcat(bftools_command, selected_file);
+                strcat(bftools_command, "', '");
+                strcat(bftools_command, tmp_output_path);
+                strcat(bftools_command, "'], check=False)");
+                
+                Python_RunString(bftools_command);
+                Wait(2.0);
+                
+                // Log bftools launched
+                strcpy(log_command, "f = open('");
+                strcat(log_command, log_file_path);
+                strcat(log_command, "', 'a'); f.write('bftools export_file launched...\\\\n'); f.close()");
+                Python_RunString(log_command);
+                
+                // Build path to first split file (series 0, timepoint 0, channel 0, z 0)
+                strcpy(tmp_input_path, output_folder);
+                strcat(tmp_input_path, "/");
+                strcat(tmp_input_path, basename);
+                strcat(tmp_input_path, "_0_0_0_0.tif");
+                
+                // Wait for first output file to be created
+                wait_cycles = 0;
+                while (!ExistFile(tmp_input_path) && (wait_cycles < 300)) {
+                    Wait(0.5);
+                    wait_cycles = wait_cycles + 1;
+                }
+                
+                if (ExistFile(tmp_input_path)) {
+                    // Log success
+                    strcpy(log_command, "f = open('");
+                    strcat(log_command, log_file_path);
+                    strcat(log_command, "', 'a'); f.write('bftools conversion successful\\\\n'); f.close()");
+                    Python_RunString(log_command);
+                    
+                    // Open first file - NIS-Elements auto-detects and opens entire sequence
+                    // This will automatically merge all _0_0_0_#.tif and _0_0_#_0.tif files into proper TCZYX stack
+                    OpenDocument(tmp_input_path, 0);
+                    Wait(0.5);
+                    
+                    // Save as ND2 in same folder as original file
+                    strcpy(tmp_nd2, folder_path);
+                    strcat(tmp_nd2, "/");
+                    strcat(tmp_nd2, basename);
+                    strcat(tmp_nd2, ".nd2");
+                    
+                    ImageSaveAs(tmp_nd2, 14, 0);
+                    
+                    // Log ND2 save
+                    strcpy(log_command, "f = open('");
+                    strcat(log_command, log_file_path);
+                    strcat(log_command, "', 'a'); f.write('Saved as ND2: ");
+                    strcat(log_command, tmp_nd2);
+                    strcat(log_command, "\\\\n'); f.close()");
+                    Python_RunString(log_command);
+                    
+                    CloseAllDocuments(2);
+                    
+                    // Clean up all temporary split TIFF files in output folder
+                    // Python cleanup using glob pattern
+                    strcpy(python_command, "import os, glob; pattern = r'");
+                    strcat(python_command, output_folder);
+                    strcat(python_command, "/");
+                    strcat(python_command, basename);
+                    strcat(python_command, "_*.tif'; files = glob.glob(pattern); removed = [os.remove(f) for f in files if os.path.exists(f)]; print(f'Cleaned up {len(files)} temp files')");
+                    Python_RunString(python_command);
+                    Wait(0.2);
+                    
+                    SetCommandText("Conversion successful!");
+                } else {
+                    SetCommandText("ERROR: bftools export timeout or format not supported");
+                    strcpy(log_command, "f = open('");
+                    strcat(log_command, log_file_path);
+                    strcat(log_command, "', 'a'); f.write('ERROR: bftools export timeout after ");
+                    if (wait_cycles < 10) {
+                        log_command[strlen(log_command)] = 48 + wait_cycles;
+                        log_command[strlen(log_command)] = 0;
+                    } else {
+                        log_command[strlen(log_command)] = 48 + (wait_cycles / 10);
+                        log_command[strlen(log_command)] = 48 + (wait_cycles % 10);
+                        log_command[strlen(log_command)] = 0;
+                    }
+                    strcat(log_command, " cycles\\\\n'); f.close()");
+                    Python_RunString(log_command);
+                    WaitText(0, "Check if format is supported by Bio-Formats");
+                    WaitText(0, "Expected output:");
+                    WaitText(0, tmp_input_path);
+                }
+            }
+        } else {
+            pos = 4000;
+        }
+    }
+    
+    // Final summary
+    SetCommandText("Multi-file conversion completed!");
+    strcpy(display_msg, "Processed ");
+    if (file_count < 10) {
+        display_msg[10] = 48 + file_count;
+        display_msg[11] = 0;
+    } else {
+        display_msg[10] = 48 + (file_count / 10);
+        display_msg[11] = 48 + (file_count % 10);
+        display_msg[12] = 0;
+    }
+    strcat(display_msg, " file(s)");
+    
+    // Log completion
+    strcpy(log_command, "import datetime; f = open('");
+    strcat(log_command, log_file_path);
+    strcat(log_command, "', 'a'); f.write(f'\\\\n=== Completed: {datetime.datetime.now()} ===\\\\n'); f.close()");
+    Python_RunString(log_command);
+    
+    WaitText(2, display_msg);
+}
+ 
