@@ -21,10 +21,66 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 import shutil
+import shlex
+import textwrap
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def build_output_pattern(input_file: str, output_folder: str, split_string: str) -> str:
+    """Compose bfconvert output pattern including base name and optional split token."""
+    base_name = Path(input_file).stem
+    split_part = (split_string or "").strip()
+    # Normalize to single % tokens for bfconvert regardless of user-provided escaping
+    split_part = split_part.replace("%%", "%")
+
+    if split_part:
+        separator = "_" if not split_part.startswith(("_", "-", ".")) else ""
+        filename = f"{base_name}{separator}{split_part}.ome.tif"
+    else:
+        filename = f"{base_name}.ome.tif"
+
+    return os.path.join(output_folder, filename)
+
+
+def escape_for_windows_batch(text: str, nested: bool = False) -> str:
+    """Escape % tokens for cmd.exe batch files.
+
+    If calling a nested batch (e.g., bfconvert.bat), percents are parsed twice.
+    Use '%%%%' to ensure the final program receives a single '%'.
+    """
+    if "%" not in text:
+        return text
+    return text.replace("%", "%%%%" if nested else "%%")
+
+
+def translate_template_to_bfconvert(template: str | None) -> str:
+    """
+    Translate brace-based template tokens to bfconvert percent tokens.
+
+    Supported tokens:
+    - {s}: series
+    - {c}: channel
+    - {z}: Z plane
+    - {t}: timepoint
+
+    This avoids `%` in YAML and is converted here.
+    """
+    if not template:
+        return ""
+    t = template
+    # Accept uppercase variants too
+    replacements = {
+        "{s}": "%s", "{S}": "%s",
+        "{c}": "%c", "{C}": "%c",
+        "{z}": "%z", "{Z}": "%z",
+        "{t}": "%t", "{T}": "%t",
+    }
+    for k, v in replacements.items():
+        t = t.replace(k, v)
+    return t
 
 
 def find_bfconvert() -> str:
@@ -112,6 +168,7 @@ def split_single_file(
     input_file: str,
     output_folder: str,
     bfconvert_path: str,
+    split_string: str = "",
     open_terminal: bool = True,
     show_progress: bool = True
 ) -> bool:
@@ -136,10 +193,7 @@ def split_single_file(
         t, c, z, y, x = get_image_dimensions(input_file)
         logger.info(f"Image dimensions: T={t}, C={c}, Z={z}, Y={y}, X={x}")
         
-        # Construct bfconvert command
-        # Use format strings for splitting: %%s for series, %%c for channel, %%z for Z, %%t for timepoint (double %% for Windows)
-        # Use OME-TIFF format (.ome.tif) to preserve channel metadata and prevent NIS Elements from misinterpreting as RGB
-        output_pattern = os.path.join(output_folder, "S%%s_C%%c_Z%%z_T%%t.ome.tif")
+        output_pattern = build_output_pattern(input_file, output_folder, split_string)
         
         cmd = [
             str(bfconvert_path),
@@ -161,9 +215,12 @@ def split_single_file(
                     f.write("@echo off\n")
                     f.write(f"cd /d \"{output_folder}\"\n")
                     f.write(f"echo Converting image to individual slices...\n")
-                    # Escape % as %% for batch file (need %%%% to output %%)
-                    cmd_str = " ".join([f'"{x}"' if " " in x else x for x in cmd])
-                    cmd_str = cmd_str.replace("%%", "%%%%")
+                    # If bfconvert is a .bat/.cmd, escape percents for nested batch parsing
+                    nested = str(bfconvert_path).lower().endswith((".bat", ".cmd"))
+                    cmd_str = " ".join([
+                        f'"{escape_for_windows_batch(x, nested=nested)}"' if " " in x else escape_for_windows_batch(x, nested=nested)
+                        for x in cmd
+                    ])
                     f.write(cmd_str + "\n")
                     f.write("echo Conversion complete!\n")
                     f.write("pause\n")
@@ -178,7 +235,7 @@ def split_single_file(
             else:
                 # Linux/macOS
                 subprocess.Popen(
-                    ["gnome-terminal", "--", "bash", "-c", f"{' '.join(cmd)}; bash"],
+                    ["gnome-terminal", "--", "bash", "-c", f"{shlex.join(cmd)}; bash"],
                     cwd=output_folder
                 )
                 logger.info(f"Opened terminal for conversion in: {output_folder}")
@@ -209,6 +266,8 @@ def split_single_file(
 def process_files(
     input_pattern: str,
     output_folder: str = None,
+    split_string: str = "",
+    split_template: str = "",
     open_terminal: bool = True,
     no_parallel: bool = False,
     dry_run: bool = False
@@ -260,10 +319,14 @@ def process_files(
             logger.info(f"[DRY RUN] Would split: {input_file} -> {file_output_folder}")
             return (input_file, True)
         
+        # Prefer brace-based template over raw split string
+        effective_split = split_string or translate_template_to_bfconvert(split_template)
+
         success = split_single_file(
             input_file,
             file_output_folder,
             bfconvert_path,
+            split_string=effective_split,
             open_terminal=open_terminal,
             show_progress=True
         )
@@ -293,7 +356,8 @@ def main() -> None:
         description="Split multi-dimensional images using BioFormats (bfconvert). "
                     "Saves individual T, C, Z slices to a folder.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=textwrap.dedent(
+            """\
 Example YAML config for run_pipeline.exe:
 ---
 run:
@@ -303,6 +367,8 @@ run:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
   - --input-search-pattern: '%YAML%/input_images/**/*.czi'
+    # Prefer brace-based template to avoid % expansion in YAML
+    - --split-template: 'S{s}_C{c}_Z{z}_T{t}'
   - --open-terminal
 
 - name: Split images (batch processing without terminal)
@@ -314,6 +380,15 @@ run:
   - --output-folder: '%YAML%/output_split'
   - --no-terminal
 
+- name: Convert to OME-TIFF without splitting
+  environment: uv@3.11:split-bioformats
+  commands:
+  - python
+  - '%REPO%/standard_code/python/split_bioformats.py'
+  - --input-search-pattern: '%YAML%/input_images/**/*.tif'
+  - --output-folder: '%YAML%/output_ome'
+    - --split-template: ''
+
 - name: Dry run (preview what would happen)
   environment: uv@3.11:split-bioformats
   commands:
@@ -322,6 +397,7 @@ run:
   - --input-search-pattern: '%YAML%/input_images/**/*.tif'
   - --dry-run
 """
+        )
     )
     
     parser.add_argument(
@@ -337,6 +413,28 @@ run:
         default=None,
         help="Output base folder (default: input_folder + '_split'). "
              "Output files will be saved in subfolders named after input files."
+    )
+
+    parser.add_argument(
+        "--split-string",
+        type=str,
+        default="",
+        help=(
+            "Optional bfconvert split tokens to insert between the base filename and .ome.tif. "
+            "Use bfconvert placeholders like %s (series), %c (channel), %z (Z), %t (time). "
+            "Example: S%s_C%c_Z%z_T%t. Default: none (just convert to base_name.ome.tif)."
+        )
+    )
+
+    parser.add_argument(
+        "--split-template",
+        type=str,
+        default="",
+        help=(
+            "Brace-based split template to avoid YAML percent issues. "
+            "Use tokens {s},{c},{z},{t} e.g. 'S{s}_C{c}_Z{z}_T{t}'. "
+            "This will be translated to bfconvert placeholders internally."
+        )
     )
     
     parser.add_argument(
@@ -401,6 +499,8 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        split_string=args.split_string,
+        split_template=args.split_template,
         open_terminal=open_terminal,
         no_parallel=args.no_parallel,
         dry_run=args.dry_run
