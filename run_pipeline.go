@@ -1128,9 +1128,72 @@ func main() {
 		// Prepare command arguments for executing the environment and subsequent commands
 		var cmdArgs []string // Declare cmdArgs here
 
-		// Determine if the environment is going to be imageJ, uv, or conda-based Python
+		// Determine if the environment is going to be imageJ, uv, cmd, or conda-based Python
 		fmt.Println(segment.Environment)
-		if strings.ToLower(segment.Environment) == "imagej" {
+		if strings.ToLower(segment.Environment) == "cmd" {
+			fmt.Println("running native cmd")
+			// Build a single command string for cmd /C
+			var cmdString strings.Builder
+			for i, cmd := range segment.Commands {
+				switch v := cmd.(type) {
+				case string:
+					resolved := strings.TrimSpace(resolvePath(v, mainProgramDir, yamlDir))
+					if i > 0 || cmdString.Len() > 0 {
+						cmdString.WriteString(" ")
+					}
+					cmdString.WriteString(resolved)
+				case map[interface{}]interface{}:
+					for flag, value := range v {
+						if cmdString.Len() > 0 {
+							cmdString.WriteString(" ")
+						}
+						cmdString.WriteString(fmt.Sprintf("%v", flag))
+						if value != nil && value != "null" {
+							valStr := fmt.Sprintf("%v", value)
+							resolved := strings.TrimSpace(resolvePath(valStr, mainProgramDir, yamlDir))
+							cmdString.WriteString(" ")
+							cmdString.WriteString(resolved)
+						}
+					}
+				default:
+					log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+				}
+			}
+			cmdLine := strings.TrimSpace(cmdString.String())
+			cmdArgs := []string{"cmd", "/C", cmdLine}
+			// Execute cmd immediately
+			fmt.Printf("Constructed command: %v\n", cmdArgs)
+			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			startTime := time.Now()
+			err := cmd.Run()
+			if err != nil {
+				fmt.Printf("Error executing command: %v\n", err)
+				log.Fatalf("Error")
+			}
+			// Update status in status file
+			currentHash := computeSegmentHash(segment)
+			segmentStatus := getSegmentStatus(&status, currentHash)
+			if segmentStatus == nil {
+				// Segment not in status, add it
+				newStatus := SegmentStatus{
+					Name:        segment.Name,
+					ContentHash: currentHash,
+				}
+				status.Segments = append(status.Segments, newStatus)
+				segmentStatus = &status.Segments[len(status.Segments)-1]
+			}
+			segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
+			segmentStatus.CodeVersion = getVersion()
+			segmentStatus.RunDuration = time.Since(startTime).String()
+			if err := saveStatus(statusPath, status); err != nil {
+				log.Fatalf("%v", err)
+			}
+			fmt.Println("")
+			fmt.Println("")
+			continue
+		} else if strings.ToLower(segment.Environment) == "imagej" {
 			fmt.Println("running imageJ")
 			imageJPath, err := findImageJPath()
 			if err != nil {
