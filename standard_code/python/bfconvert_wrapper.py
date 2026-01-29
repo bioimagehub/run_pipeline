@@ -194,7 +194,8 @@ def process_files(
     output_folder: str,
     output_suffix: str = ".ome.tif",
     extra_flags: list[str] = None,
-    dry_run: bool = False
+    dry_run: bool = False,
+    create_subfolders: bool = False
 ) -> None:
     """
     Process multiple image files with bfconvert.
@@ -205,6 +206,7 @@ def process_files(
         output_suffix: Suffix to append to input basename (default: .ome.tif)
         extra_flags: Additional flags to pass to bfconvert
         dry_run: Print planned actions without executing
+        create_subfolders: Create a subfolder per input file (default: False)
     """
     # Expand glob pattern
     input_files = glob(input_pattern, recursive=True)
@@ -227,6 +229,8 @@ def process_files(
         base_folder = str(Path(input_files[0]).parent) if input_files else os.getcwd()
     
     logger.info(f"Base folder for path handling: {base_folder}")
+    if create_subfolders:
+        logger.info(f"Creating subfolders per input file")
     
     # Check Java installation first
     try:
@@ -258,8 +262,14 @@ def process_files(
             collapsed = rel_path.replace(os.sep, "__")
             collapsed_base = os.path.splitext(collapsed)[0]
         
-        # Construct output path: output_folder / (collapsed_basename + suffix)
-        output_file = str(Path(output_folder) / f"{collapsed_base}{output_suffix}")
+        # Determine output path based on subfolder option
+        if create_subfolders:
+            # Create a subfolder with the collapsed basename
+            file_output_folder = str(Path(output_folder) / collapsed_base)
+            output_file = str(Path(file_output_folder) / f"{collapsed_base}{output_suffix}")
+        else:
+            # All files directly in output folder
+            output_file = str(Path(output_folder) / f"{collapsed_base}{output_suffix}")
         
         logger.info(f"Processing: {input_file}")
         logger.info(f"Output: {output_file}")
@@ -311,6 +321,19 @@ run:
   - --output-suffix: '_S%%s.ome.tif'
   - --flag=-padded
   - --flag=-overwrite
+
+- name: Split by series (with subfolders)
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.lif'
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '_S%%s.ome.tif'
+  - --flag=-padded
+  - --flag=-overwrite
+  - --create-subfolders
+  # Input: input/sub1/file.lif -> Output: output/sub1__file/sub1__file_S0.ome.tif
 
 - name: Split by channel and timepoint
   environment: uv@3.11:convert-to-tif
@@ -389,6 +412,12 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     )
     
     parser.add_argument(
+        "--create-subfolders",
+        action="store_true",
+        help="Create a subfolder per input file to organize output (default: all files in output folder)"
+    )
+    
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned actions without executing"
@@ -431,7 +460,8 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
         output_folder=args.output_folder,
         output_suffix=args.output_suffix,
         extra_flags=args.flags or [],
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        create_subfolders=args.create_subfolders
     )
 
 
