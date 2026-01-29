@@ -10,7 +10,7 @@ run:
   commands:
   - set "PATH=C:\Program Files\Java\jdk-23\bin;%PATH%" && # Set the Java path
   - for %f in (F:\BIPHUB-OYVIND\test_data\different_fileformats\input\*.nd2)  # Loop through all LIF files in the input directory
-  - do %REPO%\external\bftools\bfconvert.bat # Call bfconvert for each file
+  - do C:\biphub\git\run_pipeline\external\bftools\bfconvert.bat # Call bfconvert for each file
   - -overwrite 
   - -padded 
   - -bigtiff 
