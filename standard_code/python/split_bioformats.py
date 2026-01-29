@@ -215,16 +215,65 @@ def get_image_dimensions(input_file: str) -> Tuple[int, int, int, int]:
         dimensions = {'T': 1, 'C': 1, 'Z': 1, 'Y': None, 'X': None}
         
         for line in lines:
-            if 'Dimensions' in line or 'Series' in line:
-                # Look for pattern like "Dimensions: T=1 C=3 Z=5 Y=512 X=512"
-                for dim in ['T', 'C', 'Z', 'Y', 'X']:
-                    if f'{dim}=' in line:
-                        try:
-                            val = int(line.split(f'{dim}=')[1].split()[0])
+            # showinf outputs dimensions like "SizeX = 2048" or "SizeT = 1"
+            # Also handle "Width = 2048" and "Height = 2048"
+            # Also handle old format "Dimensions: T=1 C=3 Z=5 Y=512 X=512"
+            for dim in ['T', 'C', 'Z']:
+                # Try "SizeX = value" format first (standard showinf output)
+                if f'Size{dim}' in line and '=' in line:
+                    try:
+                        # Extract value after '=' - handle both "SizeX = 2048" and "SizeX=2048"
+                        parts = line.split('=')
+                        if len(parts) >= 2:
+                            val_str = parts[1].strip().split()[0].strip()
+                            val = int(val_str)
                             dimensions[dim] = val
-                        except (IndexError, ValueError):
-                            pass
+                    except (IndexError, ValueError) as e:
+                        logger.debug(f"Failed to parse {dim} from line: {line} - {e}")
+                # Also try "X=value" format (compact format)
+                elif f'{dim}=' in line:
+                    try:
+                        val = int(line.split(f'{dim}=')[1].split()[0])
+                        dimensions[dim] = val
+                    except (IndexError, ValueError):
+                        pass
+            
+            # Handle X and Y dimensions - can be "Width/Height" or "SizeX/SizeY"
+            if 'Width' in line and '=' in line and dimensions['X'] is None:
+                try:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        val_str = parts[1].strip().split()[0].strip()
+                        dimensions['X'] = int(val_str)
+                except (IndexError, ValueError):
+                    pass
+            elif 'SizeX' in line and '=' in line and dimensions['X'] is None:
+                try:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        val_str = parts[1].strip().split()[0].strip()
+                        dimensions['X'] = int(val_str)
+                except (IndexError, ValueError):
+                    pass
+            
+            if 'Height' in line and '=' in line and dimensions['Y'] is None:
+                try:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        val_str = parts[1].strip().split()[0].strip()
+                        dimensions['Y'] = int(val_str)
+                except (IndexError, ValueError):
+                    pass
+            elif 'SizeY' in line and '=' in line and dimensions['Y'] is None:
+                try:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        val_str = parts[1].strip().split()[0].strip()
+                        dimensions['Y'] = int(val_str)
+                except (IndexError, ValueError):
+                    pass
         
+        logger.info(f"Parsed dimensions: T={dimensions['T']}, C={dimensions['C']}, Z={dimensions['Z']}, Y={dimensions['Y']}, X={dimensions['X']}")
         return (dimensions['T'], dimensions['C'], dimensions['Z'], 
                 dimensions['Y'], dimensions['X'])
     
@@ -239,7 +288,8 @@ def split_single_file(
     bfconvert_path: str,
     split_string: str = "",
     open_terminal: bool = True,
-    show_progress: bool = True
+    show_progress: bool = True,
+    suppress_warnings: bool = True
 ) -> bool:
     """
     Split a single image file using bfconvert.
@@ -248,8 +298,10 @@ def split_single_file(
         input_file: Path to input image file
         output_folder: Path to output folder
         bfconvert_path: Path to bfconvert executable
+        split_string: Optional template for output filenames
         open_terminal: Whether to open a new terminal for bfconvert
         show_progress: Whether to show progress
+        suppress_warnings: Whether to suppress Java non-fatal warnings (default: True)
         
     Returns:
         True if successful, False otherwise
@@ -264,23 +316,34 @@ def split_single_file(
         
         output_pattern = build_output_pattern(input_file, output_folder, split_string)
         
+        # Build command
         cmd = [
             str(bfconvert_path),
             "-padded",  # Zero-pad filename indexes (1 -> 001)
             "-no-upgrade",  # Don't upgrade file format
             "-noflat",  # Don't flatten RGB
+            "-overwrite",  # Overwrite existing files without prompting
+            "-swap", "XYZCT",  # Set dimension order for ImageJ compatibility
             str(input_file),
             output_pattern
         ]
         
-        logger.info(f"Running command: {' '.join(cmd)}")
+        # For logging: if bfconvert is a .bat file, show escaped version
+        is_bat = str(bfconvert_path).lower().endswith((".bat", ".cmd"))
+        if is_bat and sys.platform == "win32":
+            log_cmd = [escape_for_windows_batch(x, nested=True) if '%' in x else x for x in cmd]
+            logger.info(f"Running command (with batch escaping): {' '.join(log_cmd)}")
+        else:
+            logger.info(f"Running command: {' '.join(cmd)}")
         
         if open_terminal:
             # Open new terminal window on Windows
             if sys.platform == "win32":
                 # Create a batch file to run in terminal
-                batch_file = os.path.join(output_folder, "_run_split.bat")
-                done_marker = os.path.join(output_folder, "_conversion_done.txt")
+                # Use folder name as prefix to avoid conflicts when processing multiple files
+                folder_name = os.path.basename(output_folder)
+                batch_file = os.path.join(output_folder, f"{folder_name}_run_split.bat")
+                done_marker = os.path.join(output_folder, f"{folder_name}_conversion_done.txt")
                 
                 # Remove old done marker if it exists
                 if os.path.exists(done_marker):
@@ -289,6 +352,13 @@ def split_single_file(
                 with open(batch_file, 'w') as f:
                     f.write("@echo off\n")
                     f.write(f"cd /d \"{output_folder}\"\n")
+                    
+                    # Set Java options as environment variables if suppressing warnings
+                    if suppress_warnings:
+                        f.write("rem Set Java options to reduce warnings\n")
+                        f.write("set BF_MAX_MEM=4g\n")
+                        f.write("set JAVA_OPTS=-Xmx4g --enable-native-access=ALL-UNNAMED -XX:+IgnoreUnrecognizedVMOptions\n")
+                    
                     f.write(f"echo Converting image to individual slices...\n")
                     # If bfconvert is a .bat/.cmd, escape percents for nested batch parsing
                     nested = str(bfconvert_path).lower().endswith((".bat", ".cmd"))
@@ -354,11 +424,25 @@ def split_single_file(
                 return True
         else:
             # Run in current process
+            # Set environment variables for Java if suppressing warnings
+            env = os.environ.copy()
+            if suppress_warnings:
+                env['BF_MAX_MEM'] = '4g'
+                env['JAVA_OPTS'] = '-Xmx4g --enable-native-access=ALL-UNNAMED -XX:+IgnoreUnrecognizedVMOptions'
+            
+            # When calling .bat files on Windows via subprocess, we need to escape % signs
+            # because subprocess invokes them through cmd.exe
+            exec_cmd = cmd
+            if is_bat and sys.platform == "win32":
+                exec_cmd = [escape_for_windows_batch(x, nested=False) for x in cmd]
+                logger.info(f"Escaped command for batch execution: {' '.join(exec_cmd)}")
+            
             result = subprocess.run(
-                cmd,
+                exec_cmd,
                 capture_output=True,
                 text=True,
-                timeout=None
+                timeout=None,
+                env=env
             )
             
             if result.returncode != 0:
@@ -375,24 +459,47 @@ def split_single_file(
         return False
 
 
-def _process_single_worker(args: Tuple[str, str, str, str, str, bool, bool]) -> Tuple[str, bool]:
+def _process_single_worker(args: Tuple[str, str, str, str, str, bool, bool, bool, bool, bool, str, str]) -> Tuple[str, bool]:
     """
     Worker function for parallel processing. Must be at module level for Windows pickling.
     
     Args:
         args: Tuple of (input_file, output_folder, bfconvert_path, split_string, 
-              split_template, open_terminal, dry_run)
+              split_template, open_terminal, dry_run, suppress_warnings, 
+              create_subfolders, preserve_paths, base_folder, collapse_delimiter)
     
     Returns:
         Tuple of (input_file, success)
     """
-    input_file, output_folder, bfconvert_path, split_string, split_template, open_terminal, dry_run = args
+    input_file, output_folder, bfconvert_path, split_string, split_template, open_terminal, dry_run, suppress_warnings, create_subfolders, preserve_paths, base_folder, collapse_delimiter = args
     
-    # Create output folder with same name as input (without extension)
+    # Determine output folder structure
     base_name = os.path.splitext(os.path.basename(input_file))[0]
     
     if output_folder:
-        file_output_folder = os.path.join(output_folder, base_name)
+        if create_subfolders:
+            # Create subfolders per input file
+            if preserve_paths:
+                # Preserve original directory structure
+                rel_path = os.path.relpath(input_file, base_folder)
+                rel_dir = os.path.dirname(rel_path)
+                file_output_folder = os.path.join(output_folder, rel_dir, base_name)
+            else:
+                # Flatten structure using collapse_filename pattern
+                try:
+                    import bioimage_pipeline_utils as rp
+                    collapsed = rp.collapse_filename(input_file, base_folder, collapse_delimiter)
+                    collapsed_base = os.path.splitext(collapsed)[0]
+                    file_output_folder = os.path.join(output_folder, collapsed_base)
+                except ImportError:
+                    # Fallback: simple collapse using delimiter
+                    rel_path = os.path.relpath(input_file, base_folder)
+                    collapsed = rel_path.replace(os.sep, collapse_delimiter)
+                    collapsed_base = os.path.splitext(collapsed)[0]
+                    file_output_folder = os.path.join(output_folder, collapsed_base)
+        else:
+            # Default: All files go directly into output_folder
+            file_output_folder = output_folder
     else:
         # Create folder in same directory as input
         input_dir = os.path.dirname(input_file)
@@ -414,7 +521,8 @@ def _process_single_worker(args: Tuple[str, str, str, str, str, bool, bool]) -> 
         bfconvert_path,
         split_string=effective_split,
         open_terminal=open_terminal,
-        show_progress=True
+        show_progress=True,
+        suppress_warnings=suppress_warnings
     )
     return (input_file, success)
 
@@ -426,7 +534,11 @@ def process_files(
     split_template: str = "",
     open_terminal: bool = True,
     no_parallel: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    suppress_warnings: bool = True,
+    create_subfolders: bool = False,
+    preserve_paths: bool = False,
+    collapse_delimiter: str = "__"
 ) -> None:
     """
     Process multiple image files and split them.
@@ -434,9 +546,15 @@ def process_files(
     Args:
         input_pattern: Glob pattern for input files
         output_folder: Base output folder (default: same as input with '_split' suffix)
+        split_string: Optional split template string
+        split_template: Brace-based split template
         open_terminal: Whether to open terminal for each conversion
         no_parallel: Process files sequentially instead of parallel
         dry_run: Print planned actions without executing
+        suppress_warnings: Whether to suppress Java non-fatal warnings (default: True)
+        create_subfolders: Create a subfolder per input file (default: False, all files in output_folder)
+        preserve_paths: When creating subfolders, preserve directory structure (default: False, flatten with delimiter)
+        collapse_delimiter: Delimiter for flattening paths when create_subfolders=True (default: '__')
     """
     from glob import glob
     
@@ -448,6 +566,24 @@ def process_files(
         return
     
     logger.info(f"Found {len(input_files)} file(s) to process")
+    
+    # Determine base folder for path collapsing
+    if '**' in input_pattern:
+        base_folder = input_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:
+            base_folder = os.getcwd()
+        base_folder = os.path.abspath(base_folder)
+    else:
+        base_folder = str(Path(input_files[0]).parent) if input_files else os.getcwd()
+    
+    logger.info(f"Base folder for path handling: {base_folder}")
+    if create_subfolders:
+        if preserve_paths:
+            logger.info(f"Creating subfolders preserving directory structure")
+        else:
+            logger.info(f"Creating subfolders with flattened paths (delimiter: '{collapse_delimiter}')")
+    else:
+        logger.info(f"All output files will go directly into: {output_folder}")
     
     # Check Java installation first
     try:
@@ -468,12 +604,14 @@ def process_files(
         # Sequential processing
         for input_file in input_files:
             args = (input_file, output_folder, bfconvert_path, split_string, 
-                   split_template, open_terminal, dry_run)
+                   split_template, open_terminal, dry_run, suppress_warnings,
+                   create_subfolders, preserve_paths, base_folder, collapse_delimiter)
             _process_single_worker(args)
     else:
         # Parallel processing with worker function
         args_list = [
-            (f, output_folder, bfconvert_path, split_string, split_template, open_terminal, dry_run)
+            (f, output_folder, bfconvert_path, split_string, split_template, open_terminal, dry_run, suppress_warnings,
+             create_subfolders, preserve_paths, base_folder, collapse_delimiter)
             for f in input_files
         ]
         with ProcessPoolExecutor(max_workers=2) as executor:
@@ -500,33 +638,40 @@ def main() -> None:
 Example YAML config for run_pipeline.exe:
 ---
 run:
-- name: Split image into slices (opens terminal)
+- name: Split images (default - all files in output folder)
   environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
-  - --input-search-pattern: '%YAML%/input_images/**/*.czi'
-    # Prefer brace-based template to avoid % expansion in YAML
-    - --split-template: 'S{s}_C{c}_Z{z}_T{t}'
-  - --open-terminal
-
-- name: Split images (batch processing without terminal)
-  environment: uv@3.11:convert-to-tif
-  commands:
-  - python
-  - '%REPO%/standard_code/python/split_bioformats.py'
-  - --input-search-pattern: '%YAML%/input_images/**/*.nd2'
-  - --output-folder: '%YAML%/output_split'
+  - --input-search-pattern: '%YAML%/input/**/*.nd2'
+  - --output-folder: '%YAML%/output'
+  - --split-template: 'S{s}_C{c}_Z{z}_T{t}'
   - --no-terminal
+  # Output: All split files directly in output/
+  # Example: output/file1_S0_C0_Z0_T0.ome.tif, output/file1_S0_C1_Z0_T0.ome.tif
 
-- name: Convert to OME-TIFF without splitting
+- name: Split with subfolders (flattened paths)
   environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
-  - --input-search-pattern: '%YAML%/input_images/**/*.tif'
-  - --output-folder: '%YAML%/output_ome'
-    - --split-template: ''
+  - --input-search-pattern: '%YAML%/input/**/*.czi'
+  - --output-folder: '%YAML%/output'
+  - --create-subfolders
+  - --no-terminal
+  # Output: input/sub1/sub2/file.czi -> output/sub1__sub2__file/file_S0_C0.ome.tif
+
+- name: Split with subfolders (preserve directory structure)
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/split_bioformats.py'
+  - --input-search-pattern: '%YAML%/input/**/*.nd2'
+  - --output-folder: '%YAML%/output'
+  - --create-subfolders
+  - --preserve-paths
+  - --no-terminal
+  # Output: input/sub1/file.nd2 -> output/sub1/file/file_S0_C0.ome.tif
 
 - name: Dry run (preview what would happen)
   environment: uv@3.11:convert-to-tif
@@ -551,7 +696,8 @@ run:
         type=str,
         default=None,
         help="Output base folder (default: input_folder + '_split'). "
-             "Output files will be saved in subfolders named after input files."
+             "By default, all split files go directly into this folder. "
+             "Use --create-subfolders to organize files into subfolders per input file."
     )
 
     parser.add_argument(
@@ -602,6 +748,31 @@ run:
     )
     
     parser.add_argument(
+        "--show-warnings",
+        action="store_true",
+        help="Show Java warnings (by default, non-actionable Java warnings are suppressed)"
+    )
+    
+    parser.add_argument(
+        "--create-subfolders",
+        action="store_true",
+        help="Create a subfolder per input file to organize output (default: all files in output folder)"
+    )
+    
+    parser.add_argument(
+        "--preserve-paths",
+        action="store_true",
+        help="When using --create-subfolders, preserve directory structure (default: flatten with delimiter)"
+    )
+    
+    parser.add_argument(
+        "--collapse-delimiter",
+        type=str,
+        default="__",
+        help="Delimiter for flattening subfolder paths when using --create-subfolders (default: '__')"
+    )
+    
+    parser.add_argument(
         "--version",
         action="store_true",
         help="Print version and exit"
@@ -642,7 +813,11 @@ run:
         split_template=args.split_template,
         open_terminal=open_terminal,
         no_parallel=args.no_parallel,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        suppress_warnings=not args.show_warnings,
+        create_subfolders=args.create_subfolders,
+        preserve_paths=args.preserve_paths,
+        collapse_delimiter=args.collapse_delimiter
     )
 
 

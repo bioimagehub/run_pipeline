@@ -1160,6 +1160,8 @@ func main() {
 				}
 			}
 			cmdLine := strings.TrimSpace(cmdString.String())
+			// Resolve any remaining %REPO% or %YAML% tokens in the final command line
+			cmdLine = resolvePath(cmdLine, mainProgramDir, yamlDir)
 			cmdArgs := []string{"cmd", "/C", cmdLine}
 			// Execute cmd immediately
 			fmt.Printf("Constructed command: %v\n", cmdArgs)

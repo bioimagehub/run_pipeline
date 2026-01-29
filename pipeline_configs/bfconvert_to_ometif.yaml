@@ -1,15 +1,16 @@
 run:
-- name: Split all LIF files by series with bfconvert
-  environment: cmd
-  commands:
-  - set "PATH=C:\Program Files\Java\jdk-23\bin;%PATH%" && for %f in (C:\Users\oodegard\Desktop\del\bfconvert_input\*.lif) do C:\git\run_pipeline\external\bftools\bfconvert.bat -overwrite -padded -bigtiff -compression LZW %f %~dpnf_S%%s.ome.tif
+# THis is a backup that works. DO not edit or delete
+#- name: Split all LIF files by series with bfconvert
+#  environment: cmd
+#  commands:
+#  - set "PATH=C:\Program Files\Java\jdk-23\bin;%PATH%" && for %f in (C:\Users\oodegard\Desktop\del\bfconvert_input\*.lif) do C:\git\run_pipeline\external\bftools\bfconvert.bat -overwrite -padded -bigtiff -compression LZW %f %~dpnf_S%%s.ome.tif
 
 - name: Split all LIF files by series with bfconvert (duplicate more readable)
   environment: cmd
   commands:
   - set "PATH=C:\Program Files\Java\jdk-23\bin;%PATH%" && # Set the Java path
-  - for %f in (C:\Users\oodegard\Desktop\del\bfconvert_input\*.lif)  # Loop through all LIF files in the input directory
-  - do C:\git\run_pipeline\external\bftools\bfconvert.bat # Call bfconvert for each file
+  - for %f in (F:\BIPHUB-OYVIND\test_data\different_fileformats\input\*.nd2)  # Loop through all LIF files in the input directory
+  - do %REPO%\external\bftools\bfconvert.bat # Call bfconvert for each file
   - -overwrite 
   - -padded 
   - -bigtiff 
