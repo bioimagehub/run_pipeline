@@ -113,6 +113,75 @@ def find_bfconvert() -> str:
     )
 
 
+def check_java_installed() -> bool:
+    """
+    Check if Java is installed and accessible.
+    
+    Returns:
+        True if Java is found, False otherwise
+        
+    Raises:
+        RuntimeError: If Java is not found with installation instructions
+    """
+    try:
+        result = subprocess.run(
+            ["java", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        # Java prints version to stderr
+        version_output = result.stderr + result.stdout
+        
+        if result.returncode == 0 and "version" in version_output.lower():
+            # Extract version info
+            version_line = version_output.split('\n')[0]
+            logger.info(f"Java found: {version_line}")
+            return True
+        else:
+            raise RuntimeError("Java command executed but returned unexpected output")
+            
+    except FileNotFoundError:
+        error_msg = """
+╔════════════════════════════════════════════════════════════════════════════╗
+║                          JAVA NOT FOUND                                    ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+BioFormats tools (bfconvert, showinf) require Java to be installed.
+
+INSTALLATION INSTRUCTIONS:
+
+Windows:
+  1. Download Java from: https://adoptium.net/temurin/releases/
+  2. Choose the latest LTS version (Java 17 or 21)
+  3. Download the Windows .msi installer
+  4. Run the installer and check "Set JAVA_HOME variable"
+  5. Restart your terminal/command prompt after installation
+  6. Verify installation: java -version
+
+macOS:
+  1. Using Homebrew: brew install openjdk
+  2. Or download from: https://adoptium.net/temurin/releases/
+  3. Verify installation: java -version
+
+Linux:
+  Ubuntu/Debian: sudo apt-get install default-jdk
+  Fedora/RHEL:   sudo dnf install java-17-openjdk
+  Verify installation: java -version
+
+After installation, restart your terminal and try again.
+"""
+        logger.error(error_msg)
+        raise RuntimeError("Java is not installed or not in PATH. See installation instructions above.")
+    
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Java check timed out. Java may be installed but not responding.")
+    
+    except Exception as e:
+        raise RuntimeError(f"Error checking for Java: {e}")
+
+
 def get_image_dimensions(input_file: str) -> Tuple[int, int, int, int]:
     """
     Get image dimensions using bfconvert showinf.
@@ -211,6 +280,12 @@ def split_single_file(
             if sys.platform == "win32":
                 # Create a batch file to run in terminal
                 batch_file = os.path.join(output_folder, "_run_split.bat")
+                done_marker = os.path.join(output_folder, "_conversion_done.txt")
+                
+                # Remove old done marker if it exists
+                if os.path.exists(done_marker):
+                    os.remove(done_marker)
+                
                 with open(batch_file, 'w') as f:
                     f.write("@echo off\n")
                     f.write(f"cd /d \"{output_folder}\"\n")
@@ -222,23 +297,60 @@ def split_single_file(
                         for x in cmd
                     ])
                     f.write(cmd_str + "\n")
-                    f.write("echo Conversion complete!\n")
+                    f.write("set EXITCODE=%ERRORLEVEL%\n")
+                    f.write(f"echo %EXITCODE% > \"{done_marker}\"\n")
+                    f.write("if %EXITCODE% EQU 0 (\n")
+                    f.write("    echo Conversion complete!\n")
+                    f.write(") else (\n")
+                    f.write("    echo Conversion failed with error code %EXITCODE%\n")
+                    f.write(")\n")
                     f.write("pause\n")
                 
                 # Execute batch file in new terminal
+                logger.info(f"Starting conversion in new terminal window...")
                 subprocess.Popen(
                     ["cmd.exe", "/c", "start", "cmd.exe", "/k", batch_file],
                     cwd=output_folder
                 )
-                logger.info(f"Opened terminal for conversion in: {output_folder}")
-                return True
+                
+                # Wait for the done marker file to appear
+                import time
+                max_wait = 3600  # Maximum 1 hour
+                check_interval = 2  # Check every 2 seconds
+                elapsed = 0
+                
+                logger.info(f"Waiting for conversion to complete (checking every {check_interval}s)...")
+                while elapsed < max_wait:
+                    if os.path.exists(done_marker):
+                        # Read the exit code
+                        try:
+                            with open(done_marker, 'r') as f:
+                                exit_code = int(f.read().strip())
+                            
+                            if exit_code == 0:
+                                logger.info(f"✓ Conversion completed successfully in terminal")
+                                return True
+                            else:
+                                logger.error(f"✗ Conversion failed with exit code: {exit_code}")
+                                return False
+                        except Exception as e:
+                            logger.error(f"Error reading exit code: {e}")
+                            return False
+                    
+                    time.sleep(check_interval)
+                    elapsed += check_interval
+                
+                logger.error(f"Timeout waiting for conversion to complete (waited {max_wait}s)")
+                return False
             else:
-                # Linux/macOS
-                subprocess.Popen(
+                # Linux/macOS - run in background and wait
+                process = subprocess.Popen(
                     ["gnome-terminal", "--", "bash", "-c", f"{shlex.join(cmd)}; bash"],
                     cwd=output_folder
                 )
-                logger.info(f"Opened terminal for conversion in: {output_folder}")
+                logger.info(f"Opened terminal for conversion, waiting for completion...")
+                process.wait()
+                logger.info(f"Terminal process completed")
                 return True
         else:
             # Run in current process
@@ -261,6 +373,50 @@ def split_single_file(
     except Exception as e:
         logger.error(f"Error splitting file {input_file}: {e}")
         return False
+
+
+def _process_single_worker(args: Tuple[str, str, str, str, str, bool, bool]) -> Tuple[str, bool]:
+    """
+    Worker function for parallel processing. Must be at module level for Windows pickling.
+    
+    Args:
+        args: Tuple of (input_file, output_folder, bfconvert_path, split_string, 
+              split_template, open_terminal, dry_run)
+    
+    Returns:
+        Tuple of (input_file, success)
+    """
+    input_file, output_folder, bfconvert_path, split_string, split_template, open_terminal, dry_run = args
+    
+    # Create output folder with same name as input (without extension)
+    base_name = os.path.splitext(os.path.basename(input_file))[0]
+    
+    if output_folder:
+        file_output_folder = os.path.join(output_folder, base_name)
+    else:
+        # Create folder in same directory as input
+        input_dir = os.path.dirname(input_file)
+        file_output_folder = os.path.join(input_dir, base_name)
+    
+    logger.info(f"Processing: {input_file}")
+    logger.info(f"Output folder: {file_output_folder}")
+    
+    if dry_run:
+        logger.info(f"[DRY RUN] Would split: {input_file} -> {file_output_folder}")
+        return (input_file, True)
+    
+    # Prefer brace-based template over raw split string
+    effective_split = split_string or translate_template_to_bfconvert(split_template)
+
+    success = split_single_file(
+        input_file,
+        file_output_folder,
+        bfconvert_path,
+        split_string=effective_split,
+        open_terminal=open_terminal,
+        show_progress=True
+    )
+    return (input_file, success)
 
 
 def process_files(
@@ -293,6 +449,13 @@ def process_files(
     
     logger.info(f"Found {len(input_files)} file(s) to process")
     
+    # Check Java installation first
+    try:
+        check_java_installed()
+    except RuntimeError as e:
+        logger.error(f"Cannot proceed without Java: {e}")
+        return
+    
     # Find bfconvert
     try:
         bfconvert_path = find_bfconvert()
@@ -300,45 +463,21 @@ def process_files(
         logger.error(str(e))
         return
     
-    # Process each file
-    def process_single(input_file: str) -> Tuple[str, bool]:
-        # Create output folder with same name as input (without extension)
-        base_name = os.path.splitext(os.path.basename(input_file))[0]
-        
-        if output_folder:
-            file_output_folder = os.path.join(output_folder, base_name)
-        else:
-            # Create folder in same directory as input
-            input_dir = os.path.dirname(input_file)
-            file_output_folder = os.path.join(input_dir, base_name)
-        
-        logger.info(f"Processing: {input_file}")
-        logger.info(f"Output folder: {file_output_folder}")
-        
-        if dry_run:
-            logger.info(f"[DRY RUN] Would split: {input_file} -> {file_output_folder}")
-            return (input_file, True)
-        
-        # Prefer brace-based template over raw split string
-        effective_split = split_string or translate_template_to_bfconvert(split_template)
-
-        success = split_single_file(
-            input_file,
-            file_output_folder,
-            bfconvert_path,
-            split_string=effective_split,
-            open_terminal=open_terminal,
-            show_progress=True
-        )
-        return (input_file, success)
-    
     # Execute processing
     if no_parallel or len(input_files) == 1:
+        # Sequential processing
         for input_file in input_files:
-            process_single(input_file)
+            args = (input_file, output_folder, bfconvert_path, split_string, 
+                   split_template, open_terminal, dry_run)
+            _process_single_worker(args)
     else:
+        # Parallel processing with worker function
+        args_list = [
+            (f, output_folder, bfconvert_path, split_string, split_template, open_terminal, dry_run)
+            for f in input_files
+        ]
         with ProcessPoolExecutor(max_workers=2) as executor:
-            futures = {executor.submit(process_single, f): f for f in input_files}
+            futures = {executor.submit(_process_single_worker, args): args[0] for args in args_list}
             for future in as_completed(futures):
                 try:
                     input_file, success = future.result()
@@ -362,7 +501,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Split image into slices (opens terminal)
-  environment: uv@3.11:split-bioformats
+  environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
@@ -372,7 +511,7 @@ run:
   - --open-terminal
 
 - name: Split images (batch processing without terminal)
-  environment: uv@3.11:split-bioformats
+  environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
@@ -381,7 +520,7 @@ run:
   - --no-terminal
 
 - name: Convert to OME-TIFF without splitting
-  environment: uv@3.11:split-bioformats
+  environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
@@ -390,7 +529,7 @@ run:
     - --split-template: ''
 
 - name: Dry run (preview what would happen)
-  environment: uv@3.11:split-bioformats
+  environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/split_bioformats.py'
