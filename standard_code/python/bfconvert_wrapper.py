@@ -23,6 +23,11 @@ from pathlib import Path
 from glob import glob
 import shutil
 
+try:
+    import bioimage_pipeline_utils as rp
+except ImportError:
+    rp = None
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -186,7 +191,8 @@ def run_bfconvert(
 
 def process_files(
     input_pattern: str,
-    output_pattern: str,
+    output_folder: str,
+    output_suffix: str = ".ome.tif",
     extra_flags: list[str] = None,
     dry_run: bool = False
 ) -> None:
@@ -195,7 +201,8 @@ def process_files(
     
     Args:
         input_pattern: Glob pattern for input files
-        output_pattern: Output pattern with optional placeholders
+        output_folder: Output folder path
+        output_suffix: Suffix to append to input basename (default: .ome.tif)
         extra_flags: Additional flags to pass to bfconvert
         dry_run: Print planned actions without executing
     """
@@ -207,6 +214,19 @@ def process_files(
         return
     
     logger.info(f"Found {len(input_files)} file(s) to process")
+    
+    # Determine base folder for path collapsing
+    # If pattern has **, use the part before ** as base folder
+    if '**' in input_pattern:
+        base_folder = input_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:
+            base_folder = os.getcwd()
+        base_folder = os.path.abspath(base_folder)
+    else:
+        # Use parent directory of first file as base
+        base_folder = str(Path(input_files[0]).parent) if input_files else os.getcwd()
+    
+    logger.info(f"Base folder for path handling: {base_folder}")
     
     # Check Java installation first
     try:
@@ -227,18 +247,19 @@ def process_files(
     fail_count = 0
     
     for input_file in input_files:
-        # Determine output file path
-        # If output_pattern has bfconvert placeholders (%s, %c, etc.), use it directly
-        # Otherwise, use it as a simple output path
-        if '%' in output_pattern:
-            # Pattern with bfconvert placeholders - use as-is
-            output_file = output_pattern
+        # Use collapse_filename to encode directory structure in filename
+        if rp is not None:
+            # Use bioimage_pipeline_utils for proper path collapsing
+            collapsed = rp.collapse_filename(input_file, base_folder, delimiter="__")
+            collapsed_base = os.path.splitext(collapsed)[0]
         else:
-            # Simple output path - replace input filename
-            input_name = Path(input_file).stem
-            output_ext = Path(output_pattern).suffix or '.ome.tif'
-            output_dir = Path(output_pattern).parent
-            output_file = str(output_dir / f"{input_name}{output_ext}")
+            # Fallback: simple collapse using delimiter
+            rel_path = os.path.relpath(input_file, base_folder)
+            collapsed = rel_path.replace(os.sep, "__")
+            collapsed_base = os.path.splitext(collapsed)[0]
+        
+        # Construct output path: output_folder / (collapsed_basename + suffix)
+        output_file = str(Path(output_folder) / f"{collapsed_base}{output_suffix}")
         
         logger.info(f"Processing: {input_file}")
         logger.info(f"Output: {output_file}")
@@ -274,10 +295,22 @@ run:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
   - --input-pattern: '%YAML%/input/**/*.nd2'
-  - --output-pattern: '%YAML%/output/converted.ome.tif'
-  - --flag: -padded
-  - --flag: -no-upgrade
-  - --flag: -overwrite
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '.ome.tif'
+  - --flag=-padded
+  - --flag=-no-upgrade
+  - --flag=-overwrite
+
+- name: Split by series
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.lif'
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '_S%%s.ome.tif'
+  - --flag=-padded
+  - --flag=-overwrite
 
 - name: Split by channel and timepoint
   environment: uv@3.11:convert-to-tif
@@ -285,10 +318,11 @@ run:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
   - --input-pattern: '%YAML%/input/**/*.czi'
-  - --output-pattern: '%YAML%/output/img_c%c_t%t.ome.tif'
-  - --flag: -series
-  - --flag: '0'
-  - --flag: -padded
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '_C%%c_T%%t.ome.tif'
+  - --flag=-series
+  - --flag='0'
+  - --flag=-padded
 
 - name: Convert with compression
   environment: uv@3.11:convert-to-tif
@@ -296,10 +330,11 @@ run:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
   - --input-pattern: '%YAML%/input/**/*.oib'
-  - --output-pattern: '%YAML%/output/compressed.ome.tif'
-  - --flag: -compression
-  - --flag: LZW
-  - --flag: -overwrite
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '.ome.tif'
+  - --flag=-compression
+  - --flag=LZW
+  - --flag=-overwrite
 
 Common bfconvert flags:
   -series N               Select specific series
@@ -328,12 +363,19 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     )
     
     parser.add_argument(
-        "--output-pattern",
+        "--output-folder",
         type=str,
         required=True,
-        help="Output file pattern. Can include bfconvert placeholders like %%c (channel), "
-             "%%t (timepoint), %%z (Z), %%s (series). Examples: "
-             "'output/img_c%%c.ome.tif' or 'output/converted.ome.tif'"
+        help="Output folder path"
+    )
+    
+    parser.add_argument(
+        "--output-suffix",
+        type=str,
+        default=".ome.tif",
+        help="Suffix to append to input basename. Can include bfconvert placeholders like "
+             "%%c (channel), %%t (timepoint), %%z (Z), %%s (series). "
+             "Examples: '_S%%s.ome.tif' or '_c%%c_t%%t.ome.tif' (default: .ome.tif)"
     )
     
     parser.add_argument(
@@ -386,7 +428,8 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     # Process files
     process_files(
         input_pattern=args.input_pattern,
-        output_pattern=args.output_pattern,
+        output_folder=args.output_folder,
+        output_suffix=args.output_suffix,
         extra_flags=args.flags or [],
         dry_run=args.dry_run
     )

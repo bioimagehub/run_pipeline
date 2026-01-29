@@ -5,14 +5,54 @@ run:
 #  commands:
 #  - set "PATH=C:\Program Files\Java\jdk-23\bin;%PATH%" && for %f in (C:\Users\oodegard\Desktop\del\bfconvert_input\*.lif) do C:\git\run_pipeline\external\bftools\bfconvert.bat -overwrite -padded -bigtiff -compression LZW %f %~dpnf_S%%s.ome.tif
 
-- name: Split all LIF files by series with bfconvert (duplicate more readable)
-  environment: cmd
+# This is a more readable version using python wrapper ant it also works. do not delete
+# - name: Split all LIF files by series with bfconvert (duplicate more readable)
+#   environment: cmd
+#   commands:
+#   - for %f in (F:\BIPHUB-OYVIND\test_data\different_fileformats\input\*.nd2)  # Loop through all LIF files in the input directory
+#   - do C:\biphub\git\run_pipeline\external\bftools\bfconvert.bat # Call bfconvert for each file
+#   - -overwrite 
+#   - -padded 
+#   - -bigtiff 
+#   - -compression: LZW 
+#   - '%f %~dpnf_S%%s.ome.tif'
+
+# - name: Enable force mode mid-pipeline
+#   type: force
+#   message: 'Reprocessing all subsequent steps.'
+
+- name: Convert nd2 to OME-TIFF.
+  environment: uv@3.11:convert-to-tif
   commands:
-  - set "PATH=C:\Program Files\Java\jdk-23\bin;%PATH%" && # Set the Java path
-  - for %f in (F:\BIPHUB-OYVIND\test_data\different_fileformats\input\*.nd2)  # Loop through all LIF files in the input directory
-  - do C:\biphub\git\run_pipeline\external\bftools\bfconvert.bat # Call bfconvert for each file
-  - -overwrite 
-  - -padded 
-  - -bigtiff 
-  - -compression: LZW 
-  - '%f %~dpnf_S%%s.ome.tif'
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.nd2'
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '_S%%s.ome.tif'
+  - --flag=-padded
+  - --flag=-overwrite
+  - --flag=-bigtiff
+
+- name: Convert czi to OME-TIFF.
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.czi'
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '_S%%s.ome.tif'
+  - --flag=-padded
+  - --flag=-overwrite
+  - --flag=-bigtiff
+
+- name: Convert lif to OME-TIFF.
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.lif'
+  - --output-folder: '%YAML%/output'
+  - --output-suffix: '_S%%s.ome.tif'
+  - --flag=-padded
+  - --flag=-overwrite
+  - --flag=-bigtiff
