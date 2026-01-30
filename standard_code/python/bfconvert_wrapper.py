@@ -22,6 +22,9 @@ import textwrap
 from pathlib import Path
 from glob import glob
 import shutil
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Tuple, Dict, Any
 
 try:
     import bioimage_pipeline_utils as rp
@@ -60,6 +63,84 @@ def find_bfconvert() -> str:
         "bfconvert not found. Ensure BioFormats is installed or available in the repo at "
         "external/bftools/bfconvert.bat"
     )
+
+
+def find_showinf() -> str:
+    """
+    Find showinf executable in the standard locations.
+    
+    Returns:
+        Path to showinf executable
+        
+    Raises:
+        FileNotFoundError: If showinf cannot be found
+    """
+    # Check if running from repo context
+    repo_root = Path(__file__).parent.parent.parent
+    potential_paths = [
+        repo_root / "external" / "bftools" / "showinf.bat",
+        repo_root / "external" / "bftools" / "showinf",
+        shutil.which("showinf"),
+        shutil.which("showinf.bat"),
+    ]
+    
+    for path in potential_paths:
+        if path and os.path.exists(path):
+            logger.debug(f"Found showinf at: {path}")
+            return str(path)
+    
+    raise FileNotFoundError(
+        "showinf not found. Ensure BioFormats is installed or available in the repo at "
+        "external/bftools/showinf.bat"
+    )
+
+
+def get_series_count(input_file: str) -> int:
+    """
+    Get number of series in an image using showinf.
+    
+    Args:
+        input_file: Path to image file
+        
+    Returns:
+        Number of series in the image (minimum 1)
+    """
+    try:
+        showinf_path = find_showinf()
+    except FileNotFoundError:
+        logger.warning("showinf not found, assuming 1 series")
+        return 1
+    
+    try:
+        result = subprocess.run(
+            [str(showinf_path), "-nopix", input_file],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        # Parse output to find series count
+        lines = result.stdout.split('\n')
+        series_count = 1  # Default to 1 if not found
+        
+        for line in lines:
+            # Look for "Series count = N" or "SeriesCount = N"
+            if 'series count' in line.lower() and '=' in line:
+                try:
+                    parts = line.split('=')
+                    if len(parts) >= 2:
+                        val_str = parts[1].strip().split()[0].strip()
+                        series_count = int(val_str)
+                        logger.info(f"Detected {series_count} series in {Path(input_file).name}")
+                        break
+                except (IndexError, ValueError) as e:
+                    logger.debug(f"Failed to parse series count from line: {line} - {e}")
+        
+        return max(1, series_count)  # Ensure at least 1
+    
+    except Exception as e:
+        logger.warning(f"Error reading series count: {e}, assuming 1 series")
+        return 1
 
 
 def check_java_installed() -> bool:
@@ -135,7 +216,9 @@ def run_bfconvert(
     input_file: str,
     output_file: str,
     bfconvert_path: str,
-    extra_flags: list[str] = None
+    extra_flags: list[str] = None,
+    series: int = None,
+    max_memory: str = "8g"
 ) -> bool:
     """
     Run bfconvert on a single file.
@@ -145,6 +228,8 @@ def run_bfconvert(
         output_file: Path to output file
         bfconvert_path: Path to bfconvert executable
         extra_flags: Additional flags to pass to bfconvert
+        series: Series number to extract (None = all series)
+        max_memory: Maximum Java heap size (default: 8g for 8GB)
         
     Returns:
         True if successful, False otherwise
@@ -158,6 +243,10 @@ def run_bfconvert(
         # Build command
         cmd = [str(bfconvert_path)]
         
+        # Add series flag if specified
+        if series is not None:
+            cmd.extend(["-series", str(series)])
+        
         # Add user-specified flags
         if extra_flags:
             cmd.extend(extra_flags)
@@ -165,13 +254,20 @@ def run_bfconvert(
         # Add input and output
         cmd.extend([str(input_file), output_file])
         
+        # Set up environment with increased Java heap size
+        env = os.environ.copy()
+        env['BF_MAX_MEM'] = max_memory
+        env['_JAVA_OPTIONS'] = f'-Xmx{max_memory} -Xms{max_memory}'
+        
+        logger.info(f"Running with max memory: {max_memory}")
         logger.info(f"Running: {' '.join(cmd)}")
         
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=None
+            timeout=None,
+            env=env
         )
         
         if result.returncode != 0:
@@ -189,13 +285,55 @@ def run_bfconvert(
         return False
 
 
+def process_single_file(args: Tuple[str, str, str, list, int, str]) -> Dict[str, Any]:
+    """
+    Process a single file (wrapper for parallel processing).
+    
+    Args:
+        args: Tuple of (input_file, output_file, bfconvert_path, extra_flags, series, max_memory)
+        
+    Returns:
+        Dict with processing results
+    """
+    input_file, output_file, bfconvert_path, extra_flags, series, max_memory = args
+    
+    try:
+        success = run_bfconvert(
+            input_file=input_file,
+            output_file=output_file,
+            bfconvert_path=bfconvert_path,
+            extra_flags=extra_flags,
+            series=series,
+            max_memory=max_memory
+        )
+        return {
+            'input': input_file,
+            'output': output_file,
+            'series': series,
+            'success': success,
+            'error': None
+        }
+    except Exception as e:
+        logger.error(f"Failed to process {input_file} series {series}: {e}")
+        return {
+            'input': input_file,
+            'output': output_file,
+            'series': series,
+            'success': False,
+            'error': str(e)
+        }
+
+
 def process_files(
     input_pattern: str,
     output_folder: str,
     output_suffix: str = ".ome.tif",
     extra_flags: list[str] = None,
     dry_run: bool = False,
-    create_subfolders: bool = False
+    create_subfolders: bool = False,
+    max_memory: str = "8g",
+    max_workers: int = None,
+    no_parallel: bool = False
 ) -> None:
     """
     Process multiple image files with bfconvert.
@@ -207,6 +345,9 @@ def process_files(
         extra_flags: Additional flags to pass to bfconvert
         dry_run: Print planned actions without executing
         create_subfolders: Create a subfolder per input file (default: False)
+        max_memory: Maximum Java heap size (default: 8g for 8GB)
+        max_workers: Number of parallel workers (default: CPU count - 1, use None for auto)
+        no_parallel: Disable parallel processing (default: False, parallel is enabled)
     """
     # Expand glob pattern
     input_files = glob(input_pattern, recursive=True)
@@ -246,10 +387,16 @@ def process_files(
         logger.error(str(e))
         return
     
-    # Process each file
-    success_count = 0
-    fail_count = 0
+    # Determine optimal number of workers for parallel processing
+    if not no_parallel:
+        if max_workers is None:
+            max_workers = max(1, multiprocessing.cpu_count() - 1)  # Leave 1 core for system
+        logger.info(f"Using {max_workers} parallel workers")
+    else:
+        logger.info("Parallel processing disabled")
     
+    # Build task list
+    tasks = []
     for input_file in input_files:
         # Use collapse_filename to encode directory structure in filename
         if rp is not None:
@@ -262,28 +409,86 @@ def process_files(
             collapsed = rel_path.replace(os.sep, "__")
             collapsed_base = os.path.splitext(collapsed)[0]
         
-        # Determine output path based on subfolder option
-        if create_subfolders:
-            # Create a subfolder with the collapsed basename
-            file_output_folder = str(Path(output_folder) / collapsed_base)
-            output_file = str(Path(file_output_folder) / f"{collapsed_base}{output_suffix}")
-        else:
-            # All files directly in output folder
-            output_file = str(Path(output_folder) / f"{collapsed_base}{output_suffix}")
+        # ALWAYS detect series count to force splitting by series
+        series_count = get_series_count(input_file)
         
         logger.info(f"Processing: {input_file}")
-        logger.info(f"Output: {output_file}")
         
-        if dry_run:
-            logger.info(f"[DRY RUN] Would convert: {input_file} -> {output_file}")
-            logger.info(f"[DRY RUN] Flags: {extra_flags}")
-            success_count += 1
-            continue
+        # Process each series separately
+        for series_idx in range(series_count):
+            # Add _S{n} suffix if there are multiple series
+            if series_count > 1:
+                series_suffix = f"_S{series_idx}"
+            else:
+                series_suffix = ""
+            
+            # Determine output path based on subfolder option
+            if create_subfolders:
+                # Create a subfolder per output file (includes series suffix in folder name)
+                file_output_folder = str(Path(output_folder) / f"{collapsed_base}{series_suffix}")
+                output_file = str(Path(file_output_folder) / f"{collapsed_base}{series_suffix}{output_suffix}")
+            else:
+                # All files directly in output folder
+                output_file = str(Path(output_folder) / f"{collapsed_base}{series_suffix}{output_suffix}")
+            
+            if series_count > 1:
+                logger.info(f"  Series {series_idx}/{series_count-1}: {output_file}")
+            else:
+                logger.info(f"  Output: {output_file}")
+            
+            if dry_run:
+                logger.info(f"[DRY RUN] Would convert: {input_file} (series {series_idx}) -> {output_file}")
+                logger.info(f"[DRY RUN] Flags: {extra_flags}")
+                logger.info(f"[DRY RUN] Max memory: {max_memory}")
+            else:
+                tasks.append((
+                    input_file,
+                    output_file,
+                    bfconvert_path,
+                    extra_flags,
+                    series_idx,
+                    max_memory
+                ))
+    
+    if dry_run:
+        logger.info(f"\n[DRY RUN] Would process {len(tasks)} tasks")
+        if not no_parallel:
+            logger.info(f"[DRY RUN] Using {max_workers} parallel workers")
+        return
+    
+    # Execute tasks (parallel or sequential)
+    success_count = 0
+    fail_count = 0
+    
+    if no_parallel:
+        # Sequential processing
+        logger.info(f"Processing {len(tasks)} tasks sequentially...")
+        for i, task in enumerate(tasks, 1):
+            result = process_single_file(task)
+            if result['success']:
+                success_count += 1
+                logger.info(f"✓ [{i}/{len(tasks)}] {result['output']}")
+            else:
+                fail_count += 1
+                logger.error(f"✗ [{i}/{len(tasks)}] {result['input']} series {result['series']}")
+    else:
+        # Parallel processing
+        logger.info(f"Processing {len(tasks)} tasks across {max_workers} workers...")
         
-        if run_bfconvert(input_file, output_file, bfconvert_path, extra_flags):
-            success_count += 1
-        else:
-            fail_count += 1
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            futures = {executor.submit(process_single_file, task): task for task in tasks}
+            
+            # Process results as they complete
+            for future in as_completed(futures):
+                result = future.result()
+                
+                if result['success']:
+                    success_count += 1
+                    logger.info(f"✓ [{success_count + fail_count}/{len(tasks)}] {result['output']}")
+                else:
+                    fail_count += 1
+                    logger.error(f"✗ [{success_count + fail_count}/{len(tasks)}] {result['input']} series {result['series']}")
     
     logger.info(f"\nCompleted: {success_count} successful, {fail_count} failed")
 
@@ -299,7 +504,7 @@ def main() -> None:
 Example YAML config for run_pipeline.exe:
 ---
 run:
-- name: Convert to OME-TIFF
+- name: Convert to OME-TIFF (parallel processing by default)
   environment: uv@3.11:convert-to-tif
   commands:
   - python
@@ -309,6 +514,29 @@ run:
   - --output-suffix: '.ome.tif'
   - --flag=-padded
   - --flag=-no-upgrade
+  - --flag=-overwrite
+  # Uses CPU count - 1 workers by default
+
+- name: Convert with custom worker count
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.czi'
+  - --output-folder: '%YAML%/output'
+  - --max-workers: 4
+  - --flag=-padded
+  - --flag=-overwrite
+
+- name: Convert sequentially (no parallel)
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bfconvert_wrapper.py'
+  - --input-pattern: '%YAML%/input/**/*.lif'
+  - --output-folder: '%YAML%/output'
+  - --no-parallel
+  - --flag=-padded
   - --flag=-overwrite
 
 - name: Split by series
@@ -418,6 +646,28 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     )
     
     parser.add_argument(
+        "--max-memory",
+        type=str,
+        default="8g",
+        help="Maximum Java heap size for bfconvert (default: 8g). "
+             "Examples: 4g, 8g, 16g, 32g. Increase if you get OutOfMemoryError."
+    )
+    
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Number of parallel workers (default: CPU count - 1). "
+             "Set to 1 for sequential processing or use --no-parallel."
+    )
+    
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable parallel processing (process files sequentially)"
+    )
+    
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned actions without executing"
@@ -461,7 +711,10 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
         output_suffix=args.output_suffix,
         extra_flags=args.flags or [],
         dry_run=args.dry_run,
-        create_subfolders=args.create_subfolders
+        create_subfolders=args.create_subfolders,
+        max_memory=args.max_memory,
+        max_workers=args.max_workers,
+        no_parallel=args.no_parallel
     )
 
 
