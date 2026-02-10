@@ -8,11 +8,11 @@ import numpy as np
 import signal
 # Initialize ImageJ in interactive mode 
 # You can start this server in a separate terminal and then run the client code to send images to it 
-# uv run --group imagej python C:\git\run_pipeline\standard_code\python\imageJ_view_server.py
+# uv run --group imagej python .\standard_code\python\imageJ_view_server.py
 
 
 REQUIRED_JAVA_MAJOR = 11
-FIJI_PATH = r"C:\Program_files\Fiji\Fiji.app"
+FIJI_PATH = r"E:\Oyvind\OF_program_files\OF_Fiji.app"
 HOST = "127.0.0.1"
 PORT = 50007
 SERVER_VERSION = "2026-02-10a"
