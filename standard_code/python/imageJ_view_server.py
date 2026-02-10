@@ -155,8 +155,6 @@ def show_image(arr, host=HOST, port=PORT, timeout=5.0, verbose=False):
             f"Failed to send image to ImageJ server at {host}:{port}."
         ) from e
 
-
-
 def main():
     _check_java()
     global ij_instance
