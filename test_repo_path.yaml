@@ -1,6 +1,0 @@
-run:
-- name: Test %REPO% path resolution
-  environment: cmd
-  commands:
-  - echo Testing REPO path resolution
-  - dir %REPO%\external\bftools\bfconvert.bat
