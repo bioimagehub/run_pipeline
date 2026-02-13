@@ -5,6 +5,7 @@ import tempfile
 import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv
 import numpy as np
 import warnings
+from roifile import ImagejRoi, roiwrite
 
 import tifffile
 
@@ -484,6 +485,38 @@ def split_comma_separated_intstring(value:str) -> list[int]:
     return list(map(int, value.split(',')))    
 
 
+def mask_to_rois(mask: np.ndarray):
+    """
+    Convert a labeled mask (indexed image, TCZYX or lower) to a list of ImageJ ROI objects.
+    Each unique label (except 0) in each (T, C, Z) plane is converted to a ROI.
+    """
+    from skimage import measure
+    rois = []
+    shape = mask.shape
+    # Pad shape to 5D if needed
+    while len(shape) < 5:
+        mask = np.expand_dims(mask, axis=0)
+        shape = mask.shape
+    T, C, Z, Y, X = mask.shape
+    for t in range(T):
+        for c in range(C):
+            for z in range(Z):
+                plane = mask[t, c, z]
+                labels = np.unique(plane)
+                for label in labels:
+                    if label == 0:
+                        continue
+                    mask_bin = (plane == label).astype(np.uint8)
+                    contours = measure.find_contours(mask_bin, 0.5)
+                    for contour in contours:
+                        coords = np.fliplr(contour).astype(np.int16)
+                        if len(coords) < 3:
+                            continue
+                        roi = ImagejRoi.frompoints(coords)
+                        rois.append(roi)
+    return rois
+
+
 def show_image(
     image: Union[BioImage, np.ndarray, str],
     mask: Union[BioImage, np.ndarray, str, None] = None,
@@ -770,11 +803,16 @@ def save_mask(
         # Convert to binary (0 or 255) 8-bit mask
         mask_out = (mask > 0).astype(np.uint8) * 255
     else:
-        # For distance matrices, we want to preserve the float values
-        # But ImageJ works better with specific dtypes
+        # Handle different data types
         if mask.dtype == np.float32 or mask.dtype == np.float64:
+            # Float types: preserve as float32
             mask_out = mask.astype(np.float32)
+        elif np.issubdtype(mask.dtype, np.integer):
+            # Integer types (int32, int64, etc.): convert to uint16 for ImageJ compatibility
+            # ImageJ doesn't support int32/int64, but uint16 can handle labeled masks up to 65535
+            mask_out = mask.astype(np.uint16)
         else:
+            # Other types: keep as-is
             mask_out = mask
     
     # Remove C dimension (should be 1) and convert to TZYX for ImageJ

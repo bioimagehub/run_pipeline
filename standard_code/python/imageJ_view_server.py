@@ -157,6 +157,12 @@ def show_image(arr, host=HOST, port=PORT, timeout=5.0, verbose=False):
 
 def main():
     _check_java()
+    
+    # Log system information for debugging
+    import pickle as pickle_module
+    print(f"[INFO] NumPy version: {np.__version__}")
+    print(f"[INFO] Pickle protocol version: {pickle_module.HIGHEST_PROTOCOL}")
+    
     global ij_instance
     ij = _init_imagej()
     ij_instance = ij
@@ -232,9 +238,36 @@ def main():
                     try:
                         arr = np.asarray(pickle.loads(data))
                     except Exception as e:
-                        print("[WARN] Failed to decode payload; ignoring.")
-                        print(e)
-                        continue
+                        # Try to handle numpy version compatibility issues
+                        if "numpy" in str(e) and ("module" in str(e) or "_core" in str(e)):
+                            print("[INFO] Detected numpy compatibility issue, attempting workaround...")
+                            try:
+                                import io
+                                
+                                # Custom unpickler to handle numpy module path changes
+                                class NumpyCompatibilityUnpickler(pickle.Unpickler):
+                                    def find_class(self, module, name):
+                                        # Handle numpy._core -> numpy.core mapping for newer numpy
+                                        if module.startswith('numpy._'):
+                                            module = module.replace('numpy._', 'numpy.')
+                                        # Handle the reverse: numpy.core -> numpy._core for compatibility
+                                        elif module == 'numpy.core' and not hasattr(__import__('numpy'), 'core'):
+                                            module = 'numpy._core'
+                                        return super().find_class(module, name)
+                                
+                                data_io = io.BytesIO(data)
+                                unpickler = NumpyCompatibilityUnpickler(data_io)
+                                arr = np.asarray(unpickler.load())
+                                print("[OK] Successfully unpickled with numpy compatibility workaround")
+                            except Exception as e2:
+                                print("[WARN] Numpy compatibility workaround failed.")
+                                print(f"Original error: {e}")
+                                print(f"Workaround error: {e2}")
+                                continue
+                        else:
+                            print("[WARN] Failed to decode payload; ignoring.")
+                            print(e)
+                            continue
                     axes = None
                     if arr.ndim == 5:
                         axes = "TCZYX"
