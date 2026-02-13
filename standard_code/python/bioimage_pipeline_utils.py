@@ -116,41 +116,52 @@ def load_tczyx_image(path: str) -> BioImage:
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
     
-    
-    if path.endswith(".tif"):
-        try: # Will work for ometif
-            img = BioImage(path, reader=bioio_ome_tiff.Reader)
-            return img
+    lower_path = path.lower()
+
+    if lower_path.endswith((".tif", ".tiff")):
+        is_ome_tiff = False
+        try:
+            with tifffile.TiffFile(path) as tif:
+                is_ome_tiff = bool(getattr(tif, "is_ome", False))
         except Exception:
+            # If detection fails, continue with generic reader fallback below.
             pass
-        try: 
+
+        # Only try the OME reader when the TIFF is actually OME-TIFF.
+        # This avoids noisy "Failed to parse XML" errors for ImageJ-style TIFFs.
+        if is_ome_tiff:
+            try:
+                img = BioImage(path, reader=bioio_ome_tiff.Reader)
+                return img
+            except Exception:
+                pass
+
+        # Prefer tifffile reader for non-OME TIFFs (e.g., ImageJ save_mask output).
+        try:
             img = BioImage(path, reader=bioio_tifffile.Reader)
             return img
         except Exception:
             pass
-        try: 
+
+        # Final generic fallback
+        try:
             img = BioImage(path)
             return img
         except Exception:
             pass
-        try: # For imageJ tifs
-            img = BioImage(path)
-            return img
-        except Exception:
-            pass
-    elif path.endswith(".nd2"):
+    elif lower_path.endswith(".nd2"):
         img = BioImage(path, reader=bioio_nd2.Reader)
         return img
-    elif path.endswith(".lif"):
+    elif lower_path.endswith(".lif"):
         img = BioImage(path, reader=bioio_lif.Reader)
         return img
-    elif path.endswith(".czi"):
+    elif lower_path.endswith(".czi"):
         img = BioImage(path, reader=bioio_czi.Reader)
         return img
-    elif path.endswith(".dv"):
+    elif lower_path.endswith(".dv"):
         img = BioImage(path, reader=bioio_dv.Reader)
         return img
-    elif path.endswith(".ims"):
+    elif lower_path.endswith(".ims"):
         # Try custom bioio_imaris reader first (faster, pure Python)
         try:
             from standard_code.python.bioio_imaris import Reader as ImarisReader
