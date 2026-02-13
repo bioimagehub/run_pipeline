@@ -59,6 +59,7 @@ convert-to-tif = [
 	"bioio_czi",
 	"bioio_dv",
 	"pyGPUreg",
+	"roifile",
 ]
 drift-correct = [
 	"numpy",
@@ -88,6 +89,7 @@ drift-correct = [
 	"pandas",
 	"scipy",
 	"opencv-python>=4.11.0.86",
+	"roifile",
 ]
 segment-ernet = [
 	"torch==2.4.0+cu124",
@@ -116,6 +118,7 @@ segment-ernet = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
+	"roifile",
 ]
 mask_measure = [
 	"numpy",
@@ -130,6 +133,7 @@ mask_measure = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
+	"roifile",
 ]
 plot = [
 	"numpy",
@@ -147,6 +151,7 @@ plot = [
 	"scipy",
 	"scikit-image",
 	"scipy",
+	"roifile",
 ]
 segmentation = [
 	"numpy",
@@ -187,6 +192,7 @@ denoise = [
 	"bioio_czi",
 	"bioio_dv",
 	"tqdm",
+	"roifile",
 ]
 run_ilastik = [
 	"numpy",
@@ -210,6 +216,7 @@ run_ilastik = [
 	"bioio_czi",
 	"bioio_dv",
 	"nd2reader",
+	"roifile",
 
 ]
 
@@ -227,7 +234,8 @@ imagej = [
 	"bioio_czi",
 	"bioio_dv",
 	"tqdm",
-	"matplotlib"
+	"matplotlib",
+	"roifile",
 ]
 
 cellpose3 = [
@@ -247,6 +255,7 @@ cellpose3 = [
 	"roifile",
 	"tifffile",
 	"tqdm",
+	"roifile",
 ]
 
 # Development dependencies
@@ -260,4 +269,5 @@ dev = [
 	"pre-commit",
 	"jupyter",
 	"ipython",
+	"roifile",
 ]
