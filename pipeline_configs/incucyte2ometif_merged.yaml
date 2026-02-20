@@ -1,0 +1,8 @@
+run:
+- name: Merge Incucyte archive channels (lenient)
+  environment: uv@3.11:convert-to-tif
+  commands:
+  - python
+  - '%REPO%/standard_code/python/incucyte_merge.py'
+  - --input-search-pattern: '%YAML%/Archive/**/ScanData/**/*/*.tif'
+  - --output-folder: '%YAML%/merged_output'
