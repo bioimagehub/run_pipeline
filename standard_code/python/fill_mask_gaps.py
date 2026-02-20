@@ -14,6 +14,8 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Dict, List
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
 from scipy.ndimage import binary_erosion, binary_dilation, distance_transform_edt
 from skimage.morphology import disk
 
@@ -359,7 +361,8 @@ def process_file(
     mask_path: str,
     output_path: str,
     max_gap_size: int = 2,
-    z_slice: int = None
+    z_slice: int = None,
+    quiet: bool = False
 ) -> None:
     """
     Process a single mask file: detect gaps, fill them, run tracking, and validate.
@@ -378,6 +381,9 @@ def process_file(
         z_slice: If specified, only process this Z slice. Otherwise processes all.
     """
     # Step 1: Load mask
+    if quiet:
+        logging.disable(logging.CRITICAL)
+
     logging.info(f"Loading mask: {mask_path}")
     mask_img = rp.load_tczyx_image(mask_path)
     mask_data = mask_img.data.copy()  # Make a copy to modify
@@ -418,6 +424,25 @@ def process_file(
     logging.info("Done!")
 
 
+def _process_one_task(task: tuple[str, str, int, bool]) -> bool:
+    """Worker entry point for parallel processing."""
+    mask_path, output_path, max_gap_size, quiet = task
+    try:
+        process_file(
+            mask_path,
+            output_path,
+            max_gap_size=max_gap_size,
+            quiet=quiet
+        )
+        return True
+    except Exception:
+        if not quiet:
+            logging.error(f"Error processing {Path(mask_path).name}")
+            import traceback
+            traceback.print_exc()
+        return False
+
+
 def fill_segmentation_gaps(
     mask_path: str,
     output_path: str,
@@ -444,15 +469,27 @@ def main():
         description='Fill gaps in tracked masks by interpolating missing timepoints',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Fill small gaps (max 2 frames)
-  python fill_mask_gaps.py --input-search-pattern "./masks/*_segmentation.tif" --max-gap-size 2
-  
-  # Fill larger gaps
-  python fill_mask_gaps.py --input-search-pattern "./masks/*_segmentation.tif" --max-gap-size 5
-  
-  # Specify output folder
-  python fill_mask_gaps.py --input-search-pattern "./masks/*_segmentation.tif" --output-folder ./masks_filled
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Fill mask gaps (parallel by default)
+    environment: uv@3.11:fill-mask-gaps
+    commands:
+    - python
+    - '%REPO%/standard_code/python/fill_mask_gaps.py'
+    - --input-search-pattern: '%YAML%/masks/*_segmentation.tif'
+    - --output-folder: '%YAML%/masks_filled'
+    - --max-gap-size: 2
+
+- name: Fill mask gaps (sequential)
+    environment: uv@3.11:fill-mask-gaps
+    commands:
+    - python
+    - '%REPO%/standard_code/python/fill_mask_gaps.py'
+    - --input-search-pattern: '%YAML%/masks/*_segmentation.tif'
+    - --output-folder: '%YAML%/masks_filled'
+    - --max-gap-size: 5
+    - --no-parallel
         """
     )
     
@@ -466,6 +503,8 @@ Examples:
                        help='Enable recursive search for files')
     parser.add_argument('--suffix', type=str, default='_filled',
                        help='Suffix to add to output filenames (default: "_filled")')
+    parser.add_argument('--no-parallel', action='store_true',
+                       help='Disable parallel processing')
     
     args = parser.parse_args()
     
@@ -494,25 +533,26 @@ Examples:
     os.makedirs(output_folder, exist_ok=True)
     logging.info(f"Output folder: {output_folder}")
     
-    # Process each file
-    for mask_path in mask_files:
-        logging.info(f"\n{'='*60}")
-        logging.info(f"Processing: {Path(mask_path).name}")
-        
-        output_name = Path(mask_path).stem + args.suffix + Path(mask_path).suffix
-        output_path = os.path.join(output_folder, output_name)
-        
-        try:
-            process_file(
-                mask_path,
-                output_path,
-                max_gap_size=args.max_gap_size
-            )
-        except Exception as e:
-            logging.error(f"Error processing {Path(mask_path).name}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+    if args.no_parallel or len(mask_files) == 1:
+        for mask_path in mask_files:
+            logging.info(f"\n{'='*60}")
+            logging.info(f"Processing: {Path(mask_path).name}")
+            output_name = Path(mask_path).stem + args.suffix + Path(mask_path).suffix
+            output_path = os.path.join(output_folder, output_name)
+            _process_one_task((mask_path, output_path, args.max_gap_size, False))
+    else:
+        max_workers = min(os.cpu_count() or 4, len(mask_files))
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            tasks = []
+            for path in mask_files:
+                output_name = Path(path).stem + args.suffix + Path(path).suffix
+                output_path = os.path.join(output_folder, output_name)
+                tasks.append((path, output_path, args.max_gap_size, True))
+            futures = {executor.submit(_process_one_task, task): task[0] for task in tasks}
+            with tqdm(total=len(mask_files), desc="Filling gaps", unit="file") as pbar:
+                for future in as_completed(futures):
+                    _ = future.result()
+                    pbar.update(1)
     
     logging.info(f"\n{'='*60}")
     logging.info("Processing complete!")

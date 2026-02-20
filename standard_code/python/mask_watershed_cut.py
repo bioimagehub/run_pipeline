@@ -314,6 +314,7 @@ def process_image(
 	tolerance: float = 0.5,
 	max_fragment_length: int = 100,
 	save_watershed: bool = True,
+	save_rois: bool = False,
 	remove_xy_edges: bool = False,
 	remove_z_edges: bool = False,
 	min_size: int = 0,
@@ -325,10 +326,25 @@ def process_image(
 	created natively by the watershed algorithm (watershed_line=True).
 	"""
 	logger.info(f"Processing: {input_path}")
-	
+
+	# Prepare output paths
+	input_name = Path(input_path).stem
+	merged_path = os.path.join(output_folder, f"{input_name}_ws.tif")
+	failed_mask_path_basename = os.path.join(output_folder, f"{input_name}")
+
 	# Load image
 	img = rp.load_tczyx_image(input_path)
 	mask_data = img.data
+
+	# exit early if mask is empty (no objects to segment)
+	if not np.any(mask_data > 0):
+		logger.info("  INFO: Input mask is empty. Saving empty output and skipping processing.")
+		rp.save_mask(mask_data, merged_path, as_binary=True)
+		if save_rois:
+			logger.info("  No ROIs generated (empty mask)")
+		else:
+			logger.info("  Skipping ROI export (set --save-rois to enable)")
+		return
 	
 	# Log how many objects in original mask
 	n_objects_original = len(np.unique(mask_data)) - 1
@@ -349,64 +365,97 @@ def process_image(
 	n_regions_merged = len(np.unique(merged_result)) - 1
 	logger.info(f"    After removing long separators: {n_regions_merged} regions")
 
-	#print(np.unique(merged_result)	)
-
 
 	# Remove small objects
 	if min_size > 0:
 		logger.info(f"  Removing objects < {min_size} pixels...")
-		merged_result = remove_small_objects_from_mask(merged_result, min_size)
-		n_regions_filtered = len(np.unique(merged_result)) - 1
+		merged_result_tmp = remove_small_objects_from_mask(merged_result, min_size)
+		n_regions_filtered = len(np.unique(merged_result_tmp)) - 1
 		logger.info(f"    Filtered to {n_regions_filtered} regions")
 	
+
+		# Early exit: this step emptied mask
+		if np.any(merged_result > 0) and not np.any(merged_result_tmp > 0):
+			logger.warning("  WARNING: min_size filtering emptied mask. Saving *_failed and early exit.")
+			rp.save_mask(merged_result, failed_mask_path_basename + "_failed_rm_small.tif", as_binary=True)  # previous step
+			rp.save_mask(merged_result_tmp, merged_path, as_binary=True) # current (empty) result
+			if save_rois:
+				logger.info("  No ROIs generated (empty mask)")
+			else:
+				logger.info("  Skipping ROI export (set --save-rois to enable)")
+			return
+		merged_result = merged_result_tmp  # IMPORTANT: keep filtered result	
+
 	#print(np.unique(merged_result)	)
-
-
 
 	# Remove large objects
 	if max_size < float('inf'):
 		logger.info(f"  Removing objects > {max_size} pixels...")
-		merged_result = remove_large_objects_from_mask(merged_result, max_size)
-		n_regions_filtered = len(np.unique(merged_result)) - 1
+		merged_result_tmp = remove_large_objects_from_mask(merged_result, max_size)
+		n_regions_filtered = len(np.unique(merged_result_tmp)) - 1
 		logger.info(f"    Filtered to {n_regions_filtered} regions")
 	
-	print(np.unique(merged_result)	)
+
+		# Early exit: this step emptied mask
+		if np.any(merged_result > 0) and not np.any(merged_result_tmp > 0):
+			logger.warning("  WARNING: max_size filtering emptied mask. Saving *_failed and early exit.")
+			rp.save_mask(merged_result, failed_mask_path_basename + "_failed_rm_large.tif", as_binary=True)  # previous step
+			rp.save_mask(merged_result_tmp, merged_path, as_binary=True) # current (empty) result
+			if save_rois:
+				logger.info("  No ROIs generated (empty mask)")
+			else:
+				logger.info("  Skipping ROI export (set --save-rois to enable)")
+			return
+		merged_result = merged_result_tmp  # IMPORTANT: keep filtered result	
+
+
 
 	# Remove edge objects
 	if remove_xy_edges or remove_z_edges:
 		logger.info(f"  Removing edge objects (XY={remove_xy_edges}, Z={remove_z_edges})...")
-		merged_result = remove_edge_objects(merged_result, remove_xy_edges, remove_z_edges)
-		n_regions_filtered = len(np.unique(merged_result)) - 1
+		merged_result_tmp = remove_edge_objects(merged_result, remove_xy_edges, remove_z_edges)
+		n_regions_filtered = len(np.unique(merged_result_tmp)) - 1
 		logger.info(f"    Filtered to {n_regions_filtered} regions")
-
+		
+		# Early exit: this step emptied mask
+		if np.any(merged_result > 0) and not np.any(merged_result_tmp > 0):
+			logger.warning("  WARNING: edge filtering emptied mask. Saving *_failed and early exit.")
+			rp.save_mask(merged_result, failed_mask_path_basename + "_failed_rm_edges.tif", as_binary=True)  # previous step
+			rp.save_mask(merged_result_tmp, merged_path, as_binary=True) # current (empty) result
+			if save_rois:
+				logger.info("  No ROIs generated (empty mask)")
+			else:
+				logger.info("  Skipping ROI export (set --save-rois to enable)")
+			return
+		merged_result = merged_result_tmp  # IMPORTANT: keep filtered result	
 	#print(np.unique(merged_result)	)
 
 
-	# Prepare output paths
-	input_name = Path(input_path).stem
 	
 	if save_watershed:
-		watershed_path = os.path.join(output_folder, f"{input_name}_watershed_debug.tif")
+		watershed_path = os.path.join(output_folder, f"{input_name}_ws_debug.tif")
 		logger.info(f"  Saving watershed result to {watershed_path}...")
 		rp.save_mask(watershed_result, watershed_path, as_binary=True)
 	
 	# Save merged result
-	merged_path = os.path.join(output_folder, f"{input_name}_ws.tif")
 	logger.info(f"  Saving merged result to {merged_path}...")
 	rp.save_mask(merged_result, merged_path, as_binary=True)
 	
-	# Generate and save ROIs from merged result
-	logger.info(f"  Generating ROIs from merged result...")
-	rois = rp.mask_to_rois(merged_result)
-	if rois:
-		roi_path = os.path.join(output_folder, f"{input_name}_wsrois.zip")
-		from roifile import roiwrite
-		if os.path.exists(roi_path):
-			os.remove(roi_path)
-		roiwrite(roi_path, rois)
-		logger.info(f"  Saved {len(rois)} ROIs to {roi_path}")
+	# Generate and save ROIs from merged result (optional)
+	if save_rois:
+		logger.info(f"  Generating ROIs from merged result...")
+		rois = rp.mask_to_rois(merged_result)
+		if rois:
+			roi_path = os.path.join(output_folder, f"{input_name}_wsrois.zip")
+			from roifile import roiwrite
+			if os.path.exists(roi_path):
+				os.remove(roi_path)
+			roiwrite(roi_path, rois)
+			logger.info(f"  Saved {len(rois)} ROIs to {roi_path}")
+		else:
+			logger.info("  No ROIs generated (empty mask)")
 	else:
-		logger.info("  No ROIs generated (empty mask)")
+		logger.info("  Skipping ROI export (set --save-rois to enable)")
 	
 	logger.info(f"  ✓ Done")
 
@@ -417,6 +466,7 @@ def process_folder(
 	tolerance: float,
 	max_fragment_length: int,
 	save_watershed: bool,
+	save_rois: bool,
 	remove_xy_edges: bool,
 	remove_z_edges: bool,
 	min_size: int,
@@ -439,7 +489,7 @@ def process_folder(
 		try:
 			process_image(
 				file_path, output_folder, tolerance, max_fragment_length, save_watershed,
-				remove_xy_edges, remove_z_edges, min_size, max_size
+				save_rois, remove_xy_edges, remove_z_edges, min_size, max_size
 			)
 		except Exception as e:
 			logger.error(f"ERROR processing {file_path}: {e}")
@@ -464,7 +514,7 @@ run:
 	environment: uv@3.11:segmentation
 	commands:
 	  - python
-	  - '%REPO%/standard_code/python/watershed_cut.py'
+	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
 	  - --input-pattern: '%YAML%/input_masks/**/*.tif'
 	  - --output-folder: '%YAML%/output_watershed'
 	  - --tolerance: 0.5
@@ -475,7 +525,7 @@ run:
 	environment: uv@3.11:segmentation
 	commands:
 	  - python
-	  - '%REPO%/standard_code/python/watershed_cut.py'
+	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
 	  - --input-pattern: '%YAML%/masks/**/*.tif'
 	  - --output-folder: '%YAML%/output_watershed'
 	  - --tolerance: 0.5
@@ -489,7 +539,7 @@ run:
 	environment: uv@3.11:segmentation
 	commands:
 	  - python
-	  - '%REPO%/standard_code/python/watershed_cut.py'
+	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
 	  - --input-pattern: '%YAML%/masks/**/*.tif'
 	  - --output-folder: '%YAML%/output_watershed'
 	  - --tolerance: 1.0
@@ -508,6 +558,7 @@ Notes:
   - Separator lines (0 pixels) are always added between regions (ImageJ-style)
   - Binary mask (0/255) output is always used
   - Use --save-watershed to keep intermediate watershed result (helpful for debugging)
+	- Use --save-rois to export ImageJ ROI ZIP files
   - Parallel processing is enabled by default, use --no-parallel to disable
   - Use --verbose to see detailed processing logs
 """
@@ -539,9 +590,9 @@ Always enabled:
   - Binary mask output (foreground=255, background=0)
 
 Example usage:
-  python watershed_cut.py --input-pattern "masks/*.tif" \
+  python mask_watershed_cut.py --input-pattern "masks/*.tif" \
 	  --output-folder "output" --tolerance 0.5 --max-fragment-length 100 \
-	  --remove-xy-edges --min-size 100 --max-size 100000
+	  --remove-xy-edges --min-size 100 --max-size 100000 --save-rois
 		"""
 	)
 	
@@ -551,7 +602,7 @@ Example usage:
 	)
 	parser.add_argument(
 		"--output-folder", required=True,
-		help="Output folder for watershed and merged results"
+		help="Output folder for watershed/merged results (and ROIs if --save-rois is set)"
 	)
 	parser.add_argument(
 		"--tolerance", type=float, default=0.5,
@@ -582,6 +633,10 @@ Example usage:
 		help="Save intermediate watershed result (helpful for debugging)"
 	)
 	parser.add_argument(
+		"--save-rois", action="store_true",
+		help="Save ImageJ ROIs as .zip files (disabled by default)"
+	)
+	parser.add_argument(
 		"--no-parallel", action="store_true",
 		help="Disable parallel processing (parallel is enabled by default)"
 	)
@@ -608,6 +663,7 @@ Example usage:
 		tolerance=args.tolerance,
 		max_fragment_length=args.max_fragment_length,
 		save_watershed=args.save_watershed,
+		save_rois=args.save_rois,
 		remove_xy_edges=args.remove_xy_edges,
 		remove_z_edges=args.remove_z_edges,
 		min_size=args.min_size,

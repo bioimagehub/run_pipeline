@@ -840,29 +840,67 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 
 // Function to prepare command arguments for ImageJ execution
 func makeImageJCommand(segment Segment, imageJPath, mainProgramDir, yamlDir string) []string {
-	cmdArgs := []string{imageJPath, "--ij2", "--headless", "--console"} // Initialize command arguments
+	cmdArgs := []string{imageJPath, "--ij2", "--console"} // Initialize command arguments (GUI mode)
+
+	var macroPath string
+	var params []string
 
 	// Loop through each command in the segment's command list
-	for _, cmd := range segment.Commands {
+	for i, cmd := range segment.Commands {
 		switch v := cmd.(type) {
 		case string:
-			// Resolve paths for string commands and add to cmdArgs with proper encapsulation
-			resolved := resolvePath(v, mainProgramDir, yamlDir)
-			cmdArgs = append(cmdArgs, "--run", fmt.Sprintf("\"%s\"", resolved))
+			// First string is the macro file path
+			if i == 0 {
+				macroPath = resolvePath(v, mainProgramDir, yamlDir)
+			} else {
+				// Additional strings are treated as separate arguments (if any)
+				resolved := resolvePath(v, mainProgramDir, yamlDir)
+				cmdArgs = append(cmdArgs, resolved)
+			}
 
 		case map[interface{}]interface{}:
-			// For map commands, loop through entries
+			// Map entries become script parameters: key=value
 			for flag, value := range v {
-				// Append the flag in the required format
 				if value != nil && value != "null" {
-					valStr := fmt.Sprintf("%v", value) // Convert value to string
-					// Append it in the required format as "key='value'"
-					cmdArgs = append(cmdArgs, fmt.Sprintf("\"%s='%s'\"", flag, valStr))
+					flagStr := fmt.Sprintf("%v", flag)
+					valStr := fmt.Sprintf("%v", value)
+					// Resolve path if it looks like a path placeholder
+					resolvedVal := resolvePath(valStr, mainProgramDir, yamlDir)
+					params = append(params, fmt.Sprintf("%s=%s", flagStr, resolvedVal))
 				}
 			}
 
 		default:
-			log.Fatalf("unexpected type %v", reflect.TypeOf(v)) // Handle unexpected command types
+			log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+		}
+	}
+
+	// Build the --run command
+	if macroPath != "" {
+		// Convert macro path to forward slashes
+		macroPath = strings.ReplaceAll(macroPath, "\\", "/")
+
+		if len(params) > 0 {
+			// Sort params for deterministic ordering
+			sort.Strings(params)
+			// Convert paths to forward slashes for ImageJ compatibility
+			var quotedParams []string
+			for _, p := range params {
+				// Replace backslashes with forward slashes in the parameter value
+				p = strings.ReplaceAll(p, "\\", "/")
+				// Quote the value part after = sign
+				parts := strings.SplitN(p, "=", 2)
+				if len(parts) == 2 {
+					quotedParams = append(quotedParams, fmt.Sprintf("%s='%s'", parts[0], parts[1]))
+				} else {
+					quotedParams = append(quotedParams, p)
+				}
+			}
+			paramsStr := strings.Join(quotedParams, ",")
+			cmdArgs = append(cmdArgs, "--run", macroPath, paramsStr)
+		} else {
+			// No parameters, just run the macro
+			cmdArgs = append(cmdArgs, "--run", macroPath)
 		}
 	}
 
