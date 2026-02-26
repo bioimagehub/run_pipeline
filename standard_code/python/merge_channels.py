@@ -212,7 +212,43 @@ if __name__ == "__main__":
     import argparse
     import os
 
-    parser = argparse.ArgumentParser(description="Process BioImage files.")
+    parser = argparse.ArgumentParser(
+        description="Process BioImage files.",
+        epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Merge channels (sum projection)
+  environment: uv@3.11:merge-channels
+  commands:
+  - python
+  - '%REPO%/standard_code/python/merge_channels.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --merge-channels: '[[0,1], 2, 3]'
+
+- name: Merge channels (with upsampling)
+  environment: uv@3.11:merge-channels
+  commands:
+  - python
+  - '%REPO%/standard_code/python/merge_channels.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --merge-channels: '[[0,1,2], 3]'
+  - --output-scale: '2.0'
+
+- name: Merge channels (export as Ilastik H5)
+  environment: uv@3.11:merge-channels
+  commands:
+  - python
+  - '%REPO%/standard_code/python/merge_channels.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --merge-channels: '[[0,1], [2], [3,4]]'
+  - --output-format: ilastik-h5
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--input-search-pattern", type=str, required=False, help="Glob pattern for input images, e.g. 'folder/*.tif'")
     parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: input folder (use --input-search-pattern)")
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")

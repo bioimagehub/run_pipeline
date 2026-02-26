@@ -2,7 +2,7 @@ from typing import Union, Optional
 from bioio import BioImage
 import os
 import tempfile
-import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv
+#import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv # done when needed
 import numpy as np
 import warnings
 from roifile import ImagejRoi, roiwrite
@@ -131,6 +131,7 @@ def load_tczyx_image(path: str) -> BioImage:
         # This avoids noisy "Failed to parse XML" errors for ImageJ-style TIFFs.
         if is_ome_tiff:
             try:
+                import bioio_ome_tiff
                 img = BioImage(path, reader=bioio_ome_tiff.Reader)
                 return img
             except Exception:
@@ -138,6 +139,7 @@ def load_tczyx_image(path: str) -> BioImage:
 
         # Prefer tifffile reader for non-OME TIFFs (e.g., ImageJ save_mask output).
         try:
+            import bioio_tifffile
             img = BioImage(path, reader=bioio_tifffile.Reader)
             return img
         except Exception:
@@ -150,15 +152,19 @@ def load_tczyx_image(path: str) -> BioImage:
         except Exception:
             pass
     elif lower_path.endswith(".nd2"):
+        import bioio_nd2
         img = BioImage(path, reader=bioio_nd2.Reader)
         return img
     elif lower_path.endswith(".lif"):
+        import bioio_lif
         img = BioImage(path, reader=bioio_lif.Reader)
         return img
     elif lower_path.endswith(".czi"):
+        import bioio_czi
         img = BioImage(path, reader=bioio_czi.Reader)
         return img
     elif lower_path.endswith(".dv"):
+        import bioio_dv
         img = BioImage(path, reader=bioio_dv.Reader)
         return img
     elif lower_path.endswith(".ims"):
