@@ -25,6 +25,20 @@ import extract_metadata
 logger = logging.getLogger(__name__)
 
 
+def strip_tiff_suffix(path: str) -> str:
+    """Return path without a trailing TIFF suffix (.ome.tif/.ome.tiff/.tif/.tiff)."""
+    lower = path.lower()
+    if lower.endswith(".ome.tif"):
+        return path[:-8]
+    if lower.endswith(".ome.tiff"):
+        return path[:-9]
+    if lower.endswith(".tif"):
+        return path[:-4]
+    if lower.endswith(".tiff"):
+        return path[:-5]
+    return os.path.splitext(path)[0]
+
+
 
 def project_z(data: np.ndarray, method: str) -> np.ndarray:
     """
@@ -87,7 +101,7 @@ def convert_single_file(
         output_path: Path to output TIFF file
         projection_method: Optional Z-projection method
         save_metadata: Whether to save metadata YAML sidecar
-        standard_tif: If True, save as standard TIFF instead of OME-TIFF (better NIS-Elements compatibility)
+        standard_tif: If True, save as standard TIFF instead of OME-TIFF
         split: If True, save each T, C, Z slice as individual file in a folder
     
     Returns:
@@ -133,7 +147,16 @@ def convert_single_file(
             
             # Determine output path for this scene
             if len(scenes_to_process) > 1:
-                base, ext = os.path.splitext(output_path)
+                lower_out = output_path.lower()
+                if lower_out.endswith(".ome.tif"):
+                    ext = ".ome.tif"
+                elif lower_out.endswith(".ome.tiff"):
+                    ext = ".ome.tiff"
+                elif lower_out.endswith(".tiff"):
+                    ext = ".tiff"
+                else:
+                    ext = ".tif"
+                base = strip_tiff_suffix(output_path)
                 scene_output_path = f"{base}_{scene_idx + 1}{ext}"
             else:
                 scene_output_path = output_path
@@ -219,11 +242,11 @@ def convert_single_file(
                 # Save each T, C, Z slice as individual file
                 # Use same naming scheme as ij_bridge_bioformats.py: basename_Z#_C#.ome.tif
                 # This allows NIS-Elements to auto-detect and merge files properly
-                split_folder = os.path.splitext(scene_output_path)[0]
+                split_folder = strip_tiff_suffix(scene_output_path)
                 os.makedirs(split_folder, exist_ok=True)
                 
                 # Get basename for files (without path and extension)
-                basename = os.path.splitext(os.path.basename(scene_output_path))[0]
+                basename = os.path.basename(strip_tiff_suffix(scene_output_path))
                 
                 logger.info(f"Split mode: Saving individual slices to {split_folder}")
                 logger.info(f"Using basename: {basename}")
@@ -284,7 +307,7 @@ def convert_single_file(
             
             # Save metadata if requested
             if save_metadata:
-                metadata_path = os.path.splitext(scene_output_path)[0] + "_metadata.yaml"
+                metadata_path = strip_tiff_suffix(scene_output_path) + "_metadata.yaml"
                 try:
                     metadata = extract_metadata.get_all_metadata(input_path, output_file=None)
                     
@@ -305,7 +328,7 @@ def convert_single_file(
                     if split:
                         try:
                             import generate_nis_reassembly_macro
-                            split_folder = os.path.splitext(scene_output_path)[0]
+                            split_folder = strip_tiff_suffix(scene_output_path)
                             output_nd2 = split_folder + ".nd2"
                             macro_path = generate_nis_reassembly_macro.generate_macro(
                                 split_folder=split_folder,
@@ -348,7 +371,7 @@ def process_files(
         collapse_delimiter: Delimiter for collapsing subfolder paths
         no_parallel: Disable parallel processing
         save_metadata: Whether to save metadata YAML sidecars
-        output_extension: Additional extension to add before .tif
+        output_extension: Additional extension to add before .ome.tif
         dry_run: Only print planned actions without executing
         standard_tif: If True, save as standard TIFF instead of OME-TIFF
         split: If True, save each T, C, Z slice as individual file in a folder
@@ -382,7 +405,7 @@ def process_files(
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_name = os.path.splitext(collapsed)[0] + output_extension + ".tif"
+        out_name = os.path.splitext(collapsed)[0] + output_extension + ".ome.tif"
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
     
@@ -488,7 +511,7 @@ Examples:
         "--output-file-name-extension",
         type=str,
         default="",
-        help="Additional extension to add before .tif"
+        help="Additional extension to add before .ome.tif"
     )
     
     parser.add_argument(

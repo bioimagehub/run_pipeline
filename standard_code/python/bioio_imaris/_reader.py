@@ -1,12 +1,17 @@
+# USE Bioformats instead of this!!!
+
 from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple, Iterable
 
 import numpy as np
 import dask.array as da
+import fsspec
+import xarray as xr
 
 from bioio_base.reader import Reader as BaseReader
 from bioio_base import types
 from bioio_base import dimensions
+from bioio_base.constants import METADATA_UNPROCESSED
 
 
 class Reader(BaseReader):
@@ -14,19 +19,51 @@ class Reader(BaseReader):
 
     _ims: Any
 
+    @staticmethod
+    def _is_supported_image(
+        fs: fsspec.AbstractFileSystem,
+        path: str,
+        **kwargs: Any,
+    ) -> bool:
+        """Return True when file extension is .ims."""
+        return str(path).lower().endswith(".ims")
+
     @classmethod
     def supports_extension(cls, ext: str) -> bool:
         return ext.lower() == ".ims"
 
+    @property
+    def scenes(self) -> Tuple[str, ...]:
+        """Imaris reader currently exposes a single logical scene."""
+        return ("Image:0",)
+
+    def _open_ims(self) -> Any:
+        """Lazy-open .ims backend and cache handle."""
+        if getattr(self, "_ims", None) is None:
+            from imaris_ims_file_reader.ims import ims as ImarisIMS  # type: ignore
+            self._ims = ImarisIMS(self._image)
+        return self._ims
+
+    def _to_xarray(self, delayed: bool) -> xr.DataArray:
+        """Build an xarray.DataArray in TCZYX order."""
+        ims_obj = self._open_ims()
+        if delayed:
+            arr = da.from_array(ims_obj, chunks=getattr(ims_obj, "chunks", None))
+            arr = arr.astype(getattr(ims_obj, "dtype", np.uint16), copy=False)
+        else:
+            arr = np.asarray(ims_obj)
+
+        return xr.DataArray(
+            data=arr,
+            dims=tuple(dimensions.DEFAULT_DIMENSION_ORDER),
+            attrs={METADATA_UNPROCESSED: self._get_metadata()},
+        )
+
     def _read_delayed(self) -> types.ArrayLike:
-        # Import lazily to keep dependency optional
-        from imaris_ims_file_reader.ims import ims as ImarisIMS  # type: ignore
-        # The library exposes a 5D array interface with axes (T, C, Z, Y, X) at highest resolution (level 0)   
-        self._ims = ImarisIMS(self._image)
-        # Build a Dask view to keep everything lazy / chunked
-        arr = da.from_array(self._ims, chunks=getattr(self._ims, "chunks", None))
-        # Ensure dtype is a NumPy dtype
-        return arr.astype(self._ims.dtype, copy=False)
+        return self._to_xarray(delayed=True)
+
+    def _read_immediate(self) -> xr.DataArray:
+        return self._to_xarray(delayed=False)
 
     def _get_shape(self) -> Tuple[int, int, int, int, int]:
         shp = getattr(self._ims, "shape", None)

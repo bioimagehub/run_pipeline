@@ -167,37 +167,38 @@ def load_tczyx_image(path: str) -> BioImage:
         import bioio_dv
         img = BioImage(path, reader=bioio_dv.Reader)
         return img
-    elif lower_path.endswith(".ims"):
-        # Try custom bioio_imaris reader first (faster, pure Python)
-        try:
-            from standard_code.python.bioio_imaris import Reader as ImarisReader
-            img = BioImage(path, reader=ImarisReader)
-            return img
-        except Exception:
-            pass
-        # Fall back to Bio-Formats if bioio_imaris fails
-        _configure_bioformats_safe_io(path)
-        try:
-            import bioio_bioformats  # type: ignore
-            img = BioImage(path, reader=bioio_bioformats.Reader)
-            return img
-        except Exception as e:
-            raise RuntimeError(
-                f"\n{'='*70}\n"
-                f"ERROR: Failed to load {os.path.basename(path)}\n"
-                f"{'='*70}\n\n"
-                f"This file format requires Bio-Formats (Java), which failed to initialize.\n"
-                f"Original error: {e}\n\n"
-                f"SOLUTION: Use Conda environment instead of UV for Bio-Formats support:\n\n"
-                f"1. Create Conda environment from: conda_envs/convert_to_tif.yml\n"
-                f"   conda env create -f conda_envs/convert_to_tif.yml\n\n"
-                f"2. Run your pipeline with the Conda environment:\n"
-                f"   run_pipeline.exe pipeline_configs/your_config.yaml\n"
-                f"   (use 'environment: convert_to_tif' in your YAML config)\n\n"
-                f"NOTE: Most formats (ND2, LIF, CZI, DV, TIFF) work without Bio-Formats.\n"
-                f"      Only exotic formats require the Conda environment.\n"
-                f"{'='*70}\n"
-            ) from e
+    # The bioformats-based reader is now the universal fallback for any format, including .ims, to ensure maximum compatibility.
+    # elif lower_path.endswith(".ims"):
+    #     # Try custom bioio_imaris reader first (faster, pure Python)
+    #     try:
+    #         from standard_code.python.bioio_imaris import Reader as ImarisReader
+    #         img = BioImage(path, reader=ImarisReader)
+    #         return img
+    #     except Exception:
+    #         pass
+    #     # Fall back to Bio-Formats if bioio_imaris fails
+    #     _configure_bioformats_safe_io(path)
+    #     try:
+    #         import bioio_bioformats  # type: ignore
+    #         img = BioImage(path, reader=bioio_bioformats.Reader)
+    #         return img
+    #     except Exception as e:
+    #         raise RuntimeError(
+    #             f"\n{'='*70}\n"
+    #             f"ERROR: Failed to load {os.path.basename(path)}\n"
+    #             f"{'='*70}\n\n"
+    #             f"This file format requires Bio-Formats (Java), which failed to initialize.\n"
+    #             f"Original error: {e}\n\n"
+    #             f"SOLUTION: Use Conda environment instead of UV for Bio-Formats support:\n\n"
+    #             f"1. Create Conda environment from: conda_envs/convert_to_tif.yml\n"
+    #             f"   conda env create -f conda_envs/convert_to_tif.yml\n\n"
+    #             f"2. Run your pipeline with the Conda environment:\n"
+    #             f"   run_pipeline.exe pipeline_configs/your_config.yaml\n"
+    #             f"   (use 'environment: convert_to_tif' in your YAML config)\n\n"
+    #             f"NOTE: Most formats (ND2, LIF, CZI, DV, TIFF) work without Bio-Formats.\n"
+    #             f"      Only exotic formats require the Conda environment.\n"
+    #             f"{'='*70}\n"
+    #         ) from e
     else:
         # Unknown format - try Bio-Formats as last resort
         _configure_bioformats_safe_io(path)
