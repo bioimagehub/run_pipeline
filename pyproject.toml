@@ -38,6 +38,17 @@ torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 
  [dependency-groups]
+machine-learning = [
+	"numpy",
+	"tqdm",
+	"joblib",
+	"scikit-learn",
+	"scikit-image",
+	"matplotlib",
+	"bioio",
+	"bioio-ome-tiff",
+	"h5py",
+]
 convert-to-tif = [
 	"numpy",
 	"matplotlib",
