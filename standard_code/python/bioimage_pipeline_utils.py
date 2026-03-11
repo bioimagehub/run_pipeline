@@ -5,7 +5,6 @@ import tempfile
 #import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv # done when needed
 import numpy as np
 import warnings
-from roifile import ImagejRoi, roiwrite
 
 import tifffile
 
@@ -525,6 +524,9 @@ def mask_to_rois(mask: np.ndarray):
     Each unique label (except 0) in each (T, C, Z) plane is converted to a ROI.
     """
     from skimage import measure
+    from roifile import ImagejRoi, roiwrite
+
+    
     rois = []
     shape = mask.shape
     # Pad shape to 5D if needed
