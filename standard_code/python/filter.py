@@ -85,10 +85,10 @@ def apply_filter(
 
     elif method == "mean":
         if mode == "2d":
-            footprint = np.ones((1, 1, 1, size_y, size_x), dtype=bool)
+            size = (1, 1, 1, size_y, size_x)
         else:  # "3d"
-            footprint = np.ones((1, 1, size_z, size_y, size_x), dtype=bool)
-        return ndimage.uniform_filter(data, footprint=footprint, mode="reflect")
+            size = (1, 1, size_z, size_y, size_x)
+        return ndimage.uniform_filter(data, size=size, mode="reflect")
 
     elif method == "median":
         if mode == "2d":

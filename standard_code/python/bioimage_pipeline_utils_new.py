@@ -1,10 +1,18 @@
 from typing import Union, Optional
 from bioio import BioImage
 import os
+import sys
 import tempfile
+
+# Add repository root to Python path for standard_code imports
+_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
 #import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv # done when needed
 import numpy as np
 import warnings
+
 
 import tifffile
 
@@ -166,38 +174,50 @@ def load_tczyx_image(path: str) -> BioImage:
         import bioio_dv
         img = BioImage(path, reader=bioio_dv.Reader)
         return img
-    # The bioformats-based reader is now the universal fallback for any format, including .ims, to ensure maximum compatibility.
-    # elif lower_path.endswith(".ims"):
-    #     # Try custom bioio_imaris reader first (faster, pure Python)
-    #     try:
-    #         from standard_code.python.bioio_imaris import Reader as ImarisReader
-    #         img = BioImage(path, reader=ImarisReader)
-    #         return img
-    #     except Exception:
-    #         pass
-    #     # Fall back to Bio-Formats if bioio_imaris fails
-    #     _configure_bioformats_safe_io(path)
-    #     try:
-    #         import bioio_bioformats  # type: ignore
-    #         img = BioImage(path, reader=bioio_bioformats.Reader)
-    #         return img
-    #     except Exception as e:
-    #         raise RuntimeError(
-    #             f"\n{'='*70}\n"
-    #             f"ERROR: Failed to load {os.path.basename(path)}\n"
-    #             f"{'='*70}\n\n"
-    #             f"This file format requires Bio-Formats (Java), which failed to initialize.\n"
-    #             f"Original error: {e}\n\n"
-    #             f"SOLUTION: Use Conda environment instead of UV for Bio-Formats support:\n\n"
-    #             f"1. Create Conda environment from: conda_envs/convert_to_tif.yml\n"
-    #             f"   conda env create -f conda_envs/convert_to_tif.yml\n\n"
-    #             f"2. Run your pipeline with the Conda environment:\n"
-    #             f"   run_pipeline.exe pipeline_configs/your_config.yaml\n"
-    #             f"   (use 'environment: convert_to_tif' in your YAML config)\n\n"
-    #             f"NOTE: Most formats (ND2, LIF, CZI, DV, TIFF) work without Bio-Formats.\n"
-    #             f"      Only exotic formats require the Conda environment.\n"
-    #             f"{'='*70}\n"
-    #         ) from e
+    elif lower_path.endswith(".ims"):
+        # Try custom bioio_imaris reader first (faster, pure Python)
+        try:
+            from standard_code.python.bioio_imaris import Reader as ImarisReader
+            img = BioImage(path, reader=ImarisReader)
+            return img
+        except Exception:
+            pass
+        # Fall back to Bio-Formats if bioio_imaris fails
+        _configure_bioformats_safe_io(path)
+        try:
+            import bioio_bioformats  # type: ignore
+            img = BioImage(path, reader=bioio_bioformats.Reader)
+            return img
+        except Exception as e:
+            raise RuntimeError(
+                f"\n{'='*70}\n"
+                f"ERROR: Failed to load {os.path.basename(path)}\n"
+                f"{'='*70}\n\n"
+                f"This file format requires Bio-Formats (Java), which failed to initialize.\n"
+                f"Original error: {e}\n\n"
+                f"SOLUTION: Use Conda environment instead of UV for Bio-Formats support:\n\n"
+                f"1. Create Conda environment from: conda_envs/convert_to_tif.yml\n"
+                f"   conda env create -f conda_envs/convert_to_tif.yml\n\n"
+                f"2. Run your pipeline with the Conda environment:\n"
+                f"   run_pipeline.exe pipeline_configs/your_config.yaml\n"
+                f"   (use 'environment: convert_to_tif' in your YAML config)\n\n"
+                f"NOTE: Most formats (ND2, LIF, CZI, DV, TIFF) work without Bio-Formats.\n"
+                f"      Only exotic formats require the Conda environment.\n"
+                f"{'='*70}\n"
+            ) from e
+    elif lower_path.endswith(".h5"):
+        # Try custom Ilastik H5 reader (for TZYXC format)
+        try:
+            from standard_code.python.bioio_ilastik_h5 import IlastikH5Reader as h5Reader
+            img = BioImage(path, reader=h5Reader)
+            # Verify that we got a proper BioImage object
+            if not hasattr(img, 'dims'):
+                raise RuntimeError(f"BioImage construction failed - no dims attribute. Got type: {type(img)}")
+            if not hasattr(img, 'data'):
+                raise RuntimeError(f"BioImage construction failed - no data attribute. Got type: {type(img)}")
+            return img
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Ilastik H5 file: {path}\n{e}\n{type(e).__name__}: {str(e)}")
     else:
         # Unknown format - try Bio-Formats as last resort
         _configure_bioformats_safe_io(path)
@@ -250,6 +270,16 @@ def save_tczyx_image(img: Union[BioImage, np.ndarray], path: str, **kwargs) -> N
     # Remove dim_order from kwargs if present to avoid multiple values error
     if "dim_order" in kwargs:
         kwargs.pop("dim_order")
+
+    # Convert physical_pixel_sizes tuple to PhysicalPixelSizes object if needed
+    if "physical_pixel_sizes" in kwargs:
+        physical_pixel_sizes = kwargs["physical_pixel_sizes"]
+        if physical_pixel_sizes is not None:
+            # If it's a tuple or list, convert to PhysicalPixelSizes object
+            if isinstance(physical_pixel_sizes, (tuple, list)):
+                from bioio_base.types import PhysicalPixelSizes
+                z, y, x = physical_pixel_sizes
+                kwargs["physical_pixel_sizes"] = PhysicalPixelSizes(Z=z, Y=y, X=x)
 
     ome_xml = None
     # Only try to preserve OME-XML if input is BioImage
@@ -519,14 +549,12 @@ def split_comma_separated_intstring(value:str) -> list[int]:
 
 
 def mask_to_rois(mask: np.ndarray):
+    from roifile import ImagejRoi, roiwrite
     """
     Convert a labeled mask (indexed image, TCZYX or lower) to a list of ImageJ ROI objects.
     Each unique label (except 0) in each (T, C, Z) plane is converted to a ROI.
     """
     from skimage import measure
-    from roifile import ImagejRoi, roiwrite
-
-    
     rois = []
     shape = mask.shape
     # Pad shape to 5D if needed
@@ -789,6 +817,7 @@ def save_imagej_roi(
     c: int = 0,
     z: int = 0
 ) -> None:
+    from roifile import ImagejRoi, roiwrite
     """
     Save a contour as an ImageJ ROI file.
     

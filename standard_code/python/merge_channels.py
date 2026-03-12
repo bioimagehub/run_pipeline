@@ -67,6 +67,15 @@ def process_file(input_file_path: str, output_tif_file_path: str, merge_channels
 
         # Concatenate all processed channel groups
         out_img = np.concatenate(output_channels, axis=1)  # TCZYX
+        
+        # Validate that we have at least one channel
+        if out_img.shape[1] == 0:
+            num_channels = img_np.shape[1]
+            valid_indices = f"0-{num_channels-1}"
+            logging.error(f"Channel merge failed: No valid channels after merging.")
+            logging.error(f"Input image has {num_channels} channels with valid indices: {valid_indices}")
+            logging.error(f"Requested merge_channels: {merge_channels}")
+            raise ValueError(f"Invalid channel indices. Image has {num_channels} channels (indices {valid_indices}), but merge_channels specified non-existent channels.")
 
         # Only remove existing output file if it's a TIF (don't delete input when output is H5)
         if output_format == "tif" and os.path.exists(output_tif_file_path):

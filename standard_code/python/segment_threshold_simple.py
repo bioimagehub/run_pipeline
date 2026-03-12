@@ -237,6 +237,7 @@ def process_image(
     min_size: int = 0,
     max_size: float = float('inf'),
     save_rois: bool = False,
+    save_labeled: bool = False,
 ) -> None:
     """Process a single image file."""
     logger.info(f"Processing: {input_path}")
@@ -244,6 +245,7 @@ def process_image(
     # Prepare output paths early (needed for early exits)
     input_name = Path(input_path).stem
     mask_path = os.path.join(output_folder, f"{input_name}_mask.tif")
+    labeled_mask_path = os.path.join(output_folder, f"{input_name}_mask_labeled.tif")
     roi_path = os.path.join(output_folder, f"{input_name}_rois.zip")
     failed_mask_path_basename = os.path.join(output_folder, f"{input_name}")
 
@@ -273,7 +275,11 @@ def process_image(
     # Early exit: threshold removed everything despite non-zero input
     if bool(np.any(image_data > 0)) and not np.any(mask > 0):
         logger.warning("  WARNING: Non-zero input but empty mask after thresholding. Early exit.")
-        rp.save_mask(mask, mask_path, as_binary=True)
+        # Extract only the processed channel for saving (convert 5D TCZYX to 4D TZYX with C=1)
+        mask_single_channel = mask[:, channel:channel+1, :, :, :]
+        rp.save_mask(mask_single_channel, mask_path, as_binary=True)
+        if save_labeled:
+            rp.save_mask(mask_single_channel, labeled_mask_path, as_binary=False)
         return
     
     # Fill holes
@@ -291,8 +297,13 @@ def process_image(
         # Early exit: this step emptied mask
         if np.any(mask > 0) and not np.any(mask_tmp > 0):
             logger.warning("  WARNING: min_size filtering emptied mask. Saving *_failed and early exit.")
-            rp.save_mask(mask, failed_mask_path_basename + "_failed_rm_small.tif", as_binary=True)  # previous step
-            rp.save_mask(mask_tmp, mask_path, as_binary=True) # current (empty) result
+            # Extract only the processed channel for saving (convert 5D TCZYX to 4D TZYX with C=1)
+            mask_single_channel = mask[:, channel:channel+1, :, :, :]
+            mask_tmp_single_channel = mask_tmp[:, channel:channel+1, :, :, :]
+            rp.save_mask(mask_single_channel, failed_mask_path_basename + "_failed_rm_small.tif", as_binary=True)  # previous step
+            rp.save_mask(mask_tmp_single_channel, mask_path, as_binary=True) # current (empty) result
+            if save_labeled:
+                rp.save_mask(mask_tmp_single_channel, labeled_mask_path, as_binary=False)
             logger.info("  No ROIs generated (empty mask)")
             return
 
@@ -307,8 +318,13 @@ def process_image(
         # Early exit: this step emptied mask
         if np.any(mask > 0) and not np.any(mask_tmp > 0):
             logger.warning("  WARNING: max_size filtering emptied mask. Saving *_failed and early exit.")
-            rp.save_mask(mask, failed_mask_path_basename + "_failed_rm_large.tif", as_binary=True)  # previous step
-            rp.save_mask(mask_tmp, mask_path, as_binary=True) # current (empty) result
+            # Extract only the processed channel for saving (convert 5D TCZYX to 4D TZYX with C=1)
+            mask_single_channel = mask[:, channel:channel+1, :, :, :]
+            mask_tmp_single_channel = mask_tmp[:, channel:channel+1, :, :, :]
+            rp.save_mask(mask_single_channel, failed_mask_path_basename + "_failed_rm_large.tif", as_binary=True)  # previous step
+            rp.save_mask(mask_tmp_single_channel, mask_path, as_binary=True) # current (empty) result
+            if save_labeled:
+                rp.save_mask(mask_tmp_single_channel, labeled_mask_path, as_binary=False)
             logger.info("  No ROIs generated (empty mask)")
             return
 
@@ -322,8 +338,13 @@ def process_image(
         # Early exit: this step emptied mask
         if np.any(mask > 0) and not np.any(mask_tmp > 0):
             logger.warning("  WARNING: edge filtering emptied mask. Saving *_failed and early exit.")
-            rp.save_mask(mask, failed_mask_path_basename + "_failed_rm_edges.tif", as_binary=True)  # previous step
-            rp.save_mask(mask_tmp, mask_path, as_binary=True) # current (empty) result
+            # Extract only the processed channel for saving (convert 5D TCZYX to 4D TZYX with C=1)
+            mask_single_channel = mask[:, channel:channel+1, :, :, :]
+            mask_tmp_single_channel = mask_tmp[:, channel:channel+1, :, :, :]
+            rp.save_mask(mask_single_channel, failed_mask_path_basename + "_failed_rm_edges.tif", as_binary=True)  # previous step
+            rp.save_mask(mask_tmp_single_channel, mask_path, as_binary=True) # current (empty) result
+            if save_labeled:
+                rp.save_mask(mask_tmp_single_channel, labeled_mask_path, as_binary=False)
             logger.info("  No ROIs generated (empty mask)")
             return
         mask = mask_tmp  # IMPORTANT: keep filtered result
@@ -331,7 +352,11 @@ def process_image(
         
     # Save mask (ImageJ-compatible TIFF)
     logger.info(f"  Saving mask to {mask_path}...")
-    rp.save_mask(mask, mask_path, as_binary=True)
+    # Extract only the processed channel for saving (convert 5D TCZYX to 4D TZYX with C=1)
+    mask_single_channel = mask[:, channel:channel+1, :, :, :]
+    rp.save_mask(mask_single_channel, mask_path, as_binary=True)
+    if save_labeled:
+        rp.save_mask(mask_single_channel, labeled_mask_path, as_binary=False)
     
     # Generate and save ROIs (optional)
     if save_rois:
@@ -365,6 +390,7 @@ def process_folder(
     min_size: int,
     max_size: float,
     save_rois: bool,
+    save_labeled: bool,
     no_parallel: bool
 ) -> None:
     """Process multiple files matching the input pattern."""
@@ -383,7 +409,7 @@ def process_folder(
         try:
             process_image(
                 file_path, output_folder, channel, threshold_method,
-                threshold_min, threshold_max, gaussian_sigma, fill_holes, remove_xy_edges, remove_z_edges, min_size, max_size, save_rois
+                threshold_min, threshold_max, gaussian_sigma, fill_holes, remove_xy_edges, remove_z_edges, min_size, max_size, save_rois, save_labeled
             )
         except Exception as e:
             logger.error(f"ERROR processing {file_path}: {e}")
@@ -537,6 +563,10 @@ Example usage (numeric threshold):
         help="Save ImageJ ROIs as .zip files (disabled by default)"
     )
     parser.add_argument(
+        "--save-labeled", action="store_true",
+        help="Save labeled mask as *_mask_labeled.tif (disabled by default)"
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true",
         help="Enable verbose logging output"
     )
@@ -586,6 +616,7 @@ Example usage (numeric threshold):
         min_size=args.min_size,
         max_size=max_size,
         save_rois=args.save_rois,
+        save_labeled=args.save_labeled,
         no_parallel=args.no_parallel
     )
     
