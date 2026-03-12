@@ -197,10 +197,23 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
     os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
 
 
+    def _output_path(input_file_path: str) -> str:
+        """Build output path, replacing input extension with the correct output extension."""
+        stem = os.path.splitext(os.path.basename(input_file_path))[0]
+        if args.output_format == "tif":
+            ext = ".ome.tif"
+        elif args.output_format == "npy":
+            ext = ".npy"
+        elif args.output_format == "ilastik-h5":
+            ext = ".h5"
+        else:
+            ext = ".ome.tif"
+        return os.path.join(args.output_folder, stem + ext)
+
     if use_parallel: # Process each file in parallel
         Parallel(n_jobs=-1)(
             delayed(process_file)(input_file_path,
-                                  os.path.join(args.output_folder, os.path.basename(input_file_path)),
+                                  _output_path(input_file_path),
                                   args.merge_channels,
                                   args.output_format,
                                   args.output_dim_order,
@@ -210,7 +223,7 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
     else: # Process each file sequentially        
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
             # Define output file name
-            output_tif_file_path:str = os.path.join(args.output_folder, os.path.basename(input_file_path))
+            output_tif_file_path:str = _output_path(input_file_path)
             # process file
             
             process_file(input_file_path, output_tif_file_path, args.merge_channels, args.output_format, args.output_dim_order, args.output_scale)  # Process each file
