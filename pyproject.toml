@@ -38,6 +38,30 @@ torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 
  [dependency-groups]
+convert-to-tif = [
+	"numpy",
+	"matplotlib",
+	"tqdm",
+	"joblib",
+	"nd2reader",
+	"dask[array]",
+	"h5py",
+	"pystackreg",
+	"pyGPUreg",
+	"roifile",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"bioio_lif",
+	"bioio_czi",
+	"bioio_dv",
+]
+
 machine-learning = [
 	"numpy",
 	"tqdm",
@@ -45,22 +69,10 @@ machine-learning = [
 	"scikit-learn",
 	"scikit-image",
 	"matplotlib",
-	"bioio",
-	"bioio-ome-tiff",
 	"h5py",
-]
-convert-to-tif = [
-	"numpy",
-	"matplotlib",
-	"tqdm",
-	"joblib",
-	"nd2reader",
-	"scyjava",
-	"jpype1>=1.5.1",
-	"dask[array]",
-	"h5py",
-	"imaris-ims-file-reader",
-	"pystackreg",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -69,30 +81,19 @@ convert-to-tif = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"pyGPUreg",
-	"roifile",
+	
 ]
+
 drift-correct = [
 	"numpy",
 	"matplotlib",
 	"tqdm",
 	"joblib",
-	"nd2reader",
-	"scyjava",
-	"jpype1>=1.5.1",
+	"nd2reader"
 	"dask[array]",
 	"h5py",
-	"imaris-ims-file-reader",
 	"pystackreg",
 	"cupy-cuda12x",
-	"bioio",
-	"bioio-bioformats",
-	"bioio-ome-tiff",
-	"bioio-tifffile",
-	"bioio-nd2",
-	"bioio_lif",
-	"bioio_czi",
-	"bioio_dv",
 	"pyGPUreg",
 	"imreg_dft",
 	"scikit-image>=0.19.0",
@@ -101,6 +102,17 @@ drift-correct = [
 	"scipy",
 	"opencv-python>=4.11.0.86",
 	"roifile",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"bioio_lif",
+	"bioio_czi",
+	"bioio_dv",
 ]
 segment-ernet = [
 	"torch==2.4.0+cu124",
@@ -121,6 +133,10 @@ segment-ernet = [
 	"timm",
 	"einops",
 	"sknw==0.12",
+	"roifile",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -129,13 +145,15 @@ segment-ernet = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"roifile",
 ]
 mask_measure = [
 	"numpy",
 	"pandas",
 	"scikit-image",
 	"tqdm",
+	"roifile",
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -144,13 +162,20 @@ mask_measure = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"roifile",
 ]
+
 plot = [
 	"numpy",
 	"matplotlib",
 	"pandas",
 	"seaborn",
+	"scipy",
+	"scikit-image",
+	"scipy",
+	"roifile",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -159,10 +184,6 @@ plot = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"scipy",
-	"scikit-image",
-	"scipy",
-	"roifile",
 ]
 segmentation = [
 	"numpy",
@@ -173,6 +194,13 @@ segmentation = [
 	"trackpy",
 	"opencv-python>=4.11.0.86",
 	"tqdm",
+	"joblib",
+	"seaborn",
+	"roifile",
+	"h5py",
+	
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -181,11 +209,6 @@ segmentation = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"joblib",
-	"nd2reader",
-	"seaborn",
-	"roifile",
-	"h5py",
 ]
 denoise = [
 	"numpy",
@@ -194,6 +217,11 @@ denoise = [
 	"n2v>=0.3.2",
 	"tensorflow>=2.10.0,<2.16.0",
 	"keras<3.0",
+	"tqdm",
+	"roifile",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -202,8 +230,6 @@ denoise = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"tqdm",
-	"roifile",
 ]
 run_ilastik = [
 	"numpy",
@@ -218,6 +244,11 @@ run_ilastik = [
 	"tqdm",
 	"joblib",
 	"pyyaml",
+	"nd2reader",
+	"roifile",
+	
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
 	"bioio",
 	"bioio-bioformats",
 	"bioio-ome-tiff",
@@ -226,9 +257,6 @@ run_ilastik = [
 	"bioio_lif",
 	"bioio_czi",
 	"bioio_dv",
-	"nd2reader",
-	"roifile",
-
 ]
 
 imagej = [
@@ -237,7 +265,6 @@ imagej = [
 	"jpype1>=1.5.1",
 	"numpy",
 	"bioio",
-	"bioio-bioformats",
 	"bioio-ome-tiff",
 	"bioio-tifffile",
 	"bioio-nd2",
