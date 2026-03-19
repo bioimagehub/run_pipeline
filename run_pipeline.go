@@ -591,16 +591,28 @@ func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir st
 // Creates separate .venv_<group> directories for isolation (like conda envs)
 // Only syncs if the specific .venv_<group> doesn't exist
 func ensureUvEnvironment(mainProgramDir string, environment string) string {
-	// Extract group name from environment string
-	// Supports: "uv:group", "uv@3.11:group", etc.
-	groupName := extractUvGroup(environment)
-	if groupName == "" {
-		log.Fatalf("Invalid UV environment format: %s (expected 'uv:group' or 'uv@3.11:group')", environment)
+	spec, err := parseUvEnvironment(environment)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	// Create environment-specific venv directory: .venv_<group>
-	venvName := fmt.Sprintf(".venv_%s", groupName)
+	// Create environment-specific venv directory.
+	// For explicit versions, keep separate env folders to avoid stale reuse.
+	venvName := fmt.Sprintf(".venv_%s", spec.Group)
+	if spec.PythonVersion != "" {
+		versionSuffix := strings.NewReplacer(".", "_", "-", "_", " ", "", "/", "_", "\\", "_").Replace(spec.PythonVersion)
+		venvName = fmt.Sprintf(".venv_%s_py%s", spec.Group, versionSuffix)
+	}
 	venvPath := filepath.Join(mainProgramDir, venvName)
+	legacyVenvPath := filepath.Join(mainProgramDir, fmt.Sprintf(".venv_%s", spec.Group))
+
+	if spec.PythonVersion != "" {
+		fmt.Printf("Using UV environment spec '%s' -> dependency group '%s', Python %s\n", environment, spec.Group, spec.PythonVersion)
+		fmt.Printf("Resolved UV venv path: %s\n", venvPath)
+		if isDirectory(legacyVenvPath) && legacyVenvPath != venvPath {
+			fmt.Printf("Found legacy unversioned env at %s; ignoring it for '%s'.\n", legacyVenvPath, environment)
+		}
+	}
 
 	// Check if this specific environment already exists
 	if isDirectory(venvPath) {
@@ -610,8 +622,8 @@ func ensureUvEnvironment(mainProgramDir string, environment string) string {
 	}
 
 	// Environment doesn't exist, create it with uv venv + uv pip install
-	fmt.Printf("Creating UV environment for '%s' (first time setup)...\n", groupName)
-	fmt.Printf("Installing dependency group: %s\n", groupName)
+	fmt.Printf("Creating UV environment for '%s' (first time setup)...\n", spec.Group)
+	fmt.Printf("Installing dependency group: %s\n", spec.Group)
 
 	uvExe := findUvExecutable(mainProgramDir)
 	if uvExe == "" {
@@ -619,54 +631,80 @@ func ensureUvEnvironment(mainProgramDir string, environment string) string {
 	}
 
 	// Step 1: Create the venv using uv venv
-	venvCmd := exec.Command(uvExe, "venv", venvPath)
+	venvArgs := []string{"venv", venvPath}
+	if spec.PythonVersion != "" {
+		venvArgs = append(venvArgs, "--python", spec.PythonVersion)
+	}
+	venvCmd := exec.Command(uvExe, venvArgs...)
 	venvCmd.Dir = mainProgramDir
 	venvCmd.Stdout = os.Stdout
 	venvCmd.Stderr = os.Stderr
 
-	fmt.Printf("Running: %s venv %s\n", uvExe, venvPath)
+	fmt.Printf("Running: %s %s\n", uvExe, strings.Join(venvArgs, " "))
 	if err := venvCmd.Run(); err != nil {
-		log.Fatalf("Failed to create venv for '%s': %v", groupName, err)
+		log.Fatalf("Failed to create venv for '%s': %v", spec.Group, err)
 	}
 
 	// Step 2: Install packages using uv pip install with the specific venv
 	// This reads from pyproject.toml and installs the specified group
-	pipCmd := exec.Command(uvExe, "pip", "install", "--python", venvPath, "--group", groupName, ".")
+	pipCmd := exec.Command(uvExe, "pip", "install", "--python", venvPath, "--group", spec.Group, ".")
 	pipCmd.Dir = mainProgramDir
 	pipCmd.Stdout = os.Stdout
 	pipCmd.Stderr = os.Stderr
 
-	fmt.Printf("Running: %s pip install --python %s --group %s .\n", uvExe, venvPath, groupName)
+	fmt.Printf("Running: %s pip install --python %s --group %s .\n", uvExe, venvPath, spec.Group)
 	if err := pipCmd.Run(); err != nil {
-		log.Fatalf("Failed to install packages for '%s': %v", groupName, err)
+		log.Fatalf("Failed to install packages for '%s': %v", spec.Group, err)
 	}
 
-	fmt.Printf("✓ UV environment '%s' created successfully at %s\n", groupName, venvPath)
+	fmt.Printf("✓ UV environment '%s' created successfully at %s\n", spec.Group, venvPath)
 	return venvPath
 }
 
-// extractUvGroup extracts the dependency group name from UV environment string
-// Examples: "uv:drift-correct" -> "drift-correct"
-//
-//	"uv@3.11:segment-ernet" -> "segment-ernet"
-func extractUvGroup(environment string) string {
-	env := strings.ToLower(environment)
+type uvEnvironmentSpec struct {
+	Group         string
+	PythonVersion string
+}
 
-	// Handle "uv@version:group" format
-	if strings.HasPrefix(env, "uv@") {
-		parts := strings.Split(env, ":")
-		if len(parts) >= 2 {
-			return parts[1]
+// parseUvEnvironment parses environment values like "uv:group" and "uv@3.11:group".
+func parseUvEnvironment(environment string) (uvEnvironmentSpec, error) {
+	env := strings.TrimSpace(environment)
+	lower := strings.ToLower(env)
+
+	if strings.HasPrefix(lower, "uv@") {
+		parts := strings.SplitN(env, ":", 2)
+		if len(parts) != 2 {
+			return uvEnvironmentSpec{}, fmt.Errorf("invalid UV environment format: %s (expected 'uv:group' or 'uv@3.11:group')", environment)
 		}
-		return ""
+
+		version := strings.TrimSpace(parts[0][3:])
+		group := strings.TrimSpace(parts[1])
+		if version == "" || group == "" {
+			return uvEnvironmentSpec{}, fmt.Errorf("invalid UV environment format: %s (expected 'uv:group' or 'uv@3.11:group')", environment)
+		}
+
+		return uvEnvironmentSpec{Group: strings.ToLower(group), PythonVersion: version}, nil
 	}
 
-	// Handle "uv:group" format
-	if strings.HasPrefix(env, "uv:") {
-		return strings.TrimPrefix(env, "uv:")
+	if strings.HasPrefix(lower, "uv:") {
+		group := strings.TrimSpace(env[3:])
+		if group == "" {
+			return uvEnvironmentSpec{}, fmt.Errorf("invalid UV environment format: %s (expected 'uv:group' or 'uv@3.11:group')", environment)
+		}
+		return uvEnvironmentSpec{Group: strings.ToLower(group)}, nil
 	}
 
-	return ""
+	return uvEnvironmentSpec{}, fmt.Errorf("invalid UV environment format: %s (expected 'uv:group' or 'uv@3.11:group')", environment)
+}
+
+func getRequestedUvPython(spec uvEnvironmentSpec) string {
+	if spec.PythonVersion != "" {
+		return spec.PythonVersion
+	}
+	if v := strings.TrimSpace(os.Getenv("UV_DEFAULT_PYTHON")); v != "" {
+		return v
+	}
+	return "3.11"
 }
 
 // findUvExecutable locates the uv executable
@@ -706,8 +744,14 @@ func findUvExecutable(mainProgramDir string) string {
 //	"uv@3.11:<group>"         -> forces Python 3.11
 //	default Python may be overridden with env var UV_DEFAULT_PYTHON (e.g., 3.11 or 3.10)
 func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, string) {
+	spec, err := parseUvEnvironment(segment.Environment)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Ensure environment-specific .venv_<group> exists with required group
 	venvPath := ensureUvEnvironment(mainProgramDir, segment.Environment)
+	uvPython := getRequestedUvPython(spec)
 
 	// Build command to run Python from the environment-specific venv
 	venvPython := filepath.Join(venvPath, "Scripts", "python.exe")
@@ -749,7 +793,7 @@ func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, s
 		}
 	}
 
-	return cmdArgs, "" // Return empty string for uvPython since we're not using it anymore
+	return cmdArgs, uvPython
 }
 
 // getUvRunnerPrefix ensures `uv` is available and returns the appropriate command prefix:
