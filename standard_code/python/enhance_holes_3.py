@@ -327,7 +327,7 @@ def process_single_image(
     shrink_px: int = 10,
     enlarge_px_2: int = 5,
     time_start_1based: int = 1,
-    time_stop_1based: int = 10,
+    time_stop_1based: int = 999999,
 ) -> bool:
     """Load one TCZYX image, compute ImageJ-style hole score maps, and save."""
     _ = variance_sigma
@@ -421,16 +421,6 @@ run:
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
   - --channels: '0 2'
-
-- name: Hole score full time range
-  environment: uv@3.11:convert-to-tif
-  commands:
-  - python
-  - '%REPO%/standard_code/python/enhance_holes_3.py'
-  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
-  - --output-folder: '%YAML%/output_data'
-  - --time-start-1based: 1
-  - --time-stop-1based: 999999
 
 - name: Save as NumPy arrays, sequential processing
   environment: uv@3.11:convert-to-tif
@@ -546,18 +536,6 @@ Notes:
         default=5,
         help="Second selection enlarge radius in pixels (default: 5)",
     )
-    parser.add_argument(
-        "--time-start-1based",
-        type=int,
-        default=1,
-        help="First frame to process, 1-based inclusive (default: 1)",
-    )
-    parser.add_argument(
-        "--time-stop-1based",
-        type=int,
-        default=10,
-        help="Last frame to process, 1-based inclusive (default: 10)",
-    )
 
     args = parser.parse_args()
 
@@ -565,10 +543,6 @@ Notes:
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    if args.time_start_1based < 1:
-        raise ValueError("--time-start-1based must be >= 1")
-    if args.time_stop_1based < args.time_start_1based:
-        raise ValueError("--time-stop-1based must be >= --time-start-1based")
     if args.enlarge_px_1 < 0 or args.shrink_px < 0 or args.enlarge_px_2 < 0:
         raise ValueError("--enlarge-px-1, --shrink-px and --enlarge-px-2 must be >= 0")
 
@@ -617,8 +591,6 @@ Notes:
                 enlarge_px_1=args.enlarge_px_1,
                 shrink_px=args.shrink_px,
                 enlarge_px_2=args.enlarge_px_2,
-                time_start_1based=args.time_start_1based,
-                time_stop_1based=args.time_stop_1based,
             )
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
