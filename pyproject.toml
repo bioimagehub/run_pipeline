@@ -89,7 +89,7 @@ drift-correct = [
 	"matplotlib",
 	"tqdm",
 	"joblib",
-	"nd2reader"
+	"nd2reader",
 	"dask[array]",
 	"h5py",
 	"pystackreg",

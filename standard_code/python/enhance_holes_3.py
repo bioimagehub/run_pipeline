@@ -601,7 +601,7 @@ Notes:
         from joblib import Parallel, delayed
 
         logging.info("Processing files in parallel...")
-        n_jobs = min(2, os.cpu_count() or 1)
+        n_jobs = min(4, os.cpu_count() or 1)
         logging.info(f"Parallel workers: {n_jobs}")
         results = Parallel(n_jobs=n_jobs)(
             delayed(_process)(f)
