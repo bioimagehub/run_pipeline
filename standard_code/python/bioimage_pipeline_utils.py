@@ -5,6 +5,7 @@ import tempfile
 #import bioio_ome_tiff, bioio_tifffile, bioio_nd2, bioio_lif, bioio_czi, bioio_dv # done when needed
 import numpy as np
 import warnings
+import sys
 
 import tifffile
 
@@ -88,6 +89,73 @@ def _configure_bioformats_safe_io(input_path: str) -> None:
         # If scyjava isn't available yet, the properties below may still be picked up via env when JVM starts
         os.environ.setdefault("org.slf4j.simpleLogger.defaultLogLevel", "warn")
         os.environ.setdefault("scijava.log.level", "WARN")
+
+
+def _build_bioformats_error_message(path: str, original_error: Exception) -> str:
+    """Create a detailed, actionable Bio-Formats initialization error message."""
+    chain_messages = []
+    seen = set()
+    current: Optional[BaseException] = original_error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain_messages.append(str(current))
+        next_exc = current.__cause__ if current.__cause__ is not None else current.__context__
+        current = next_exc
+
+    error_text = "\n".join(chain_messages)
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    is_maven_parent_path_failure = (
+        "formats-gpl" in error_text and "Permission denied" in error_text and "..\\.." in error_text
+    )
+
+    lines = [
+        f"\n{'='*70}",
+        f"ERROR: Failed to load {os.path.basename(path)}",
+        f"{'='*70}\n",
+        "This file format requires Bio-Formats (Java), but Bio-Formats failed to initialize.",
+        f"Python environment: {python_version}",
+        f"Original error: {original_error}",
+        "",
+    ]
+
+    if is_maven_parent_path_failure:
+        lines.extend([
+            "Detected issue: jgo/scyjava Maven dependency resolution failed on Windows",
+            "while resolving Bio-Formats parent POMs (path ending in '.pom\\..\\..').",
+            "This is not a missing Java executable issue.",
+            "",
+            "Recommended fixes (in order):",
+            "1. Use Python 3.11 for UV env creation (preferred for Bio-Formats on Windows):",
+            "   environment: uv@3.11:convert-to-tif",
+            "   or set UV_DEFAULT_PYTHON=3.11 before creating the UV env.",
+            "2. If problem persists, use Conda environment:",
+            "   conda env create -f conda_envs/convert_to_tif.yml",
+            "   and use 'environment: convert_to_tif' in your YAML config.",
+            "",
+        ])
+    else:
+        lines.extend([
+            "Recommended fixes (in order):",
+            "1. Recreate this UV env with Python 3.11 (best Bio-Formats compatibility on Windows):",
+            "   environment: uv@3.11:convert-to-tif",
+            "   or set UV_DEFAULT_PYTHON=3.11 before creating the UV env.",
+            "",
+            "2. If problem persists, use Conda environment instead of UV:",
+            "",
+            "   Create Conda environment from: conda_envs/convert_to_tif.yml",
+            "   conda env create -f conda_envs/convert_to_tif.yml",
+            "",
+            "   Run your pipeline with the Conda environment:",
+            "   run_pipeline.exe pipeline_configs/your_config.yaml",
+            "   (use 'environment: convert_to_tif' in your YAML config)",
+            "",
+            "NOTE: Most formats (ND2, LIF, CZI, DV, TIFF) work without Bio-Formats.",
+            "      Only exotic formats require the Conda environment.",
+            "",
+        ])
+
+    lines.append(f"{'='*70}\n")
+    return "\n".join(lines)
 
 
 def load_tczyx_image(path: str) -> BioImage:
@@ -206,22 +274,7 @@ def load_tczyx_image(path: str) -> BioImage:
             img = BioImage(path, reader=bioio_bioformats.Reader)
             return img
         except Exception as e:
-            raise RuntimeError(
-                f"\n{'='*70}\n"
-                f"ERROR: Failed to load {os.path.basename(path)}\n"
-                f"{'='*70}\n\n"
-                f"This file format requires Bio-Formats (Java), which failed to initialize.\n"
-                f"Original error: {e}\n\n"
-                f"SOLUTION: Use Conda environment instead of UV for Bio-Formats support:\n\n"
-                f"1. Create Conda environment from: conda_envs/convert_to_tif.yml\n"
-                f"   conda env create -f conda_envs/convert_to_tif.yml\n\n"
-                f"2. Run your pipeline with the Conda environment:\n"
-                f"   run_pipeline.exe pipeline_configs/your_config.yaml\n"
-                f"   (use 'environment: convert_to_tif' in your YAML config)\n\n"
-                f"NOTE: Most formats (ND2, LIF, CZI, DV, TIFF) work without Bio-Formats.\n"
-                f"      Only exotic formats require the Conda environment.\n"
-                f"{'='*70}\n"
-            ) from e
+            raise RuntimeError(_build_bioformats_error_message(path, e)) from e
     raise ValueError(f"Unsupported file format for: {path}")
 
 # Deprecated alias for backward compatibility
