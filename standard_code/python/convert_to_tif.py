@@ -15,6 +15,7 @@ from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import tifffile
+from tqdm import tqdm
 
 from bioio import BioImage
 import yaml
@@ -630,7 +631,7 @@ def process_files(
                 for src, dst in file_pairs
             }
             
-            for future in as_completed(futures):
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing files", unit="file"):
                 src, dst = futures[future]
                 try:
                     success = future.result()

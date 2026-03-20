@@ -211,15 +211,34 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
         return os.path.join(args.output_folder, stem + ext)
 
     if use_parallel: # Process each file in parallel
-        Parallel(n_jobs=-1)(
-            delayed(process_file)(input_file_path,
-                                  _output_path(input_file_path),
-                                  args.merge_channels,
-                                  args.output_format,
-                                  args.output_dim_order,
-                                  args.output_scale)
-            for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file")
-        )
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _tqdm_joblib(tqdm_object):
+            import joblib
+            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                def __call__(self, *args, **kwargs):
+                    tqdm_object.update(n=self.batch_size)
+                    return super().__call__(*args, **kwargs)
+            old_batch_callback = joblib.parallel.BatchCompletionCallBack
+            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+            try:
+                yield tqdm_object
+            finally:
+                joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                tqdm_object.close()
+
+        with tqdm(total=len(files_to_process), desc="Processing files", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                Parallel(n_jobs=-1)(
+                    delayed(process_file)(input_file_path,
+                                          _output_path(input_file_path),
+                                          args.merge_channels,
+                                          args.output_format,
+                                          args.output_dim_order,
+                                          args.output_scale)
+                    for input_file_path in files_to_process
+                )
     else: # Process each file sequentially        
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
             # Define output file name

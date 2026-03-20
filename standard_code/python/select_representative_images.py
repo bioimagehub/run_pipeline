@@ -86,10 +86,29 @@ def process_folder(args, use_parallel=True):
     # ==============================
 
     if use_parallel:
-        all_results = Parallel(n_jobs=-1)(
-            delayed(extract_timepoint_features)(f, args.nuclear_channel)
-            for f in tqdm(files, desc="Extracting features", unit="file")
-        )
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _tqdm_joblib(tqdm_object):
+            import joblib
+            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                def __call__(self, *args, **kwargs):
+                    tqdm_object.update(n=self.batch_size)
+                    return super().__call__(*args, **kwargs)
+            old_batch_callback = joblib.parallel.BatchCompletionCallBack
+            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+            try:
+                yield tqdm_object
+            finally:
+                joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                tqdm_object.close()
+
+        with tqdm(total=len(files), desc="Extracting features", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                all_results = list(Parallel(n_jobs=-1)(
+                    delayed(extract_timepoint_features)(f, args.nuclear_channel)
+                    for f in files
+                ))
     else:
         all_results = []
         for f in tqdm(files, desc="Extracting features", unit="file"):

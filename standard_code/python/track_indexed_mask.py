@@ -94,8 +94,27 @@ def process_folder_or_file(args: argparse.Namespace):
         process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel)
 
     if not args.no_parallel:
+        from contextlib import contextmanager
         from joblib import Parallel, delayed
-        Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in tqdm(input_files, desc="Tracking objects", unit="file"))
+
+        @contextmanager
+        def _tqdm_joblib(tqdm_object):
+            import joblib
+            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                def __call__(self, *args, **kwargs):
+                    tqdm_object.update(n=self.batch_size)
+                    return super().__call__(*args, **kwargs)
+            old_batch_callback = joblib.parallel.BatchCompletionCallBack
+            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+            try:
+                yield tqdm_object
+            finally:
+                joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                tqdm_object.close()
+
+        with tqdm(total=len(input_files), desc="Tracking objects", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in input_files)
     else:
         for input_file_path in tqdm(input_files, desc="Tracking objects", unit="file"):
             process_single_file(input_file_path)

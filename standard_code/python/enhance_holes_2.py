@@ -509,14 +509,32 @@ Notes:
             return False
 
     if use_parallel:
+        from contextlib import contextmanager
         from joblib import Parallel, delayed
+
+        @contextmanager
+        def _tqdm_joblib(tqdm_object):
+            import joblib
+            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                def __call__(self, *args, **kwargs):
+                    tqdm_object.update(n=self.batch_size)
+                    return super().__call__(*args, **kwargs)
+            old_batch_callback = joblib.parallel.BatchCompletionCallBack
+            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+            try:
+                yield tqdm_object
+            finally:
+                joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                tqdm_object.close()
+
         logging.info("Processing files in parallel...")
         n_jobs = min(2, os.cpu_count() or 1)
         logging.info(f"Parallel workers: {n_jobs}")
-        results = Parallel(n_jobs=n_jobs)(
-            delayed(_process)(f)
-            for f in tqdm(input_files, desc="Processing files", unit="file")
-        )
+        with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                results = list(Parallel(n_jobs=n_jobs)(
+                    delayed(_process)(f) for f in input_files
+                ))
     else:
         logging.info("Processing files sequentially...")
         results = []

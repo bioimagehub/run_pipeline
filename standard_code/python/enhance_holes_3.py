@@ -206,27 +206,39 @@ def _upsample_nearest_2d(mask_2d: np.ndarray, target_shape: tuple[int, int]) -> 
 
 def _smooth_selection_like_imagej(
     foreground_mask: np.ndarray,
-    enlarge_px_1: int,
-    shrink_px: int,
-    enlarge_px_2: int,
+    footprint_enlarge_1: np.ndarray | None,
+    footprint_shrink: np.ndarray | None,
+    footprint_enlarge_2: np.ndarray | None,
 ) -> np.ndarray:
     """Apply ImageJ-like selection sequence: enlarge +a, -b, +c."""
     smoothed = foreground_mask.astype(bool, copy=True)
-    if enlarge_px_1 > 0:
-        smoothed = binary_dilation(smoothed, footprint=disk(int(enlarge_px_1)))
-    if shrink_px > 0:
-        smoothed = binary_erosion(smoothed, footprint=disk(int(shrink_px)))
-    if enlarge_px_2 > 0:
-        smoothed = binary_dilation(smoothed, footprint=disk(int(enlarge_px_2)))
+    if footprint_enlarge_1 is not None:
+        smoothed = binary_dilation(smoothed, footprint=footprint_enlarge_1)
+    if footprint_shrink is not None:
+        smoothed = binary_erosion(smoothed, footprint=footprint_shrink)
+    if footprint_enlarge_2 is not None:
+        smoothed = binary_dilation(smoothed, footprint=footprint_enlarge_2)
     return smoothed
+
+
+def _build_selection_footprints(
+    enlarge_px_1: int,
+    shrink_px: int,
+    enlarge_px_2: int,
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    """Build and cache morphology footprints once per stack."""
+    fp_enlarge_1 = disk(int(enlarge_px_1)) if enlarge_px_1 > 0 else None
+    fp_shrink = disk(int(shrink_px)) if shrink_px > 0 else None
+    fp_enlarge_2 = disk(int(enlarge_px_2)) if enlarge_px_2 > 0 else None
+    return fp_enlarge_1, fp_shrink, fp_enlarge_2
 
 
 def _compute_foreground_mask_2d(
     plane: np.ndarray,
     downsample_factor: int,
-    enlarge_px_1: int,
-    shrink_px: int,
-    enlarge_px_2: int,
+    footprint_enlarge_1: np.ndarray | None,
+    footprint_shrink: np.ndarray | None,
+    footprint_enlarge_2: np.ndarray | None,
 ) -> np.ndarray:
     """Compute foreground mask with Otsu threshold (dark background assumption)."""
     plane_f32 = plane.astype(np.float32, copy=False)
@@ -248,9 +260,9 @@ def _compute_foreground_mask_2d(
     )
     return _smooth_selection_like_imagej(
         fg_full,
-        enlarge_px_1=enlarge_px_1,
-        shrink_px=shrink_px,
-        enlarge_px_2=enlarge_px_2,
+        footprint_enlarge_1=footprint_enlarge_1,
+        footprint_shrink=footprint_shrink,
+        footprint_enlarge_2=footprint_enlarge_2,
     )
 
 
@@ -261,6 +273,8 @@ def _score_tyx_stack_imagej_style(
     enlarge_px_1: int,
     shrink_px: int,
     enlarge_px_2: int,
+    mask_background: bool,
+    prezero_background_before_fill: bool,
     time_start_1based: int,
     time_stop_1based: int,
 ) -> np.ndarray:
@@ -280,31 +294,50 @@ def _score_tyx_stack_imagej_style(
     if start_idx >= stop_idx_exclusive:
         return output
 
-    for ti in range(start_idx, stop_idx_exclusive):
-        plane = img_tyx[ti].astype(np.float32, copy=False)
-        filled = fill_holes_2d(plane)
+    fp_enlarge_1, fp_shrink, fp_enlarge_2 = _build_selection_footprints(
+        enlarge_px_1=enlarge_px_1,
+        shrink_px=shrink_px,
+        enlarge_px_2=enlarge_px_2,
+    )
 
-        score_plane = np.zeros_like(plane, dtype=np.float32)
-        np.subtract(filled, plane, out=score_plane, where=filled > plane)
+    t_sel = stop_idx_exclusive - start_idx
+    planes = img_tyx[start_idx:stop_idx_exclusive].astype(np.float32, copy=False)
+    masks = None
 
-        fg_mask = _compute_foreground_mask_2d(
-            plane=plane,
-            downsample_factor=downsample_factor,
-            enlarge_px_1=enlarge_px_1,
-            shrink_px=shrink_px,
-            enlarge_px_2=enlarge_px_2,
-        )
-
-        score_plane[~fg_mask] = 0
-        np.maximum(score_plane, 0, out=score_plane)
-
-        if median_sigma > 1:
-            score_plane = median_filter(
-                score_plane,
-                size=(int(median_sigma), int(median_sigma)),
+    if mask_background or prezero_background_before_fill:
+        masks = np.empty((t_sel, h, w), dtype=bool)
+        for i in range(t_sel):
+            masks[i] = _compute_foreground_mask_2d(
+                plane=planes[i],
+                downsample_factor=downsample_factor,
+                footprint_enlarge_1=fp_enlarge_1,
+                footprint_shrink=fp_shrink,
+                footprint_enlarge_2=fp_enlarge_2,
             )
 
-        output[ti] = _cast_to_dtype(score_plane, input_dtype)
+    filled_stack = np.empty_like(planes, dtype=np.float32)
+    for i in range(t_sel):
+        plane_for_fill = planes[i]
+        if prezero_background_before_fill and masks is not None:
+            # Optional speed/behavior tradeoff: fill only within detected foreground.
+            plane_for_fill = plane_for_fill.copy()
+            plane_for_fill[~masks[i]] = 0
+        filled_stack[i] = fill_holes_2d(plane_for_fill)
+
+    score_stack = filled_stack - planes
+    np.maximum(score_stack, 0, out=score_stack)
+
+    if mask_background and masks is not None:
+        score_stack[~masks] = 0
+
+    if median_sigma > 1:
+        # Vectorized temporal batch median without smoothing across time.
+        score_stack = median_filter(
+            score_stack,
+            size=(1, int(median_sigma), int(median_sigma)),
+        )
+
+    output[start_idx:stop_idx_exclusive] = _cast_to_dtype(score_stack, input_dtype)
 
     return output
 
@@ -326,6 +359,8 @@ def process_single_image(
     enlarge_px_1: int = 5,
     shrink_px: int = 10,
     enlarge_px_2: int = 5,
+    mask_background: bool = True,
+    prezero_background_before_fill: bool = False,
     time_start_1based: int = 1,
     time_stop_1based: int = 999999,
 ) -> bool:
@@ -359,6 +394,8 @@ def process_single_image(
         f"  Channels: {channels_to_process}  downsample={downsample_factor}"
         f"  median_sigma={median_sigma}  range={time_start_1based}-{time_stop_1based}"
         f"  selection:+{enlarge_px_1}/-{shrink_px}/+{enlarge_px_2}"
+        f"  mask_background={mask_background}"
+        f"  prezero_before_fill={prezero_background_before_fill}"
     )
 
     if channels is None or len(channels_to_process) == c:
@@ -376,6 +413,8 @@ def process_single_image(
                 enlarge_px_1=enlarge_px_1,
                 shrink_px=shrink_px,
                 enlarge_px_2=enlarge_px_2,
+                mask_background=mask_background,
+                prezero_background_before_fill=prezero_background_before_fill,
                 time_start_1based=time_start_1based,
                 time_stop_1based=time_stop_1based,
             )
@@ -536,6 +575,22 @@ Notes:
         default=5,
         help="Second selection enlarge radius in pixels (default: 5)",
     )
+    parser.add_argument(
+        "--skip-background-mask",
+        action="store_true",
+        help=(
+            "Skip background masking entirely for speed. "
+            "This changes output behavior versus the ImageJ prototype."
+        ),
+    )
+    parser.add_argument(
+        "--prezero-background-before-fill",
+        action="store_true",
+        help=(
+            "Set detected background to zero before hole filling. "
+            "Can speed up and reduce background artifacts, but may alter scores near edges."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -591,6 +646,8 @@ Notes:
                 enlarge_px_1=args.enlarge_px_1,
                 shrink_px=args.shrink_px,
                 enlarge_px_2=args.enlarge_px_2,
+                mask_background=not args.skip_background_mask,
+                prezero_background_before_fill=args.prezero_background_before_fill,
             )
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
@@ -598,15 +655,32 @@ Notes:
             return False
 
     if use_parallel:
+        from contextlib import contextmanager
         from joblib import Parallel, delayed
+
+        @contextmanager
+        def _tqdm_joblib(tqdm_object):
+            import joblib
+            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                def __call__(self, *args, **kwargs):
+                    tqdm_object.update(n=self.batch_size)
+                    return super().__call__(*args, **kwargs)
+            old_batch_callback = joblib.parallel.BatchCompletionCallBack
+            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+            try:
+                yield tqdm_object
+            finally:
+                joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                tqdm_object.close()
 
         logging.info("Processing files in parallel...")
         n_jobs = min(4, os.cpu_count() or 1)
         logging.info(f"Parallel workers: {n_jobs}")
-        results = Parallel(n_jobs=n_jobs)(
-            delayed(_process)(f)
-            for f in tqdm(input_files, desc="Processing files", unit="file")
-        )
+        with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                results = list(Parallel(n_jobs=n_jobs)(
+                    delayed(_process)(f) for f in input_files
+                ))
     else:
         logging.info("Processing files sequentially...")
         results = []

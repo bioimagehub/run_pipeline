@@ -415,8 +415,27 @@ def process_folder(
             logger.error(f"ERROR processing {file_path}: {e}")
     
     if not no_parallel and len(files) > 1:
+        from contextlib import contextmanager
         from joblib import Parallel, delayed
-        Parallel(n_jobs=-1)(delayed(process_one)(f) for f in tqdm(files, desc="Processing"))
+
+        @contextmanager
+        def _tqdm_joblib(tqdm_object):
+            import joblib
+            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                def __call__(self, *args, **kwargs):
+                    tqdm_object.update(n=self.batch_size)
+                    return super().__call__(*args, **kwargs)
+            old_batch_callback = joblib.parallel.BatchCompletionCallBack
+            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+            try:
+                yield tqdm_object
+            finally:
+                joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                tqdm_object.close()
+
+        with tqdm(total=len(files), desc="Processing", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                Parallel(n_jobs=-1)(delayed(process_one)(f) for f in files)
     else:
         for file_path in files:
             process_one(file_path)
