@@ -16,8 +16,9 @@ import os
 import argparse
 import numpy as np
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional
 import logging
+from contextlib import contextmanager
 from skimage.morphology import reconstruction
 from tqdm import tqdm
 
@@ -169,12 +170,111 @@ def fill_holes_auto(image: np.ndarray) -> np.ndarray:
         raise ValueError(f"Expected 2D or 3D image, got {image.ndim}D with shape {image.shape}")
 
 
+def _cast_to_dtype(values: np.ndarray, dtype: np.dtype) -> np.ndarray:
+    """Cast values to target dtype without normalization."""
+    target_dtype = np.dtype(dtype)
+    if np.issubdtype(target_dtype, np.integer):
+        info = np.iinfo(target_dtype)
+        rounded = np.rint(values)
+        clipped = np.clip(rounded, info.min, info.max)
+        return clipped.astype(target_dtype)
+    return values.astype(target_dtype, copy=False)
+
+
+def _positive_delta(filled: np.ndarray, original: np.ndarray, dtype: np.dtype) -> np.ndarray:
+    """Return positive-only delta map (filled - original) cast to original dtype."""
+    delta = filled.astype(np.float64, copy=False) - original.astype(np.float64, copy=False)
+    np.maximum(delta, 0, out=delta)
+    return _cast_to_dtype(delta, dtype)
+
+
+def _resolve_kernel_overlap(kernel_size: int, kernel_overlap: str) -> int:
+    """Resolve kernel overlap from CLI value."""
+    if kernel_size < 1:
+        raise ValueError(f"--kernel-size must be >= 1, got {kernel_size}")
+
+    if str(kernel_overlap).strip().lower() == "half":
+        overlap = kernel_size // 2
+    else:
+        try:
+            overlap = int(str(kernel_overlap).strip())
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid --kernel-overlap '{kernel_overlap}'. Use 'half' or integer >= 0"
+            ) from e
+
+    if overlap < 0:
+        raise ValueError(f"--kernel-overlap must be >= 0, got {overlap}")
+    if overlap >= kernel_size:
+        raise ValueError(
+            f"--kernel-overlap must be < --kernel-size ({kernel_size}), got {overlap}"
+        )
+    return overlap
+
+
+def greyscale_fill_holes_kernel_2d(
+    image: np.ndarray,
+    kernel_size: int,
+    kernel_overlap: int,
+) -> np.ndarray:
+    """
+    Fill holes in 2D greyscale image using sliding local windows.
+
+    Each local window is filled independently, then merged by pixelwise max.
+    """
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape}")
+    if kernel_size < 1:
+        raise ValueError(f"kernel_size must be >= 1, got {kernel_size}")
+    if kernel_overlap < 0 or kernel_overlap >= kernel_size:
+        raise ValueError(
+            f"kernel_overlap must be >= 0 and < kernel_size ({kernel_size}), got {kernel_overlap}"
+        )
+
+    if image.size == 0 or np.all(image == image.flat[0]):
+        return image.copy()
+
+    h, w = image.shape
+    stride = kernel_size - kernel_overlap
+    if stride < 1:
+        raise ValueError("Invalid stride: kernel_size - kernel_overlap must be >= 1")
+
+    y_last = max(0, h - kernel_size)
+    x_last = max(0, w - kernel_size)
+
+    y_starts = list(range(0, y_last + 1, stride))
+    x_starts = list(range(0, x_last + 1, stride))
+    if not y_starts:
+        y_starts = [0]
+    if not x_starts:
+        x_starts = [0]
+    if y_starts[-1] != y_last:
+        y_starts.append(y_last)
+    if x_starts[-1] != x_last:
+        x_starts.append(x_last)
+
+    merged = image.astype(np.float64, copy=True)
+
+    for y0 in y_starts:
+        y1 = min(y0 + kernel_size, h)
+        for x0 in x_starts:
+            x1 = min(x0 + kernel_size, w)
+            tile = image[y0:y1, x0:x1]
+            filled_tile = greyscale_fill_holes_2d(tile)
+            np.maximum(merged[y0:y1, x0:x1], filled_tile, out=merged[y0:y1, x0:x1])
+
+    return _cast_to_dtype(merged, image.dtype)
+
+
 def process_single_image(
     input_path: str,
     output_path: str,
     channels: Optional[list[int]] = None,
     mode_3d: bool = False,
-    show_progress: bool = True
+    show_progress: bool = True,
+    kernel_size: Optional[int] = None,
+    kernel_overlap: str = "half",
+    return_delta: bool = False,
 ) -> bool:
     """
     Process a single image file: load, fill holes, save.
@@ -226,6 +326,19 @@ def process_single_image(
     
     logging.info(f"  Processing channels: {channels_to_process}")
     logging.info(f"  Mode: {'3D (Z-stack as volume)' if mode_3d else '2D (slice-by-slice)'}")
+    if kernel_size is not None:
+        overlap_px = _resolve_kernel_overlap(kernel_size, kernel_overlap)
+        stride_px = kernel_size - overlap_px
+        logging.info(
+            f"  Kernel mode: size={kernel_size}, overlap={overlap_px}, stride={stride_px}"
+        )
+        if mode_3d and Z > 1:
+            logging.info("  Kernel mode runs per 2D Z-slice (XY local windows)")
+    else:
+        overlap_px = 0
+
+    if return_delta:
+        logging.info("  Output mode: positive delta map (filled - input)")
     
     # Create output array (copy to preserve non-processed channels)
     output_data = img.data.copy()
@@ -237,17 +350,39 @@ def process_single_image(
         for t in range(T):
             for c in channels_to_process:
                 # Extract the data for this T,C
-                if mode_3d and Z > 1:
+                if kernel_size is None and mode_3d and Z > 1:
                     # Process entire Z-stack as 3D volume
                     volume = img.data[t, c, :, :, :]  # ZYX
                     filled_volume = greyscale_fill_holes_3d(volume)
-                    output_data[t, c, :, :, :] = filled_volume
+                    if return_delta:
+                        output_data[t, c, :, :, :] = _positive_delta(
+                            filled_volume,
+                            volume,
+                            img.data.dtype,
+                        )
+                    else:
+                        output_data[t, c, :, :, :] = filled_volume
                 else:
                     # Process each Z-slice as 2D
                     for z in range(Z):
                         slice_2d = img.data[t, c, z, :, :]  # YX
-                        filled_slice = greyscale_fill_holes_2d(slice_2d)
-                        output_data[t, c, z, :, :] = filled_slice
+                        if kernel_size is None:
+                            filled_slice = greyscale_fill_holes_2d(slice_2d)
+                        else:
+                            filled_slice = greyscale_fill_holes_kernel_2d(
+                                slice_2d,
+                                kernel_size=kernel_size,
+                                kernel_overlap=overlap_px,
+                            )
+
+                        if return_delta:
+                            output_data[t, c, z, :, :] = _positive_delta(
+                                filled_slice,
+                                slice_2d,
+                                img.data.dtype,
+                            )
+                        else:
+                            output_data[t, c, z, :, :] = filled_slice
                 
                 pbar.update(1)
     
@@ -273,6 +408,25 @@ def _parse_channels(channel_str: str) -> list[int] | None:
         return [int(p) for p in parts]
     except ValueError as e:
         raise argparse.ArgumentTypeError(f"Could not parse channels: {e}")
+
+
+@contextmanager
+def _tqdm_joblib(tqdm_object):
+    """Patch joblib to report progress to tqdm on task completion."""
+    import joblib
+
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
 
 
 def main():
@@ -309,6 +463,26 @@ run:
   - --output-folder: '%YAML%/output_data'
   - --channels: '0 2'
 
+- name: Fill holes with local sliding kernel
+    environment: uv@3.11:fill-greyscale-holes
+    commands:
+    - python
+    - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_data'
+    - --kernel-size: 40
+    - --kernel-overlap: half
+
+- name: Save positive fill delta map instead of filled intensity
+    environment: uv@3.11:fill-greyscale-holes
+    commands:
+    - python
+    - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_data'
+    - --kernel-size: 40
+    - --return-delta
+
 Description:
   Fills dark regions (holes) in greyscale images while preserving intensity.
   Perfect for filling nucleoli inside nuclei or similar dark internal structures.
@@ -337,6 +511,12 @@ Notes:
   - For binary masks, use scipy.ndimage.binary_fill_holes instead
   - Preserves original intensities (unlike binary fill which returns 0/1)
   - Multi-channel images: specify --channels or processes all by default
+    - --kernel-size enables local XY window processing
+    - --kernel-overlap is overlap in pixels (not movement). stride = kernel_size - overlap
+    - Example: kernel_size=40, overlap=1 -> stride=39 (large jumps)
+    - Example: kernel_size=40, overlap=39 -> stride=1 (maximal overlap, slowest)
+    - Use --kernel-overlap half (default) for balanced speed/quality
+    - --return-delta outputs max(filled - input, 0) instead of filled image
         """
     )
     
@@ -373,6 +553,30 @@ Notes:
         action='store_true',
         help='Process Z-stacks as 3D volumes instead of individual 2D slices. Use when holes span multiple Z-slices.'
     )
+
+    parser.add_argument(
+        '--kernel-size',
+        type=int,
+        default=None,
+        help='Optional local XY kernel size (pixels). If set, holes are filled per kernel window.'
+    )
+
+    parser.add_argument(
+        '--kernel-overlap',
+        type=str,
+        default='half',
+        help=(
+            "Kernel overlap in pixels between adjacent windows (not stride). "
+            "Stride = kernel_size - overlap. Use 'half' (default) or integer. "
+            "Examples with kernel_size=40: overlap=1 -> stride=39, overlap=39 -> stride=1."
+        )
+    )
+
+    parser.add_argument(
+        '--return-delta',
+        action='store_true',
+        help='Return positive delta max(filled - input, 0) instead of the filled intensity image.'
+    )
     
     parser.add_argument(
         '--no-parallel',
@@ -381,6 +585,13 @@ Notes:
     )
     
     args = parser.parse_args()
+
+    if args.kernel_size is not None and args.kernel_size < 1:
+        raise ValueError(f"--kernel-size must be >= 1, got {args.kernel_size}")
+    if args.kernel_size is None and str(args.kernel_overlap).strip().lower() != 'half':
+        logging.warning("--kernel-overlap is ignored unless --kernel-size is set")
+    if args.kernel_size is not None:
+        _ = _resolve_kernel_overlap(args.kernel_size, args.kernel_overlap)
     
     # Setup logging
     logging.basicConfig(
@@ -415,7 +626,10 @@ Notes:
                 output_path=output_path,
                 channels=args.channels,
                 mode_3d=args.mode_3d,
-                show_progress=args.no_parallel  # Only show per-file progress in sequential mode
+                show_progress=args.no_parallel,  # Only show per-file progress in sequential mode
+                kernel_size=args.kernel_size,
+                kernel_overlap=args.kernel_overlap,
+                return_delta=args.return_delta,
             )
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
@@ -427,11 +641,14 @@ Notes:
     if not args.no_parallel:
         from joblib import Parallel, delayed
         logging.info(f"Processing {len(input_files)} files in parallel...")
-        # Progress bar tracks completed files, not internal progress
-        results = Parallel(n_jobs=-1)(
-            delayed(process_file_wrapper)(file) 
-            for file in tqdm(input_files, desc="Processing files", unit="file")
-        )
+        with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
+            with _tqdm_joblib(pbar):
+                results = list(
+                    Parallel(n_jobs=-1)(
+                        delayed(process_file_wrapper)(file)
+                        for file in input_files
+                    )
+                )
         successful = sum(1 for r in results if r)
         failed = len(results) - successful
     else:
