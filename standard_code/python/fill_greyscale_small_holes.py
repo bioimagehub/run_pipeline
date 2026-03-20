@@ -1,48 +1,35 @@
 from __future__ import annotations
-import os
-import argparse
-from matplotlib import image
-import numpy as np
-from pathlib import Path
-from typing import Optional
+
 import logging
-from contextlib import contextmanager
-import skimage
-from tqdm import tqdm
+
+from scipy import ndimage as ndi
 
 # Local imports
 import bioimage_pipeline_utils as rp
 
-
 from time import time
 
 
-import numpy as np
+def process_file(input_path: str, output_path: str, size: int = 5, mode: str = 'reflect'):
+    image = rp.load_tczyx_image(input_path)
+    data = image.data
 
-
-from scipy import ndimage as ndi
-
+    closed = ndi.grey_closing(data, size=(1, 1, 1, size, size), mode=mode)
+    delta = closed - data
+    rp.save_tczyx_image(delta, output_path)   
 
 
 
 
 def main():
-    path = r"E:\Oyvind\BIP-hub-test-data\fill_holes\input\f1.tif"
-    img = rp.load_tczyx_image(path).data[0,0,0,:,:]
+    # path = r"E:\Oyvind\BIP-hub-test-data\fill_holes\input\f1.tif"
+    path = r"c:\Users\oodegard\Documents\test_data\fill_holes\250225_RPE-mNG-Phafin2_BSD_10ul_001_1.ome.tif"
 
-    print(img.shape)
-
-    # start = time()
-    # out = skimage.morphology.remove_small_holes(img, area_threshold=100, connectivity=1) 
-    # print(f"Time taken: {time() - start:.2f} seconds")
-    # print(out)
-
-
-    start = time()
-    out = ndi.grey_closing(img, size=100)
-    print(f"Time taken: {time() - start:.2f} seconds")
-    print(out)
-
+    output_path = path.replace(".ome.tif", "_filled.tif")
+    
+    start_time = time() 
+    process_file(path, output_path, size=10, mode='reflect')
+    print(f"Processing time: {time() - start_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()
