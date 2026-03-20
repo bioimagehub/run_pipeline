@@ -32,10 +32,16 @@ name = "pytorch"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
 [tool.uv.sources]
 torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
+cucim-cu12 = { index = "nvidia" }
 
  [dependency-groups]
 convert-to-tif = [
@@ -189,6 +195,10 @@ segmentation = [
 	"numpy",
 	"scipy",
 	"scikit-image",
+	"cupy-cuda12x",
+	"
+	# cucim-cu12 excluded: RAPIDS/cuCIM is Linux-only, no win_amd64 wheels exist.
+	# GPU path uses CuPy iterative fallback on Windows; use Linux/WSL2 for full cuCIM speed.
 	"scikit-learn",
 	"pandas",
 	"trackpy",

@@ -16,10 +16,7 @@ warnings.filterwarnings('ignore', category=Warning)
 warnings.simplefilter('ignore')
 
 
-from bioio import BioImage
-import os
-import jdk4py
-import scyjava.config
+
 
 def fix_java_home_problem():
     # Point JAVA_HOME at jdk4py's bundled OpenJDK 21 (must happen before JVM starts).
@@ -55,8 +52,7 @@ def fix_java_home_problem():
     _jgo_core.MavenContext.pom_parent = _fixed_pom_parent
 
 
-# Apply Java fixes at import time, before any code can accidentally trigger JVM startup.
-fix_java_home_problem()
+
 
 
 def _configure_bioformats_safe_io(input_path: str) -> None:
@@ -228,7 +224,7 @@ def load_tczyx_image(path: str) -> BioImage:
     
     lower_path = path.lower()
 
-    if lower_path.endswith((".tif", ".tiff")):
+    if lower_path.endswith((".tif", ".tiff", "ome.tif")):
         is_ome_tiff = False
         try:
             with tifffile.TiffFile(path) as tif:
@@ -310,6 +306,12 @@ def load_tczyx_image(path: str) -> BioImage:
     #             f"{'='*70}\n"
     #         ) from e
     else:
+        import jdk4py
+        import scyjava.config
+        # Apply Java fixes at import time, before any code can accidentally trigger JVM startup.
+        # TODO make this only run once!
+        fix_java_home_problem()
+
         # Unknown format - try Bio-Formats as last resort
         _configure_bioformats_safe_io(path)
         try:
