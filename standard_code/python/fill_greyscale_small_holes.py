@@ -8,6 +8,7 @@ from pathlib import Path
 from time import time
 from typing import Optional
 
+import numpy as np
 from scipy import ndimage as ndi
 from tqdm import tqdm
 
@@ -19,7 +20,13 @@ import bioimage_pipeline_utils as rp
 logger = logging.getLogger(__name__)
 
 
-def process_file(input_path: str, output_path: str, size: int = 5, mode: str = "reflect") -> bool:
+def process_file(
+    input_path: str,
+    output_path: str,
+    size: int = 5,
+    mode: str = "reflect",
+    output_format: str = "ome-tif",
+) -> bool:
     """Fill small dark holes in grayscale images by grey closing and save delta image."""
     try:
         logger.info(f"Processing: {os.path.basename(input_path)}")
@@ -30,8 +37,15 @@ def process_file(input_path: str, output_path: str, size: int = 5, mode: str = "
         closed = ndi.grey_closing(data, size=(1, 1, 1, size, size), mode=mode)
         delta = closed - data
 
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        rp.save_tczyx_image(delta, output_path)
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        if output_format == "ome-tif":
+            rp.save_tczyx_image(delta, output_path)
+        else:
+            np.save(output_path, delta)
+
         logger.info(f"Saved: {output_path}")
         return True
     except Exception as exc:
@@ -44,6 +58,7 @@ def process_files(
     output_folder: Optional[str] = None,
     size: int = 5,
     mode: str = "reflect",
+    output_format: str = "ome-tif",
     collapse_delimiter: str = "__",
     no_parallel: bool = False,
     output_extension: str = "_filled",
@@ -75,28 +90,32 @@ def process_files(
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_name = os.path.splitext(collapsed)[0] + output_extension + ".ome.tif"
+        if output_format == "ome-tif":
+            out_suffix = ".ome.tif"
+        else:
+            out_suffix = ".npy"
+        out_name = os.path.splitext(collapsed)[0] + output_extension + out_suffix
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
 
     if dry_run:
         print(f"[DRY RUN] Would process {len(file_pairs)} files")
         print(f"[DRY RUN] Output folder: {output_folder}")
-        print(f"[DRY RUN] Size: {size}, mode: {mode}")
+        print(f"[DRY RUN] Size: {size}, mode: {mode}, output-format: {output_format}")
         for src, dst in file_pairs:
             print(f"[DRY RUN] {src} -> {dst}")
         return
 
     if no_parallel or len(file_pairs) == 1:
         for src, dst in file_pairs:
-            process_file(src, dst, size=size, mode=mode)
+            process_file(src, dst, size=size, mode=mode, output_format=output_format)
     else:
         max_workers = min(os.cpu_count() or 4, len(file_pairs))
         logger.info(f"Processing with {max_workers} workers")
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(process_file, src, dst, size, mode): (src, dst)
+                executor.submit(process_file, src, dst, size, mode, output_format): (src, dst)
                 for src, dst in file_pairs
             }
             with tqdm(total=len(futures), desc="Processing files", unit="file") as pbar:
@@ -140,6 +159,7 @@ run:
   - --output-folder: '%YAML%/output'
   - --size: 10
   - --mode: reflect
+    - --output-format: npy
   - --no-parallel
   - --log-level: INFO
         """,
@@ -172,6 +192,14 @@ run:
         default="reflect",
         choices=["reflect", "nearest", "mirror", "constant", "wrap"],
         help="Border mode passed to scipy.ndimage.grey_closing (default: reflect)",
+    )
+
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        default="ome-tif",
+        choices=["ome-tif", "npy"],
+        help="Output format for delta image (default: ome-tif)",
     )
 
     parser.add_argument(
@@ -239,6 +267,7 @@ run:
         output_folder=args.output_folder,
         size=args.size,
         mode=args.mode,
+        output_format=args.output_format,
         collapse_delimiter=args.collapse_delimiter,
         no_parallel=args.no_parallel,
         output_extension=args.output_file_name_extension,
