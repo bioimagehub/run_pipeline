@@ -25,7 +25,7 @@ def process_file(
     output_path: str,
     size: int = 5,
     mode: str = "reflect",
-    output_format: str = "ome.tif",
+    output_format: str = "ome-tif",
 ) -> bool:
     """Fill small dark holes in grayscale images by grey closing and save delta image."""
     try:
@@ -37,11 +37,15 @@ def process_file(
         closed = ndi.grey_closing(data, size=(1, 1, 1, size, size), mode=mode)
         delta = closed - data
 
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        if output_format == "npy":
-            np.save(output_path, delta)
-        else:
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        if output_format == "ome-tif":
             rp.save_tczyx_image(delta, output_path)
+        else:
+            np.save(output_path, delta)
+
         logger.info(f"Saved: {output_path}")
         return True
     except Exception as exc:
@@ -54,7 +58,7 @@ def process_files(
     output_folder: Optional[str] = None,
     size: int = 5,
     mode: str = "reflect",
-    output_format: str = "ome.tif",
+    output_format: str = "ome-tif",
     collapse_delimiter: str = "__",
     no_parallel: bool = False,
     output_extension: str = "_filled",
@@ -86,15 +90,18 @@ def process_files(
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_ext = ".ome.tif" if output_format == "ome.tif" else ".npy"
-        out_name = os.path.splitext(collapsed)[0] + output_extension + out_ext
+        if output_format == "ome-tif":
+            out_suffix = ".ome.tif"
+        else:
+            out_suffix = ".npy"
+        out_name = os.path.splitext(collapsed)[0] + output_extension + out_suffix
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
 
     if dry_run:
         print(f"[DRY RUN] Would process {len(file_pairs)} files")
         print(f"[DRY RUN] Output folder: {output_folder}")
-        print(f"[DRY RUN] Size: {size}, mode: {mode}, output format: {output_format}")
+        print(f"[DRY RUN] Size: {size}, mode: {mode}, output-format: {output_format}")
         for src, dst in file_pairs:
             print(f"[DRY RUN] {src} -> {dst}")
         return
@@ -152,6 +159,7 @@ run:
   - --output-folder: '%YAML%/output'
   - --size: 10
   - --mode: reflect
+    - --output-format: npy
   - --no-parallel
   - --log-level: INFO
 
@@ -199,9 +207,9 @@ run:
     parser.add_argument(
         "--output-format",
         type=str,
-        default="ome.tif",
-        choices=["ome.tif", "npy"],
-        help="Output format for delta image (default: ome.tif)",
+        default="ome-tif",
+        choices=["ome-tif", "npy"],
+        help="Output format for delta image (default: ome-tif)",
     )
 
     parser.add_argument(
