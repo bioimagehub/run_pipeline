@@ -20,6 +20,15 @@ import bioimage_pipeline_utils as rp
 logger = logging.getLogger(__name__)
 
 
+def strip_image_suffix(filename: str) -> str:
+    """Return filename without known image extensions, including compound OME suffixes."""
+    lower_name = filename.lower()
+    for suffix in (".ome.tif", ".ome.tiff", ".tif", ".tiff", ".npy", ".ome"):
+        if lower_name.endswith(suffix):
+            return filename[: -len(suffix)]
+    return os.path.splitext(filename)[0]
+
+
 def process_file(
     input_path: str,
     output_path: str,
@@ -94,7 +103,10 @@ def process_files(
             out_suffix = ".ome.tif"
         else:
             out_suffix = ".npy"
-        out_name = os.path.splitext(collapsed)[0] + output_extension + out_suffix
+        out_stem = strip_image_suffix(collapsed)
+        if output_format == "ome-tif" and out_stem.lower().endswith(".ome"):
+            out_stem = out_stem[:-4]
+        out_name = out_stem + output_extension + out_suffix
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
 

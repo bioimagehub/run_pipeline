@@ -368,6 +368,8 @@ def run_single_file(
         logger.info(f"Reading: {input_path}")
 
     img = rp.load_tczyx_image(str(input_path))
+ 
+    
     scenes = list(img.scenes)
     n_scenes = len(scenes)
     pad_width = 1 if n_scenes <= 9 else len(str(n_scenes))
@@ -492,7 +494,10 @@ def run_single_file(
         if options.verbose:
             logger.info(f"Writing: {scene_output_path}")
 
-        rp.save_tczyx_image(result, str(scene_output_path))
+        img.set_scene(scene_id)
+        physical_pixel_sizes = getattr(img, 'physical_pixel_sizes', None)
+        rp.save_tczyx_image(result, str(scene_output_path), physical_pixel_sizes=physical_pixel_sizes)
+
         mmap_path = getattr(result, "filename", None)
         if mmap_path and isinstance(mmap_path, str) and os.path.exists(mmap_path):
             try:

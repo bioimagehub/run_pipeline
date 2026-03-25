@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
-import tifffile
 from tqdm import tqdm
 
 from bioio import BioImage
@@ -439,13 +438,25 @@ def convert_single_file(
                                 slice_data = merged_data[t, c, z, :, :]
                                 slice_filename = f"{basename}_T{t}_Z{z}_C{c}.ome.tif"
                                 slice_path = os.path.join(split_folder, slice_filename)
-                                tifffile.imwrite(slice_path, slice_data, photometric='minisblack')
+                                # Save via shared helper so OME metadata (including physical pixel sizes)
+                                # is preserved consistently across pipeline modules.
+                                rp.save_tczyx_image(
+                                    slice_data[np.newaxis, np.newaxis, np.newaxis, :, :],
+                                    slice_path,
+                                    physical_pixel_sizes=physical_pixel_sizes,
+                                )
                         else:
                             # Standard format (matches Bio-Formats Exporter): basename_Z#_C#.ome.tif
                             slice_data = merged_data[0, c, z, :, :]
                             slice_filename = f"{basename}_Z{z}_C{c}.ome.tif"
                             slice_path = os.path.join(split_folder, slice_filename)
-                            tifffile.imwrite(slice_path, slice_data, photometric='minisblack')
+                            # Save via shared helper so OME metadata (including physical pixel sizes)
+                            # is preserved consistently across pipeline modules.
+                            rp.save_tczyx_image(
+                                slice_data[np.newaxis, np.newaxis, np.newaxis, :, :],
+                                slice_path,
+                                physical_pixel_sizes=physical_pixel_sizes,
+                            )
                 
                 logger.info(f"Saved {Z * C * T} individual slice files for scene {scene_idx}")
                 logger.info(f"NIS-Elements should auto-detect and merge when opening: {basename}_Z0_C0.ome.tif")
