@@ -269,7 +269,8 @@ class Options:
     max_shift_z: float = 10.0
     only_compute: bool = False
     shifts_file: str | None = None
-    use_lazy_loading: bool = False
+    use_lazy_loading: bool = True
+    max_workers: int | None = None
     verbose: bool = True
 
 
@@ -563,7 +564,10 @@ def process_files(
                 failed += 1
                 logger.exception(f"Failed drift correction for {src}")
     else:
-        max_workers = min(os.cpu_count() or 4, len(file_pairs))
+        if options.max_workers is not None:
+            max_workers = min(options.max_workers, len(file_pairs))
+        else:
+            max_workers = min(max(1, (os.cpu_count() or 2) - 1), len(file_pairs))
         logger.info(f"Processing with {max_workers} workers")
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
@@ -598,18 +602,29 @@ def build_parser() -> argparse.ArgumentParser:
 Example YAML config for run_pipeline.exe:
 ---
 run:
-- name: Correct 3D drift for ND2 files (parallel)
+- name: Correct 3D drift for ND2 files (parallel, lazy loading on by default)
   environment: uv@3.11:drift-correction
   commands:
   - python
   - '%REPO%/standard_code/python/correct_3D_drift_python.py'
   - --input-search-pattern: '%YAML%/input/**/*.nd2'
   - --output-folder: '%YAML%/output'
-    - --channel: 0
+  - --channel: 0
   - --multi-time-scale
   - --log-level: INFO
 
-- name: Correct 3D drift (single worker for large files)
+- name: Correct 3D drift (limit to 2 workers for very large files)
+  environment: uv@3.11:drift-correction
+  commands:
+  - python
+  - '%REPO%/standard_code/python/correct_3D_drift_python.py'
+  - --input-search-pattern: '%YAML%/input/**/*.nd2'
+  - --output-folder: '%YAML%/output'
+  - --channel: 0
+  - --max-workers: 2
+  - --log-level: INFO
+
+- name: Correct 3D drift (sequential, disable lazy loading for debugging)
   environment: uv@3.11:drift-correction
   commands:
   - python
@@ -617,7 +632,7 @@ run:
   - --input-search-pattern: '%YAML%/input/**/*.ome.tif'
   - --output-folder: '%YAML%/output'
   - --no-parallel
-  - --use-lazy-loading
+  - --no-lazy-loading
   - --log-level: INFO
         """,
     )
@@ -680,9 +695,21 @@ run:
     p.add_argument("--only-compute", action="store_true", help="Only compute and save shifts.")
     p.add_argument("--use-shifts", default=None, metavar="FILE", help="Use precomputed shifts file.")
     p.add_argument(
-        "--use-lazy-loading",
+        "--no-lazy-loading",
         action="store_true",
-        help="Use lazy frame loading for drift estimation and disk-backed output for lower RAM usage",
+        help="Disable lazy (dask-based) frame loading and load the full image into RAM (not recommended for large files)",
+    )
+    # Backward-compat alias: --use-lazy-loading is now the default, this flag is a no-op
+    p.add_argument("--use-lazy-loading", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Number of parallel worker processes for multi-file runs "
+            "(default: cpu_count - 1). Use 1 to process sequentially within the executor."
+        ),
     )
 
     p.add_argument(
@@ -719,7 +746,8 @@ def main(argv: list[str] | None = None) -> int:
         max_shift_z=args.max_shift_z,
         only_compute=args.only_compute,
         shifts_file=args.use_shifts,
-        use_lazy_loading=args.use_lazy_loading,
+        use_lazy_loading=not args.no_lazy_loading,
+        max_workers=args.max_workers,
         verbose=True,
     )
 
