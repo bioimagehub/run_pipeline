@@ -570,16 +570,6 @@ run:
   - --output-folder: '%YAML%/output_data'
   - --output-format: 'tif ilastik-h5'
 
-- name: Output original + filled as 2-channel image (for Ilastik training)
-  environment: uv@3.11:fill-greyscale-holes
-  commands:
-  - python
-  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
-  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
-  - --output-folder: '%YAML%/output_data'
-  - --output-format: ilastik-h5
-  - --include-input
-
 Description:
   Fills dark regions (holes) in greyscale images while preserving intensity.
   Perfect for filling nucleoli inside nuclei or similar dark internal structures.
