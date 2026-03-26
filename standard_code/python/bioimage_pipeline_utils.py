@@ -19,6 +19,9 @@ warnings.simplefilter('ignore')
 
 
 def fix_java_home_problem():
+    import jdk4py
+    import scyjava.config
+
     # Point JAVA_HOME at jdk4py's bundled OpenJDK 21 (must happen before JVM starts).
     os.environ["JAVA_HOME"] = str(jdk4py.JAVA_HOME)
     # Prevent scyjava from overriding JAVA_HOME with its own (broken) JVM finder.
