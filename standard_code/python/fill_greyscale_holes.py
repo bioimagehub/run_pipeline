@@ -18,6 +18,8 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 import logging
+import h5py
+import json
 from contextlib import contextmanager
 from skimage.morphology import reconstruction
 from tqdm import tqdm
@@ -268,13 +270,15 @@ def greyscale_fill_holes_kernel_2d(
 
 def process_single_image(
     input_path: str,
-    output_path: str,
+    output_stem: str,
+    output_formats: list[str],
     channels: Optional[list[int]] = None,
     mode_3d: bool = False,
     show_progress: bool = True,
     kernel_size: Optional[int] = None,
     kernel_overlap: str = "half",
     return_delta: bool = False,
+    include_input: bool = False,
 ) -> bool:
     """
     Process a single image file: load, fill holes, save.
@@ -283,8 +287,11 @@ def process_single_image(
     ----------
     input_path : str
         Path to input image file.
-    output_path : str
-        Path where filled image will be saved.
+    output_stem : str
+        Output path without file extension (e.g. ``output_folder/name_filled``).
+        The correct extension is appended for each format in output_formats.
+    output_formats : list[str]
+        List of formats to save: ``"tif"``, ``"npy"``, and/or ``"ilastik-h5"``.
     channels : list[int], optional
         List of channel indices to process. If None, processes all channels.
     mode_3d : bool
@@ -292,6 +299,10 @@ def process_single_image(
         If False, process each Z-slice independently as 2D.
     show_progress : bool
         If True, show tqdm progress bar. If False, suppress progress bar.
+    include_input : bool
+        If True, output is paired per processed channel: channel 0 = original,
+        channel 1 = filled/delta. Output shape becomes
+        (T, 2 * len(channels_to_process), Z, Y, X).
         
     Returns
     -------
@@ -385,12 +396,61 @@ def process_single_image(
                             output_data[t, c, z, :, :] = filled_slice
                 
                 pbar.update(1)
-    
-    # Save result
-    logging.info(f"Saving filled image to: {Path(output_path).name}")
-    rp.save_tczyx_image(output_data, output_path)
+
+    # Optionally prepend original input as channel 0 alongside the filled channel
+    if include_input:
+        n_out = len(channels_to_process) * 2
+        paired_data = np.zeros((T, n_out, Z, Y, X), dtype=output_data.dtype)
+        for i, c in enumerate(channels_to_process):
+            paired_data[:, i * 2,     :, :, :] = img.data[:, c, :, :, :]    # original
+            paired_data[:, i * 2 + 1, :, :, :] = output_data[:, c, :, :, :]  # filled/delta
+        output_data = paired_data
+        logging.info(
+            f"  Include input: {n_out} output channels "
+            f"(original+filled pairs for each processed channel)"
+        )
+
+    # Save result in requested formats
+    for output_format in output_formats:
+        if output_format == "tif":
+            output_path = f"{output_stem}.tif"
+            logging.info(f"Saving OME-TIFF: {Path(output_path).name}")
+            rp.save_tczyx_image(output_data, output_path, physical_pixel_sizes=img.physical_pixel_sizes)
+        elif output_format == "npy":
+            output_path = f"{output_stem}.npy"
+            logging.info(f"Saving NumPy array: {Path(output_path).name}")
+            np.save(output_path, output_data)
+        elif output_format == "ilastik-h5":
+            output_path = f"{output_stem}.h5"
+            logging.info(f"Saving Ilastik HDF5: {Path(output_path).name}")
+            # Convert TCZYX -> TZYXC (channel last, Ilastik convention)
+            out_ilastik = np.transpose(output_data, (0, 2, 3, 4, 1))
+            axis_configs = [
+                {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},
+                {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+                {'key': 'y', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+                {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+                {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''},
+            ]
+            with h5py.File(output_path, 'w') as f:
+                dset = f.create_dataset('data', data=out_ilastik, compression='gzip', compression_opts=4)
+                dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
     logging.info("  Done!")
     return True
+
+
+def parse_output_formats(fmt_str) -> list[str]:
+    """Parse output format(s) from string, handling both space-separated and single values."""
+    if isinstance(fmt_str, list):
+        return fmt_str
+    formats = fmt_str.split()
+    valid_formats = {"tif", "npy", "ilastik-h5"}
+    for fmt in formats:
+        if fmt not in valid_formats:
+            raise argparse.ArgumentTypeError(f"Invalid format '{fmt}'. Choose from: tif, npy, ilastik-h5")
+    return formats
 
 
 def _parse_channels(channel_str: str) -> list[int] | None:
@@ -482,6 +542,43 @@ run:
     - --output-folder: '%YAML%/output_data'
     - --kernel-size: 40
     - --return-delta
+
+- name: Save as NumPy array
+  environment: uv@3.11:fill-greyscale-holes
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --output-format: npy
+
+- name: Save as Ilastik HDF5
+  environment: uv@3.11:fill-greyscale-holes
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --output-format: ilastik-h5
+
+- name: Save as both OME-TIFF and Ilastik HDF5
+  environment: uv@3.11:fill-greyscale-holes
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --output-format: 'tif ilastik-h5'
+
+- name: Output original + filled as 2-channel image (for Ilastik training)
+  environment: uv@3.11:fill-greyscale-holes
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --output-format: ilastik-h5
+  - --include-input
 
 Description:
   Fills dark regions (holes) in greyscale images while preserving intensity.
@@ -577,7 +674,26 @@ Notes:
         action='store_true',
         help='Return positive delta max(filled - input, 0) instead of the filled intensity image.'
     )
+
+    parser.add_argument(
+        '--include-input',
+        action='store_true',
+        help=(
+            'Include the original input as channel 0 alongside the filled/delta result as channel 1. '
+            'Produces interleaved pairs per processed channel: [orig_c0, filled_c0, orig_c1, filled_c1, ...].'
+        )
+    )
     
+    parser.add_argument(
+        '--output-format',
+        type=parse_output_formats,
+        default='tif',
+        help=(
+            "Output format(s): 'tif' (OME-TIFF), 'npy' (NumPy array), or 'ilastik-h5' (HDF5 for Ilastik). "
+            "Specify multiple as a space-separated string, e.g. 'tif npy' or 'tif ilastik-h5'."
+        )
+    )
+
     parser.add_argument(
         '--no-parallel',
         action='store_true',
@@ -615,21 +731,22 @@ Notes:
     # Define processing function for a single file
     def process_file_wrapper(input_path):
         """Wrapper function for processing a single file (used for parallel processing)."""
-        # Generate output path
+        # Generate output stem (without extension)
         input_name = Path(input_path).stem
-        output_name = f"{input_name}{args.suffix}.tif"
-        output_path = os.path.join(args.output_folder, output_name)
+        output_stem = os.path.join(args.output_folder, f"{input_name}{args.suffix}")
         
         try:
             return process_single_image(
                 input_path=input_path,
-                output_path=output_path,
+                output_stem=output_stem,
+                output_formats=args.output_format,
                 channels=args.channels,
                 mode_3d=args.mode_3d,
                 show_progress=args.no_parallel,  # Only show per-file progress in sequential mode
                 kernel_size=args.kernel_size,
                 kernel_overlap=args.kernel_overlap,
                 return_delta=args.return_delta,
+                include_input=args.include_input,
             )
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
