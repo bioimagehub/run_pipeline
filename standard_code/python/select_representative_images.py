@@ -185,7 +185,7 @@ def process_folder(args, use_parallel=True):
 
         for output_format in args.output_format:
             if output_format == "tif":
-                output_name = f"{name}_T{t:03d}.tif"
+                output_name = f"{name}{args.output_suffix}_T{t:03d}.tif"
                 output_path = os.path.join(args.output_folder, output_name)
                 rp.save_tczyx_image(
                     single_tp,
@@ -194,12 +194,12 @@ def process_folder(args, use_parallel=True):
                     physical_pixel_sizes=img.physical_pixel_sizes
                 )
             elif output_format == "npy":
-                output_name = f"{name}_T{t:03d}.npy"
+                output_name = f"{name}{args.output_suffix}_T{t:03d}.npy"
                 output_path = os.path.join(args.output_folder, output_name)
                 np.save(output_path, single_tp)
             elif output_format == "ilastik-h5":
                 # Export in TZYXC format (channel LAST) to match Ilastik's ImageJ plugin format
-                output_name = f"{name}_T{t:03d}.h5"
+                output_name = f"{name}{args.output_suffix}_T{t:03d}.h5"
                 output_path = os.path.join(args.output_folder, output_name)
                 # Convert TCZYX -> TZYXC
                 t_, c, z, y, x = single_tp.shape
@@ -251,6 +251,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--output-folder", type=str, required=True,
                         help="Folder to save selected timepoints")
+
+    parser.add_argument("--output-suffix", type=str, default="_representative",
+                        help="Suffix appended to output filenames before the selected timepoint index")
 
     parser.add_argument("--nuclear-channel", type=int, default=0,
                         help="Channel index used for feature extraction")

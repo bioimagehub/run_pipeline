@@ -16,4 +16,4 @@ run:
   - python: '%REPO%/standard_code/python/fill_greyscale_holes.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_filled'
-  - --suffix: '_filled'
+  - --output-suffix: '_filled'

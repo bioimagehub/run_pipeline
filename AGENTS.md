@@ -283,6 +283,36 @@ Never use other image I/O methods directly; always go through these helper funct
 
 ### CLI Example Format
 
+### Standard CLI Arguments
+
+For user-facing Python CLIs in `standard_code/python/`, standardize the core batch-processing arguments so pipeline YAML files are predictable across modules.
+
+Required argument names for batch file-processing CLIs:
+
+- `--input-search-pattern`
+   - Glob pattern for input files.
+   - Use this exact name instead of alternatives such as `--input`, `--input-file`, or `--input-folder` when the CLI processes one or more files from disk.
+
+- `--output-folder`
+   - Destination folder for outputs.
+   - Use this exact name instead of alternatives such as `--output`, `--output-dir`, or `--save-folder`.
+
+- `--output-suffix`
+   - Suffix appended to the input stem before the file extension.
+   - Use this exact name instead of `--suffix`, `--output-file-name-extension`, or other variants.
+   - Default values should be explicit and module-specific, for example `_filled`, `_tracked`, or `_gaussian`.
+
+- `--no-parallel`
+   - Disable parallel processing.
+   - If a CLI can process multiple files, it should expose this flag even if parallel execution is enabled by default.
+
+Implementation rules:
+
+- Prefer these exact four names in both argparse definitions and YAML examples.
+- If a script currently uses legacy names such as `--suffix` or `--output-file-name-extension`, rename them to the standardized form.
+- If a module is a true single-file utility and cannot reasonably support one or more of these arguments, document the reason clearly in the CLI help text and keep the deviation intentional rather than accidental.
+- New modules should be reviewed against this standard before they are added to `standard_code/python/`.
+
 When creating or documenting CLI tools (Python scripts in `standard_code/python/`), **ALWAYS** provide examples in YAML config format for `run_pipeline.exe`, not as bash/shell commands.
 
 **CORRECT format** (in argparse epilog):

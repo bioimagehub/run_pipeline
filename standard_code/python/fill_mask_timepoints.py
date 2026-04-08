@@ -362,7 +362,7 @@ run:
         help="Threshold for interpolated blending (0-1). Default: 0.3",
     )
     parser.add_argument(
-        "--suffix",
+        "--output-suffix",
         type=str,
         default="_filled_timepoints",
         help="Suffix to add to output filenames",
@@ -414,7 +414,7 @@ run:
         no_parallel=args.no_parallel,
         dry_run=args.dry_run,
         force=args.force,
-        suffix=args.suffix,
+        suffix=args.output_suffix,
     )
 
 

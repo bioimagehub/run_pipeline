@@ -175,6 +175,7 @@ def process_file(
     ometif_file: str,
     nis_exe_path: str,
     output_folder: str = None,
+    output_suffix: str = ".nd2",
     delete_source: bool = False,
     timeout: int = 7200
 ) -> bool:
@@ -199,7 +200,7 @@ def process_file(
             # Remove .ome if present in basename
             if base_name.endswith('.ome'):
                 base_name = base_name[:-4]
-            output_nd2_path = os.path.join(output_folder, f"{base_name}.nd2")
+            output_nd2_path = os.path.join(output_folder, f"{base_name}{output_suffix}")
             # Create output folder if needed
             os.makedirs(output_folder, exist_ok=True)
         else:
@@ -208,7 +209,7 @@ def process_file(
             # Remove .ome if present
             if output_nd2_path.endswith('.ome'):
                 output_nd2_path = output_nd2_path[:-4]
-            output_nd2_path += ".nd2"
+            output_nd2_path += output_suffix
         
         # Run NIS-Elements conversion
         success = convert_to_nd2(ometif_file, output_nd2_path, nis_exe_path, timeout=timeout)
@@ -231,7 +232,9 @@ def process_file(
 def process_files(
     input_pattern: str,
     output_folder: str = None,
+    output_suffix: str = ".nd2",
     delete_source: bool = False,
+    no_parallel: bool = False,
     dry_run: bool = False,
     timeout: int = 7200
 ) -> None:
@@ -277,19 +280,20 @@ def process_files(
                 base_name = os.path.splitext(os.path.basename(ometif_file))[0]
                 if base_name.endswith('.ome'):
                     base_name = base_name[:-4]
-                output_nd2_path = os.path.join(output_folder, f"{base_name}.nd2")
+                output_nd2_path = os.path.join(output_folder, f"{base_name}{output_suffix}")
             else:
                 output_nd2_path = os.path.splitext(ometif_file)[0]
                 if output_nd2_path.endswith('.ome'):
                     output_nd2_path = output_nd2_path[:-4]
-                output_nd2_path += ".nd2"
+                output_nd2_path += output_suffix
             
             logger.info(f"[DRY RUN] Would convert to: {output_nd2_path}")
             if delete_source:
                 logger.info(f"[DRY RUN] Would delete source: {ometif_file}")
             success_count += 1
         else:
-            if process_file(ometif_file, nis_exe_path, output_folder=output_folder, 
+            if process_file(ometif_file, nis_exe_path, output_folder=output_folder,
+                          output_suffix=output_suffix,
                           delete_source=delete_source, timeout=timeout):
                 success_count += 1
             else:
@@ -317,7 +321,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.lif'
+    - --input-search-pattern: '%YAML%/input/**/*.lif'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '.ome.tif'
   - --create-subfolders
@@ -330,7 +334,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/ometif_to_nd2.py'
-  - --input-pattern: '%YAML%/output/**/*.ome.tif'
+    - --input-search-pattern: '%YAML%/output/**/*.ome.tif'
   - --delete-source
   # Converts all OME-TIFFs to ND2 and removes originals
 
@@ -339,7 +343,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/ometif_to_nd2.py'
-  - --input-pattern: '%YAML%/ometif_files/**/*.ome.tif'
+    - --input-search-pattern: '%YAML%/ometif_files/**/*.ome.tif'
   - --output-folder: '%YAML%/nd2_files'
   - --timeout: 1200
   # Save ND2 files to different folder with longer timeout
@@ -349,7 +353,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/ometif_to_nd2.py'
-  - --input-pattern: '%YAML%/output/**/*.ome.tif'
+    - --input-search-pattern: '%YAML%/output/**/*.ome.tif'
   - --dry-run
   # Preview what would be converted without executing
 
@@ -360,12 +364,19 @@ Example workflow (LIF -> OME-TIFF -> ND2):
     )
     
     parser.add_argument(
-        "--input-pattern",
+        "--input-search-pattern",
         type=str,
         required=True,
         help="Search pattern for OME-TIFF files. "
              "Uses glob syntax with ** for recursive search. "
              "Example: '%YAML%/output/**/*.ome.tif'"
+    )
+
+    parser.add_argument(
+        "--output-suffix",
+        type=str,
+        default=".nd2",
+        help="Suffix to append before the ND2 extension output path (default: .nd2)"
     )
     
     parser.add_argument(
@@ -392,6 +403,12 @@ Example workflow (LIF -> OME-TIFF -> ND2):
         "--dry-run",
         action="store_true",
         help="Print planned actions without executing"
+    )
+
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable parallel processing (currently unused; processing is sequential)."
     )
     
     parser.add_argument(
@@ -427,9 +444,11 @@ Example workflow (LIF -> OME-TIFF -> ND2):
     
     # Process files
     process_files(
-        input_pattern=args.input_pattern,
+        input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_suffix=args.output_suffix,
         delete_source=args.delete_source,
+        no_parallel=args.no_parallel,
         dry_run=args.dry_run,
         timeout=args.timeout
     )

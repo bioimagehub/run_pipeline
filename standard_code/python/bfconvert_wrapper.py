@@ -509,7 +509,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.nd2'
+    - --input-search-pattern: '%YAML%/input/**/*.nd2'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '.ome.tif'
   - --flag=-padded
@@ -522,7 +522,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.czi'
+    - --input-search-pattern: '%YAML%/input/**/*.czi'
   - --output-folder: '%YAML%/output'
   - --max-workers: 4
   - --flag=-padded
@@ -533,7 +533,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.lif'
+    - --input-search-pattern: '%YAML%/input/**/*.lif'
   - --output-folder: '%YAML%/output'
   - --no-parallel
   - --flag=-padded
@@ -544,7 +544,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.lif'
+    - --input-search-pattern: '%YAML%/input/**/*.lif'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '_S%%s.ome.tif'
   - --flag=-padded
@@ -555,7 +555,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.lif'
+    - --input-search-pattern: '%YAML%/input/**/*.lif'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '_S%%s.ome.tif'
   - --flag=-padded
@@ -568,7 +568,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.czi'
+    - --input-search-pattern: '%YAML%/input/**/*.czi'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '_C%%c_T%%t.ome.tif'
   - --flag=-series
@@ -580,7 +580,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.oib'
+    - --input-search-pattern: '%YAML%/input/**/*.oib'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '.ome.tif'
   - --flag=-compression
@@ -607,7 +607,7 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     )
     
     parser.add_argument(
-        "--input-pattern",
+        "--input-search-pattern",
         type=str,
         required=True,
         help="Input file pattern (supports wildcards, use '**' for recursive search)"
@@ -706,7 +706,7 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     
     # Process files
     process_files(
-        input_pattern=args.input_pattern,
+        input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
         output_suffix=args.output_suffix,
         extra_flags=args.flags or [],

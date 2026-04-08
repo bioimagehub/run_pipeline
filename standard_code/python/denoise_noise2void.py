@@ -283,8 +283,10 @@ run:
                         help='Training patch size (default: 64)')
     parser.add_argument('--n2v-perc-pix', type=float, default=0.198,
                         help='Percentage of pixels to mask (default: 0.198)')
-    parser.add_argument('--suffix', type=str, default='_n2v_denoised',
+    parser.add_argument('--output-suffix', type=str, default='_n2v_denoised',
                         help='Suffix for output files (default: "_n2v_denoised")')
+    parser.add_argument('--no-parallel', action='store_true',
+                        help='Disable parallel processing (currently unused; processing is sequential).')
     parser.add_argument('--no-normalize', action='store_true',
                         help='Disable input normalization')
     
@@ -368,7 +370,7 @@ run:
             logger.info(f"\n[{idx}/{len(input_files)}] Processing: {input_file.name}")
             
             # Generate output path
-            output_path = output_folder / f"{input_file.stem}{args.suffix}{input_file.suffix}"
+            output_path = output_folder / f"{input_file.stem}{args.output_suffix}{input_file.suffix}"
             
             try:
                 denoise_stack_n2v(

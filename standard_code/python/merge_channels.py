@@ -208,7 +208,7 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
             ext = ".h5"
         else:
             ext = ".ome.tif"
-        return os.path.join(args.output_folder, stem + ext)
+        return os.path.join(args.output_folder, stem + args.output_suffix + ext)
 
     if use_parallel: # Process each file in parallel
         from contextlib import contextmanager
@@ -293,6 +293,7 @@ run:
     parser.add_argument("--input-search-pattern", type=str, required=False, help="Glob pattern for input images, e.g. 'folder/*.tif'")
     parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: input folder (use --input-search-pattern)")
     parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
+    parser.add_argument("--output-suffix", type=str, default="_merged", help="Suffix appended to output filenames before the extension")
     parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
     parser.add_argument("--output-format", type=str, choices=["tif", "npy", "ilastik-h5"], default="tif", help="Output format: 'tif' (OME-TIFF), 'npy' (NumPy array), or 'ilastik-h5' (HDF5 for Ilastik)")
     parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")

@@ -661,10 +661,10 @@ run:
     )
 
     p.add_argument(
-        "--output-file-name-extension",
+        "--output-suffix",
         type=str,
         default="",
-        help="Additional extension to add before output suffix",
+        help="Additional suffix to add before the output extension",
     )
 
     p.add_argument(
@@ -756,7 +756,7 @@ def main(argv: list[str] | None = None) -> int:
             input_pattern=args.input_search_pattern,
             output_folder=args.output_folder,
             collapse_delimiter=args.collapse_delimiter,
-            output_extension=args.output_file_name_extension,
+            output_extension=args.output_suffix,
             no_parallel=args.no_parallel,
             options=options,
         )

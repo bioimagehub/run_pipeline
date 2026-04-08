@@ -123,7 +123,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument('--input-search-pattern', required=True, help='Glob pattern for input images, e.g. "folder/*.tif" or "folder/somefile*.tif". Use a single file path for one image.')
-    parser.add_argument('--output-dir', help='Where to place outputs', default=None)
+    parser.add_argument('--output-folder', help='Where to place outputs', default=None)
     parser.add_argument('--ch', type=int, default=0, help='Channel index to process')
     parser.add_argument('--t-start', type=int, default=0, help='Start time index (file mode)')
     parser.add_argument('--t-end', type=int, default=None, help='End time index inclusive (file mode)')
@@ -159,7 +159,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if any(ch in args.input_search_pattern for ch in ['*', '?', '[']):
         image_files = [p for p in image_files if p.lower().endswith(('.tif', '.tiff'))]
     is_batch = len(image_files) > 1
-    output_dir = args.output_dir
+    output_dir = args.output_folder
     if output_dir is None and is_batch:
         output_dir = os.path.dirname(args.input_search_pattern)
     if is_batch and output_dir and not os.path.exists(output_dir):

@@ -92,84 +92,84 @@ def greyscale_fill_holes_2d(image: np.ndarray) -> np.ndarray:
     return filled
 
 
-def greyscale_fill_holes_3d(image: np.ndarray) -> np.ndarray:
-    """
-    Fill holes in 3D greyscale image (Z-stack) using morphological reconstruction.
+# def greyscale_fill_holes_3d(image: np.ndarray) -> np.ndarray:
+#     """
+#     Fill holes in 3D greyscale image (Z-stack) using morphological reconstruction.
     
-    Extends the 2D hole filling to 3D volumes. Useful for filling nucleoli
-    in confocal Z-stacks of nuclei.
+#     Extends the 2D hole filling to 3D volumes. Useful for filling nucleoli
+#     in confocal Z-stacks of nuclei.
     
-    Parameters
-    ----------
-    image : np.ndarray
-        3D greyscale image (ZYX) with holes to fill.
-        Dark regions (holes) will be filled with surrounding intensities.
+#     Parameters
+#     ----------
+#     image : np.ndarray
+#         3D greyscale image (ZYX) with holes to fill.
+#         Dark regions (holes) will be filled with surrounding intensities.
         
-    Returns
-    -------
-    filled : np.ndarray
-        Volume with holes filled, preserving greyscale intensities.
+#     Returns
+#     -------
+#     filled : np.ndarray
+#         Volume with holes filled, preserving greyscale intensities.
         
-    Examples
-    --------
-    >>> # Fill nucleoli in 3D nucleus Z-stack
-    >>> nucleus_stack = load_image("nucleus_zstack.tif")  # ZYX
-    >>> filled = greyscale_fill_holes_3d(nucleus_stack)
+#     Examples
+#     --------
+#     >>> # Fill nucleoli in 3D nucleus Z-stack
+#     >>> nucleus_stack = load_image("nucleus_zstack.tif")  # ZYX
+#     >>> filled = greyscale_fill_holes_3d(nucleus_stack)
     
-    Notes
-    -----
-    Uses 3D morphological reconstruction to fill holes that are isolated
-    in all three dimensions.
-    """
-    if image.ndim != 3:
-        raise ValueError(f"Expected 3D image, got shape {image.shape}")
+#     Notes
+#     -----
+#     Uses 3D morphological reconstruction to fill holes that are isolated
+#     in all three dimensions.
+#     """
+#     if image.ndim != 3:
+#         raise ValueError(f"Expected 3D image, got shape {image.shape}")
     
-    # Handle edge case: empty or constant image
-    if image.size == 0 or np.all(image == image.flat[0]):
-        return image.copy()
+#     # Handle edge case: empty or constant image
+#     if image.size == 0 or np.all(image == image.flat[0]):
+#         return image.copy()
     
-    # Invert the image (holes become peaks)
-    image_max = image.max()
-    inverted = image_max - image
+#     # Invert the image (holes become peaks)
+#     image_max = image.max()
+#     inverted = image_max - image
     
-    # Create seed: keep border, clear interior volume
-    seed = inverted.copy()
-    seed[1:-1, 1:-1, 1:-1] = inverted.min()
+#     # Create seed: keep border, clear interior volume
+#     seed = inverted.copy()
+#     seed[1:-1, 1:-1, 1:-1] = inverted.min()
     
-    # Morphological reconstruction in 3D
-    reconstructed = reconstruction(seed, inverted, method='dilation')
+#     # Morphological reconstruction in 3D
+#     reconstructed = reconstruction(seed, inverted, method='dilation')
     
-    # Invert back to get filled result
-    filled = image_max - reconstructed
+#     # Invert back to get filled result
+#     filled = image_max - reconstructed
     
-    return filled
+#     return filled
 
 
-def fill_holes_auto(image: np.ndarray) -> np.ndarray:
-    """
-    Automatically detect dimensionality and fill holes appropriately.
+# def fill_holes_auto(image: np.ndarray) -> np.ndarray:
+#     """
+#     Automatically detect dimensionality and fill holes appropriately.
     
-    Parameters
-    ----------
-    image : np.ndarray
-        2D (YX) or 3D (ZYX) greyscale image with holes to fill.
+#     Parameters
+#     ----------
+#     image : np.ndarray
+#         2D (YX) or 3D (ZYX) greyscale image with holes to fill.
         
-    Returns
-    -------
-    filled : np.ndarray
-        Image with holes filled.
+#     Returns
+#     -------
+#     filled : np.ndarray
+#         Image with holes filled.
         
-    Raises
-    ------
-    ValueError
-        If image is not 2D or 3D.
-    """
-    if image.ndim == 2:
-        return greyscale_fill_holes_2d(image)
-    elif image.ndim == 3:
-        return greyscale_fill_holes_3d(image)
-    else:
-        raise ValueError(f"Expected 2D or 3D image, got {image.ndim}D with shape {image.shape}")
+#     Raises
+#     ------
+#     ValueError
+#         If image is not 2D or 3D.
+#     """
+#     if image.ndim == 2:
+#         return greyscale_fill_holes_2d(image)
+#     elif image.ndim == 3:
+#         return greyscale_fill_holes_3d(image)
+#     else:
+#         raise ValueError(f"Expected 2D or 3D image, got {image.ndim}D with shape {image.shape}")
 
 
 def _cast_to_dtype(values: np.ndarray, dtype: np.dtype) -> np.ndarray:
@@ -325,6 +325,7 @@ def process_single_image(
         return False
     
     T, C, Z, Y, X = img.shape
+    img_dtype = img.dask_data.dtype
     logging.info(f"  Shape: T={T}, C={C}, Z={Z}, Y={Y}, X={X}")
     
     # Determine which channels to process
@@ -350,81 +351,28 @@ def process_single_image(
 
     if return_delta:
         logging.info("  Output mode: positive delta map (filled - input)")
-    
-    # Create output array (copy to preserve non-processed channels)
-    output_data = img.data.copy()
-    
-    # Process each timepoint and channel
-    total_operations = T * len(channels_to_process)
-    
-    with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
-        for t in range(T):
-            for c in channels_to_process:
-                # Extract the data for this T,C
-                if kernel_size is None and mode_3d and Z > 1:
-                    # Process entire Z-stack as 3D volume
-                    volume = img.data[t, c, :, :, :]  # ZYX
-                    filled_volume = greyscale_fill_holes_3d(volume)
-                    if return_delta:
-                        output_data[t, c, :, :, :] = _positive_delta(
-                            filled_volume,
-                            volume,
-                            img.data.dtype,
-                        )
-                    else:
-                        output_data[t, c, :, :, :] = filled_volume
-                else:
-                    # Process each Z-slice as 2D
-                    for z in range(Z):
-                        slice_2d = img.data[t, c, z, :, :]  # YX
-                        if kernel_size is None:
-                            filled_slice = greyscale_fill_holes_2d(slice_2d)
-                        else:
-                            filled_slice = greyscale_fill_holes_kernel_2d(
-                                slice_2d,
-                                kernel_size=kernel_size,
-                                kernel_overlap=overlap_px,
-                            )
 
-                        if return_delta:
-                            output_data[t, c, z, :, :] = _positive_delta(
-                                filled_slice,
-                                slice_2d,
-                                img.data.dtype,
-                            )
-                        else:
-                            output_data[t, c, z, :, :] = filled_slice
-                
-                pbar.update(1)
-
-    # Optionally prepend original input as channel 0 alongside the filled channel
+    # Determine output channel count
+    n_out = len(channels_to_process) * 2 if include_input else C
     if include_input:
-        n_out = len(channels_to_process) * 2
-        paired_data = np.zeros((T, n_out, Z, Y, X), dtype=output_data.dtype)
-        for i, c in enumerate(channels_to_process):
-            paired_data[:, i * 2,     :, :, :] = img.data[:, c, :, :, :]    # original
-            paired_data[:, i * 2 + 1, :, :, :] = output_data[:, c, :, :, :]  # filled/delta
-        output_data = paired_data
         logging.info(
             f"  Include input: {n_out} output channels "
             f"(original+filled pairs for each processed channel)"
         )
 
-    # Save result in requested formats
-    for output_format in output_formats:
-        if output_format == "tif":
-            output_path = f"{output_stem}.tif"
-            logging.info(f"Saving OME-TIFF: {Path(output_path).name}")
-            rp.save_tczyx_image(output_data, output_path, physical_pixel_sizes=img.physical_pixel_sizes)
-        elif output_format == "npy":
-            output_path = f"{output_stem}.npy"
-            logging.info(f"Saving NumPy array: {Path(output_path).name}")
-            np.save(output_path, output_data)
-        elif output_format == "ilastik-h5":
+    # --- Memory-efficient streaming approach ---
+    # ilastik-h5: pre-create the dataset and write one T-slice at a time (no full array needed).
+    # tif/npy: accumulate in a pre-allocated array (one allocation instead of load + copy).
+    needs_full_array = any(fmt in ('tif', 'npy') for fmt in output_formats)
+    full_output: Optional[np.ndarray] = (
+        np.empty((T, n_out, Z, Y, X), dtype=img_dtype) if needs_full_array else None
+    )
+
+    open_h5_files: dict[str, tuple] = {}
+    for fmt in output_formats:
+        if fmt == 'ilastik-h5':
             output_path = f"{output_stem}.h5"
-            logging.info(f"Saving Ilastik HDF5: {Path(output_path).name}")
-            # Convert TCZYX -> TZYXC (channel last, Ilastik convention)
-            out_ilastik = np.transpose(output_data, (0, 2, 3, 4, 1))
+            logging.info(f"Preparing Ilastik HDF5 (streaming): {Path(output_path).name}")
             axis_configs = [
                 {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},
                 {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},
@@ -432,11 +380,96 @@ def process_single_image(
                 {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},
                 {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''},
             ]
-            with h5py.File(output_path, 'w') as f:
-                dset = f.create_dataset('data', data=out_ilastik, compression='gzip', compression_opts=4)
-                dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
-        else:
-            raise ValueError(f"Unsupported output format: {output_format}")
+            f = h5py.File(output_path, 'w')
+            # Ilastik layout: TZYXC
+            dset = f.create_dataset(
+                'data',
+                shape=(T, Z, Y, X, n_out),
+                dtype=img_dtype,
+                compression='gzip',
+                compression_opts=4,
+            )
+            dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
+            open_h5_files[output_path] = (f, dset)
+
+    total_operations = T * len(channels_to_process)
+
+    try:
+        with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
+            for t in range(T):
+                # Load just one timepoint: shape (C, Z, Y, X) — far smaller than the full array
+                czyx = img.get_image_data("CZYX", T=t)
+
+                if include_input:
+                    out_czyx = np.empty((n_out, Z, Y, X), dtype=img_dtype)
+                else:
+                    out_czyx = czyx.copy()  # preserve non-processed channels
+
+                for c_idx, c in enumerate(channels_to_process):
+                    if kernel_size is None and mode_3d and Z > 1:
+                        raise NotImplementedError("3D kernel mode is not implemented. Use 2D kernel or disable kernel mode.")
+                        # volume = czyx[c]  # ZYX
+                        # filled_volume = greyscale_fill_holes_3d(volume)
+                        # result = (
+                        #     _positive_delta(filled_volume, volume, img_dtype)
+                        #     if return_delta
+                        #     else _cast_to_dtype(filled_volume, img_dtype)
+                        # )
+                        # if include_input:
+                        #     out_czyx[c_idx * 2] = czyx[c]
+                        #     out_czyx[c_idx * 2 + 1] = result
+                        # else:
+                        #     out_czyx[c] = result
+                    else:
+                        # use 2D kernel
+                        for z in range(Z):
+                            slice_2d = czyx[c, z]
+                            filled_slice = (
+                                greyscale_fill_holes_kernel_2d(
+                                    slice_2d,
+                                    kernel_size=kernel_size,
+                                    kernel_overlap=overlap_px,
+                                )
+                                if kernel_size is not None
+                                else greyscale_fill_holes_2d(slice_2d)
+                            )
+                            result_2d = (
+                                _positive_delta(filled_slice, slice_2d, img_dtype)
+                                if return_delta
+                                else _cast_to_dtype(filled_slice, img_dtype)
+                            )
+                            if include_input:
+                                out_czyx[c_idx * 2, z] = slice_2d
+                                out_czyx[c_idx * 2 + 1, z] = result_2d
+                            else:
+                                out_czyx[c, z] = result_2d
+
+                    pbar.update(1)
+
+                # Stream to open HDF5 files (reorder CZYX -> ZYXC for Ilastik)
+                for _path, (_f, _dset) in open_h5_files.items():
+                    _dset[t] = np.transpose(out_czyx, (1, 2, 3, 0))
+
+                if full_output is not None:
+                    full_output[t] = out_czyx
+
+    finally:
+        for output_path, (f, _dset) in open_h5_files.items():
+            f.close()
+            logging.info(f"Saved Ilastik HDF5: {Path(output_path).name}")
+
+    # Write formats that require the complete array
+    if full_output is not None:
+        for fmt in output_formats:
+            if fmt == 'tif':
+                output_path = f"{output_stem}.tif"
+                logging.info(f"Saving OME-TIFF: {Path(output_path).name}")
+                rp.save_tczyx_image(full_output, output_path, physical_pixel_sizes=img.physical_pixel_sizes)
+            elif fmt == 'npy':
+                output_path = f"{output_stem}.npy"
+                logging.info(f"Saving NumPy array: {Path(output_path).name}")
+                np.save(output_path, full_output)
+
     logging.info("  Done!")
     return True
 
@@ -505,14 +538,15 @@ run:
   - --input-search-pattern: '%YAML%/input_data/**/*nucleus*.tif'
   - --output-folder: '%YAML%/output_data'
 
-- name: Fill holes in 3D Z-stacks (volumetric)
-  environment: uv@3.11:fill-greyscale-holes
-  commands:
-  - python
-  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
-  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
-  - --output-folder: '%YAML%/output_data'
-  - --mode-3d
+# 3D mode is written but not tested yet - commented out to avoid confusion until verified
+# - name: Fill holes in 3D Z-stacks (volumetric)
+#   environment: uv@3.11:fill-greyscale-holes
+#   commands:
+#   - python
+#   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+#   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+#   - --output-folder: '%YAML%/output_data'
+#   - --mode-3d
 
 - name: Fill holes in channels 0 and 2
   environment: uv@3.11:fill-greyscale-holes
@@ -622,7 +656,7 @@ Notes:
     )
     
     parser.add_argument(
-        '--suffix',
+        '--output-suffix',
         type=str,
         default='_filled',
         help='Suffix to add to output filenames (default: "_filled")'
@@ -689,6 +723,16 @@ Notes:
         action='store_true',
         help='Do not use parallel processing.'
     )
+
+    parser.add_argument(
+        '--max-workers',
+        type=int,
+        default=None,
+        help=(
+            'Maximum number of parallel worker processes (default: use all CPU cores). '
+            'Reduce when processing large files to avoid out-of-memory errors.'
+        )
+    )
     
     args = parser.parse_args()
 
@@ -723,7 +767,7 @@ Notes:
         """Wrapper function for processing a single file (used for parallel processing)."""
         # Generate output stem (without extension)
         input_name = Path(input_path).stem
-        output_stem = os.path.join(args.output_folder, f"{input_name}{args.suffix}")
+        output_stem = os.path.join(args.output_folder, f"{input_name}{args.output_suffix}")
         
         try:
             return process_single_image(
@@ -747,11 +791,12 @@ Notes:
     # Process files (with or without parallel processing)
     if not args.no_parallel:
         from joblib import Parallel, delayed
-        logging.info(f"Processing {len(input_files)} files in parallel...")
+        n_jobs = -1 if args.max_workers is None else args.max_workers
+        logging.info(f"Processing {len(input_files)} files in parallel (n_jobs={n_jobs})...")
         with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
             with _tqdm_joblib(pbar):
                 results = list(
-                    Parallel(n_jobs=-1)(
+                    Parallel(n_jobs=n_jobs)(
                         delayed(process_file_wrapper)(file)
                         for file in input_files
                     )

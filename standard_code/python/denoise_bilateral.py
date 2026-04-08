@@ -156,8 +156,10 @@ run:
                         help='Color space sigma (default: 75, increase for more smoothing)')
     parser.add_argument('--sigma-space', type=int, default=75,
                         help='Coordinate space sigma (default: 75)')
-    parser.add_argument('--suffix', type=str, default='_denoised',
+    parser.add_argument('--output-suffix', type=str, default='_denoised',
                         help='Suffix for output files (default: "_denoised")')
+    parser.add_argument('--no-parallel', action='store_true',
+                        help='Disable parallel processing (currently unused; processing is sequential).')
     
     args = parser.parse_args()
     
@@ -179,7 +181,7 @@ run:
         logger.info(f"\n[{idx}/{len(input_files)}] Processing: {input_file.name}")
         
         # Generate output path
-        output_path = output_folder / f"{input_file.stem}{args.suffix}{input_file.suffix}"
+        output_path = output_folder / f"{input_file.stem}{args.output_suffix}{input_file.suffix}"
         
         try:
             denoise_stack(

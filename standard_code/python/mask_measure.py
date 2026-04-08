@@ -93,7 +93,8 @@ def main():
     parser = argparse.ArgumentParser(description="Measure regions in a mask for a TCZYX image or batch of images.")
     parser.add_argument('--input-search-pattern', required=True, help='Glob pattern for input images, e.g. "folder/*.tif" or "folder/somefile*.tif". Use a single file path for one image.')
     parser.add_argument('--mask-search-pattern', nargs='?', required=True, help='Glob pattern for mask images, e.g. "folder/*_nuc.tif". The * will be replaced with the prefix of the input image before the * in its pattern.')
-    parser.add_argument('--output', required=False, default=None, help='Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the mask.')
+    parser.add_argument('--output-folder', required=False, default=None, help='Destination folder for output CSV files. For a single matched file, a full .csv path is also accepted for compatibility.')
+    parser.add_argument('--output-suffix', required=False, default='_measurements', help='Suffix appended to output CSV filenames before the extension.')
     parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
     args = parser.parse_args()
@@ -101,12 +102,12 @@ def main():
     image_files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     is_batch = len(image_files) > 1
     # Set default output folder to mask folder if not provided
-    if args.output is None:
+    if args.output_folder is None:
         # Use the folder of the mask-search-pattern
         mask_folder = os.path.dirname(args.mask_search_pattern)
         output_folder = mask_folder
     else:
-        output_folder = args.output
+        output_folder = args.output_folder
     if is_batch and not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
@@ -146,10 +147,10 @@ def main():
             mask_name = mask_pattern_after_star_noext.lstrip('_').lstrip('.')
         else:
             mask_name = os.path.splitext(os.path.basename(mask_path))[0]
-        if is_batch:
-            out_csv = os.path.join(output_folder, f'{base_name}.csv')
-        else:
+        if not is_batch and output_folder and output_folder.lower().endswith('.csv'):
             out_csv = output_folder
+        else:
+            out_csv = os.path.join(output_folder, f'{base_name}{args.output_suffix}.csv')
         jobs.append((image_path, mask_path, out_csv, base_name, mask_name))
 
 

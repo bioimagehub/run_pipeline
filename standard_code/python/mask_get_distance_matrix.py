@@ -12,7 +12,7 @@ import bioimage_pipeline_utils as rp
 
 
 
-def process_file(mask_path: str, output_folder_path: str) -> None:
+def process_file(mask_path: str, output_folder_path: str, output_suffix: str) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
     
     mask = rp.load_tczyx_image(mask_path)  # TCZYX
@@ -72,7 +72,7 @@ def process_file(mask_path: str, output_folder_path: str) -> None:
                 overall_distance_matrix[mask_frame, mask_channel, mask_zslice, :, :] = distance_matrix_for_frame
 
     # Save the overall distance matrix
-    output_file_path = f"{output_file_basename}_distance_matrix.tif"
+    output_file_path = f"{output_file_basename}{output_suffix}.tif"
     # rp.save_mask(overall_distance_matrix, output_file_path, as_binary=False)
     rp.save_tczyx_image(
         overall_distance_matrix,
@@ -89,7 +89,7 @@ def process_folder(args: argparse.Namespace):
     if args.no_parallel:
         # Sequential processing
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-            process_file(mask_path=input_file_path, output_folder_path=args.output_folder)
+            process_file(mask_path=input_file_path, output_folder_path=args.output_folder, output_suffix=args.output_suffix)
     else:
         # Parallel processing
         cpu_count = os.cpu_count() or 1
@@ -101,7 +101,8 @@ def process_folder(args: argparse.Namespace):
                 future = executor.submit(
                     process_file,
                     mask_path=input_file_path,
-                    output_folder_path=args.output_folder
+                    output_folder_path=args.output_folder,
+                    output_suffix=args.output_suffix
                 )
                 futures.append(future)
             
@@ -117,6 +118,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process masks and convert indexed masks to distance matrix")
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'")
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
+    parser.add_argument("--output-suffix", type=str, default="_distance_matrix", help="Suffix appended to output filenames before the extension")
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
 
     parsed_args = parser.parse_args()

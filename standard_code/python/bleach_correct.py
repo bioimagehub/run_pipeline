@@ -353,10 +353,10 @@ run:
     )
     
     parser.add_argument(
-        "--output-file-name-extension",
+        "--output-suffix",
         type=str,
         default="_bleach_corrected",
-        help="Extension to add before .tif (default: '_bleach_corrected')"
+        help="Suffix to add before .tif (default: '_bleach_corrected')"
     )
     
     parser.add_argument(
@@ -400,7 +400,7 @@ run:
         match_method=args.match_method,
         collapse_delimiter=args.collapse_delimiter,
         no_parallel=args.no_parallel,
-        output_extension=args.output_file_name_extension,
+        output_extension=args.output_suffix,
         dry_run=args.dry_run
     )
 

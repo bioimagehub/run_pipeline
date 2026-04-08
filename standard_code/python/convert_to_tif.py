@@ -748,10 +748,10 @@ run:
     )
     
     parser.add_argument(
-        "--output-file-name-extension",
+        "--output-suffix",
         type=str,
         default="",
-        help="Additional extension to add before .ome.tif"
+        help="Additional suffix to add before .ome.tif"
     )
     
     parser.add_argument(
@@ -845,7 +845,7 @@ run:
         collapse_delimiter=args.collapse_delimiter,
         no_parallel=args.no_parallel,
         save_metadata=not args.no_metadata,
-        output_extension=args.output_file_name_extension,
+        output_extension=args.output_suffix,
         dry_run=args.dry_run,
         standard_tif=args.standard_tif,
         split=args.split,

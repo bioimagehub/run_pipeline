@@ -501,7 +501,7 @@ run:
                        help='Maximum gap size (in frames) to fill (default: 2)')
     parser.add_argument('--search-subfolders', action='store_true',
                        help='Enable recursive search for files')
-    parser.add_argument('--suffix', type=str, default='_filled',
+    parser.add_argument('--output-suffix', type=str, default='_filled',
                        help='Suffix to add to output filenames (default: "_filled")')
     parser.add_argument('--no-parallel', action='store_true',
                        help='Disable parallel processing')
@@ -526,7 +526,7 @@ run:
     if args.output_folder is None:
         # Use input folder with suffix
         first_file_dir = os.path.dirname(mask_files[0])
-        output_folder = first_file_dir + args.suffix
+        output_folder = first_file_dir + args.output_suffix
     else:
         output_folder = args.output_folder
     
@@ -537,7 +537,7 @@ run:
         for mask_path in mask_files:
             logging.info(f"\n{'='*60}")
             logging.info(f"Processing: {Path(mask_path).name}")
-            output_name = Path(mask_path).stem + args.suffix + Path(mask_path).suffix
+            output_name = Path(mask_path).stem + args.output_suffix + Path(mask_path).suffix
             output_path = os.path.join(output_folder, output_name)
             _process_one_task((mask_path, output_path, args.max_gap_size, False))
     else:
@@ -545,7 +545,7 @@ run:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             tasks = []
             for path in mask_files:
-                output_name = Path(path).stem + args.suffix + Path(path).suffix
+                output_name = Path(path).stem + args.output_suffix + Path(path).suffix
                 output_path = os.path.join(output_folder, output_name)
                 tasks.append((path, output_path, args.max_gap_size, True))
             futures = {executor.submit(_process_one_task, task): task[0] for task in tasks}
