@@ -534,7 +534,7 @@ run:
 	commands:
 	  - python
 	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
-	  - --input-pattern: '%YAML%/input_masks/**/*.tif'
+	  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
 	  - --output-folder: '%YAML%/output_watershed'
 	  - --tolerance: 0.5
 	  - --max-fragment-length: 100
@@ -545,7 +545,7 @@ run:
 	commands:
 	  - python
 	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
-	  - --input-pattern: '%YAML%/masks/**/*.tif'
+	  - --input-search-pattern: '%YAML%/masks/**/*.tif'
 	  - --output-folder: '%YAML%/output_watershed'
 	  - --tolerance: 0.5
 	  - --max-fragment-length: 100
@@ -559,7 +559,7 @@ run:
 	commands:
 	  - python
 	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
-	  - --input-pattern: '%YAML%/masks/**/*.tif'
+	  - --input-search-pattern: '%YAML%/masks/**/*.tif'
 	  - --output-folder: '%YAML%/output_watershed'
 	  - --tolerance: 1.0
 	  - --max-fragment-length: 50
@@ -609,14 +609,14 @@ Always enabled:
   - Binary mask output (foreground=255, background=0)
 
 Example usage:
-  python mask_watershed_cut.py --input-pattern "masks/*.tif" \
+	python mask_watershed_cut.py --input-search-pattern "masks/*.tif" \
 	  --output-folder "output" --tolerance 0.5 --max-fragment-length 100 \
 	  --remove-xy-edges --min-size 100 --max-size 100000 --save-rois
 		"""
 	)
 	
 	parser.add_argument(
-		"--input-pattern", required=True,
+		"--input-search-pattern", required=True,
 		help="Input file pattern for binary masks (supports wildcards, use '**' for recursive)"
 	)
 	parser.add_argument(
@@ -677,7 +677,7 @@ Example usage:
 	max_size = float('inf') if args.max_size.lower() == 'inf' else float(args.max_size)
 	
 	process_folder(
-		input_pattern=args.input_pattern,
+		input_pattern=args.input_search_pattern,
 		output_folder=args.output_folder,
 		tolerance=args.tolerance,
 		max_fragment_length=args.max_fragment_length,

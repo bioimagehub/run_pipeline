@@ -135,7 +135,8 @@ def find_maxima_in_image(image_path: str, output_csv: str, min_distance, thresho
 def main():
     parser = argparse.ArgumentParser(description="Find local maxima in a TCZYX image and save coordinates to CSV.")
     parser.add_argument('--input-search-pattern', required=True, help='Glob pattern for input images, e.g. "folder/*.tif" or "folder/somefile*.tif". Use a single file path for one image.')
-    parser.add_argument('--output', required=False, default=None, help='Path to output CSV file or output folder (if using batch mode). Defaults to the folder of the input.')
+    parser.add_argument('--output-folder', required=False, default=None, help='Destination folder for output CSV files. For a single matched file, a full .csv path is also accepted for compatibility.')
+    parser.add_argument('--output-suffix', required=False, default='_maxima', help='Suffix appended to output CSV filenames before the extension.')
     parser.add_argument('--min-distance', type=rp.split_comma_separated_intstring, default=[10], help='Minimum number of pixels separating peaks. Comma-separated list, one per channel, or single value for all (default: 10)')
     parser.add_argument('--threshold-abs', type=rp.split_comma_separated_strstring, default=[0], help='Minimum intensity of peaks. Comma-separated list, one per channel, or expressions: mean, median, 2*mean, 2*median, -1 (skip channel).')
     parser.add_argument('--mask-search-patterns', nargs='*', default=None, help='List of glob patterns for mask images, e.g. "folder/*_nuc.tif folder/*_cyt.tif". For each maxima, the value at XY in each mask will be stored in a column <masklabel>_label.')
@@ -145,21 +146,21 @@ def main():
 
     image_files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     is_batch = len(image_files) > 1
-    if args.output is None:
+    if args.output_folder is None:
         input_folder = os.path.dirname(args.input_search_pattern)
         output_folder = input_folder
     else:
-        output_folder = args.output
+        output_folder = args.output_folder
     if is_batch and not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
     jobs = []
     for image_path in image_files:
         base_name = os.path.splitext(os.path.basename(image_path))[0]
-        if is_batch:
-            out_csv = os.path.join(output_folder, f'{base_name}_maxima.csv')
-        else:
+        if not is_batch and output_folder and output_folder.lower().endswith('.csv'):
             out_csv = output_folder
+        else:
+            out_csv = os.path.join(output_folder, f'{base_name}{args.output_suffix}.csv')
         jobs.append((image_path, out_csv))
 
     def process_job(job):

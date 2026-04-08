@@ -7,6 +7,6 @@ run:
   - --input-search-pattern: ./output_summary/*.tif
   - --output-folder: ./rois
   # Optional flags:
-  # - --output-file-name-extension: _rois
+  # - --output-suffix: _rois
   # - --search-subfolders
   # - --no-parallel

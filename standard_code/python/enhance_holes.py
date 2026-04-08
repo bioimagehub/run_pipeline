@@ -333,7 +333,7 @@ Notes:
         help="Output folder for scored images",
     )
     parser.add_argument(
-        "--suffix",
+        "--output-suffix",
         type=str,
         default="_hole_score",
         help='Suffix to add to output filenames (default: "_hole_score")',
@@ -406,7 +406,7 @@ Notes:
         else:
             input_name = Path(input_path).stem
         output_extension = ".ome.tif" if args.output_format == "ome.tif" else ".npy"
-        output_name = f"{input_name}{args.suffix}{output_extension}"
+        output_name = f"{input_name}{args.output_suffix}{output_extension}"
         output_path = os.path.join(args.output_folder, output_name)
 
         try:

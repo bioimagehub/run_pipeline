@@ -223,6 +223,7 @@ def process_single_file(
 def process_files(
     input_pattern: str,
     output_folder: str | None,
+    output_suffix: str | None,
     method: Literal["mean", "min", "max", "median", "gaussian"],
     mode: Literal["2d", "3d"],
     channels: list[int] | None,
@@ -257,7 +258,8 @@ def process_files(
     tasks: list[tuple[str, str]] = []
     for input_path in input_files:
         basename = os.path.splitext(os.path.basename(input_path))[0]
-        output_filename = f"{basename}_{method}.tif"
+        effective_output_suffix = output_suffix or f"_{method}"
+        output_filename = f"{basename}{effective_output_suffix}.tif"
         output_path = os.path.join(output_folder, output_filename)
         tasks.append((input_path, output_path))
 
@@ -453,6 +455,11 @@ run:
         help="Output folder (default: <input_root>_<method>_filtered)",
     )
     parser.add_argument(
+        "--output-suffix",
+        default=None,
+        help="Suffix to append before the output extension (default: _<method>)",
+    )
+    parser.add_argument(
         "--method",
         choices=["mean", "min", "max", "median", "gaussian"],
         default="gaussian",
@@ -546,6 +553,7 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_suffix=args.output_suffix,
         method=args.method,
         mode=args.mode,
         channels=args.channels,

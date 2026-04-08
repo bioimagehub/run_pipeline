@@ -238,10 +238,10 @@ run:
     )
 
     parser.add_argument(
-        "--output-file-name-extension",
+        "--output-suffix",
         type=str,
         default="_filled",
-        help="Additional extension to add before output extension (default: _filled)",
+        help="Additional suffix to add before output extension (default: _filled)",
     )
 
     parser.add_argument(
@@ -292,7 +292,7 @@ run:
         output_format=args.output_format,
         collapse_delimiter=args.collapse_delimiter,
         no_parallel=args.no_parallel,
-        output_extension=args.output_file_name_extension,
+        output_extension=args.output_suffix,
         dry_run=args.dry_run,
     )
     logger.info(f"Finished in {time() - start_time:.2f} seconds")

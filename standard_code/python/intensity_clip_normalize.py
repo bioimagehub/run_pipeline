@@ -234,7 +234,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
 
     parser.add_argument(
-        "--output-file-name-extension",
+        "--output-suffix",
         type=str,
         default="_normalized"
     )
@@ -254,7 +254,7 @@ def main():
         output_mode=args.output_mode,
         per_timepoint=args.per_timepoint,
         no_parallel=args.no_parallel,
-        output_extension=args.output_file_name_extension,
+        output_extension=args.output_suffix,
         dry_run=args.dry_run
     )
 

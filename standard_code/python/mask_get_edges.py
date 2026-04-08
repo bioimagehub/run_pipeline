@@ -8,7 +8,7 @@ from bioio.writers import OmeTiffWriter
 
 import bioimage_pipeline_utils as rp
 
-def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int) -> None:
+def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int, output_suffix: str) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
     
     mask = rp.load_tczyx_image(mask_path)  # Load the mask
@@ -83,7 +83,7 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
                     indexed_mask[mask_frame, mask_channel, mask_zslice, :, :] = global_distance_mask
 
     # Save the indexed mask
-    output_file_path = f"{output_file_basename}_edge.tif"
+    output_file_path = f"{output_file_basename}{output_suffix}.tif"
     rp.save_tczyx_image(indexed_mask, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
   
 def process_folder(args: argparse.Namespace):
@@ -91,7 +91,7 @@ def process_folder(args: argparse.Namespace):
     os.makedirs(args.output_folder, exist_ok=True)
 
     for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-        process_file(mask_path = input_file_path, output_folder_path = args.output_folder, distance_inside=args.distance_inside, distance_outside=args.distance_outside)
+        process_file(mask_path = input_file_path, output_folder_path = args.output_folder, distance_inside=args.distance_inside, distance_outside=args.distance_outside, output_suffix=args.output_suffix)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process masks and convert indexed masks to defined edge regions")
@@ -100,6 +100,8 @@ if __name__ == "__main__":
     parser.add_argument("--distance-inside", type=int, default= 3, help="How far inside the object should the mask be extended? (default: 3 pixels)")
     parser.add_argument("--distance-outside", type=int, default= 3, help="How far outside the object should the mask be extended? (default: 3 pixels)")
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
+    parser.add_argument("--output-suffix", type=str, default="_edge", help="Suffix appended to output filenames before the extension")
+    parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (currently unused; processing is sequential).")
     parsed_args = parser.parse_args()
     
     if not parsed_args.output_folder:

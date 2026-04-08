@@ -226,6 +226,7 @@ def remove_large_objects_from_mask(mask: np.ndarray, max_size: float) -> np.ndar
 def process_image(
     input_path: str,
     output_folder: str,
+    output_suffix: str = "_mask",
     channel: int = 0,
     threshold_method: str = None,
     threshold_min: float = None,
@@ -244,10 +245,11 @@ def process_image(
     
     # Prepare output paths early (needed for early exits)
     input_name = Path(input_path).stem
-    mask_path = os.path.join(output_folder, f"{input_name}_mask.tif")
-    labeled_mask_path = os.path.join(output_folder, f"{input_name}_mask_labeled.tif")
-    roi_path = os.path.join(output_folder, f"{input_name}_rois.zip")
-    failed_mask_path_basename = os.path.join(output_folder, f"{input_name}")
+    output_stem = f"{input_name}{output_suffix}"
+    mask_path = os.path.join(output_folder, f"{output_stem}.tif")
+    labeled_mask_path = os.path.join(output_folder, f"{output_stem}_labeled.tif")
+    roi_path = os.path.join(output_folder, f"{output_stem}_rois.zip")
+    failed_mask_path_basename = os.path.join(output_folder, output_stem)
 
     # Load image
     img = rp.load_tczyx_image(input_path)
@@ -379,6 +381,7 @@ def process_image(
 def process_folder(
     input_pattern: str,
     output_folder: str,
+    output_suffix: str,
     channel: int,
     threshold_method: str,
     threshold_min: float,
@@ -408,7 +411,7 @@ def process_folder(
     def process_one(file_path):
         try:
             process_image(
-                file_path, output_folder, channel, threshold_method,
+                file_path, output_folder, output_suffix, channel, threshold_method,
                 threshold_min, threshold_max, gaussian_sigma, fill_holes, remove_xy_edges, remove_z_edges, min_size, max_size, save_rois, save_labeled
             )
         except Exception as e:
@@ -456,6 +459,7 @@ run:
       - '%REPO%/standard_code/python/segment_threshold_simple.py'
       - --input-search-pattern: '%YAML%/input_data/**/*.tif'
       - --output-folder: '%YAML%/output_masks'
+    - --output-suffix: '_segmented'
       - --channel: 0
       - --method: li
       - --gaussian-sigma: 0
@@ -472,6 +476,7 @@ run:
       - '%REPO%/standard_code/python/segment_threshold_simple.py'
       - --input-search-pattern: '%YAML%/input_data/**/*.tif'
       - --output-folder: '%YAML%/output_masks'
+            - --output-suffix: '_segmented'
       - --channel: 1
       - --method: otsu
       - --gaussian-sigma: 2.0
@@ -488,6 +493,7 @@ run:
       - '%REPO%/standard_code/python/segment_threshold_simple.py'
       - --input-search-pattern: '%YAML%/distance_matrix/**/*.tif'
       - --output-folder: '%YAML%/mask_edge'
+            - --output-suffix: '_edge_band'
       - --threshold: 1 10
 
   - name: Threshold distance maps for nucleus interior
@@ -497,6 +503,7 @@ run:
       - '%REPO%/standard_code/python/segment_threshold_simple.py'
       - --input-search-pattern: '%YAML%/distance_matrix/**/*.tif'
       - --output-folder: '%YAML%/mask_bulk'
+            - --output-suffix: '_bulk'
       - --threshold: 11 inf
 
 Notes:
@@ -535,6 +542,10 @@ Example usage (numeric threshold):
     parser.add_argument(
         "--output-folder", required=True,
         help="Output folder for masks (and ROIs if --save-rois is set)"
+    )
+    parser.add_argument(
+        "--output-suffix", type=str, default="_mask",
+        help="Suffix appended to the input stem for the main mask output (default: _mask)"
     )
     parser.add_argument(
         "--channel", type=int, default=0,
@@ -583,7 +594,7 @@ Example usage (numeric threshold):
     )
     parser.add_argument(
         "--save-labeled", action="store_true",
-        help="Save labeled mask as *_mask_labeled.tif (disabled by default)"
+        help="Save labeled mask as <input><output-suffix>_labeled.tif (disabled by default)"
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true",
@@ -624,6 +635,7 @@ Example usage (numeric threshold):
     process_folder(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_suffix=args.output_suffix,
         channel=args.channel,
         threshold_method=args.method,
         threshold_min=threshold_min,

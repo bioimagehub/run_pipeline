@@ -67,5 +67,5 @@ run:
   - python
   - ./standard_code/python/segment_nellie.py
   - --input-search-pattern: ./input_C2Z38_ER-FA_tif/*.tif
-  - --output-dir: ./nellie_output
+  - --output-folder: ./nellie_output
   - --ch: 0

@@ -84,12 +84,15 @@ def process_folder_or_file(args: argparse.Namespace):
         print("No files found to process.")
         return
 
-    destination_folder = (args.input_search_pattern.rstrip(os.sep) if os.path.isdir(args.input_search_pattern) else base_folder.rstrip(os.sep)) + "_tracked"
+    destination_folder = args.output_folder or (
+        (args.input_search_pattern.rstrip(os.sep) if os.path.isdir(args.input_search_pattern) else base_folder.rstrip(os.sep))
+        + "_tracked"
+    )
     os.makedirs(destination_folder, exist_ok=True)
 
     def process_single_file(input_file_path):
         output_file_name = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)
-        output_file_name = os.path.splitext(output_file_name)[0] + args.output_file_name_extension + ".tif"
+        output_file_name = os.path.splitext(output_file_name)[0] + args.output_suffix + ".tif"
         output_file_path = os.path.join(destination_folder, output_file_name)
         process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel)
 
@@ -127,7 +130,8 @@ if __name__ == "__main__":
     parser.add_argument("--search-subfolders", action="store_true", help="Search recursively in subfolders.")
     parser.add_argument("--collapse-delimiter", type=str, default="__", help="Delimiter for flattening output filenames.")
     parser.add_argument("--tracking-channel", type=int, default=0, help="Channel to use for tracking (default: 0).")
-    parser.add_argument("--output-file-name-extension", type=str, default="_tracked", help="Extension to append to output file name (default: '_tracked').")
+    parser.add_argument("--output-folder", type=str, default=None, help="Output folder for tracked mask files (default: <input_root>_tracked).")
+    parser.add_argument("--output-suffix", type=str, default="_tracked", help="Suffix to append to output file name (default: '_tracked').")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing.")
 
     args = parser.parse_args()

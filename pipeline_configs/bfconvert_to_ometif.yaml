@@ -26,7 +26,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.nd2'
+  - --input-search-pattern: '%YAML%/input/**/*.nd2'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '_S%%s.ome.tif'
   - --flag=-padded
@@ -38,7 +38,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.czi'
+  - --input-search-pattern: '%YAML%/input/**/*.czi'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '_S%%s.ome.tif'
   - --flag=-padded
@@ -50,7 +50,7 @@ run:
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
-  - --input-pattern: '%YAML%/input/**/*.lif'
+  - --input-search-pattern: '%YAML%/input/**/*.lif'
   - --output-folder: '%YAML%/output'
   - --output-suffix: '_S%%s.ome.tif'
   - --flag=-padded
