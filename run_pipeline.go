@@ -995,7 +995,7 @@ func main() {
 			fmt.Println("  # - type: force  - Enables force reprocessing for all subsequent segments (same as --force_reprocessing). Optional: add a 'message' field.")
 			fmt.Println("# Example: Copy this block directly to your YAML file:")
 			fmt.Println("run:")
-			fmt.Println("- name: Collapse folder structure and save as .tif\n  environment: convert_to_tif\n  commands:\n    - python\n    - ./standard_code/python/convert_to_tif.py\n    - --input-file-or-folder: ./input\n    - --extension: .ims\n    - --projection-method: max\n    - --search-subfolders\n    - --collapse-delimiter: __\n- name: Enable force mode mid-pipeline\n  type: force\n  message: 'Reprocessing all subsequent steps.'\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
+			fmt.Println("- name: Convert ND2 to OME-TIFF\n  environment: uv@3.11:default\n  commands:\n    - python\n    - '%REPO%/standard_code/python/convert_to_tif.py'\n    - --input-search-pattern: '%YAML%/input_data/**/*.nd2'\n    - --output-folder: '%YAML%/output_data'\n- name: Enable force mode mid-pipeline\n  type: force\n  message: 'Reprocessing all subsequent steps.'\n- name: Pause for inspection\n  type: pause\n  message: 'Paused for user inspection.'\n- name: Stop pipeline\n  type: stop\n  message: 'Pipeline stopped intentionally.'")
 			os.Exit(0)
 		} else if arg == "--design" || arg == "-d" {
 			designMode = true

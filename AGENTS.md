@@ -13,8 +13,9 @@ The BIPHUB Pipeline Manager is a robust, reproducible pipeline orchestration sys
    - Language-agnostic: can execute any command line program or script
    - Manages environment isolation using UV package manager and Conda environments
    - Provides reproducible execution with comprehensive logging and error handling
-   - YAML-based configuration system for flexible pipeline definitions
-   - when making yaml configs for run pipeline do a quick run of `run_pipeline.exe -h` to get the latest commands and best practices 
+   - YAML-based configuration system using a top-level `run:` list of segments
+   - Supports segment control flow with `type: normal`, `type: pause`, `type: stop`, and `type: force`
+   - When making YAML configs for run_pipeline, do a quick run of `run_pipeline.exe -h` to get the latest commands and best practices
 
 2. **Standard Code Collection** (`standard_code/`)
    - Curated Python modules for common bioimage analysis tasks
@@ -36,13 +37,13 @@ The BIPHUB Pipeline Manager is a robust, reproducible pipeline orchestration sys
 - **Modular Design**: Pluggable components allow easy extension and customization
 - **Error Handling**: Robust error handling and logging for production-ready deployments
 
-### Environment Management Status (2025)
-- **Primary**: UV package manager (fast, modern, lock file support via `uv.lock`)
-- **Backup**: Conda environments (for complex dependencies, legacy support)
-- **Active Migration**: Converting existing pipelines from Conda to UV (in progress)
-- **Hybrid Approach**: Both systems supported for maximum compatibility
-- **Virtual Environment**: `.venv/` directory managed by UV for isolated Python dependencies
-- **Development Policy**: All new pipelines and modules must use UV unless there are specific technical reasons requiring Conda
+### Environment Management Status
+- **Primary**: UV dependency groups are the standard way to run Python pipeline segments.
+- **Default Environment**: Use `uv@3.11:default` for general-purpose Python CLIs unless a specialized environment is required.
+- **Specialized Environments**: Keep dedicated groups only where there is a real technical reason, such as ERNet, TensorFlow-based denoising, ImageJ, Ilastik, or GPU-specific workflows.
+- **Legacy Support**: Conda environment specs are still kept for compatibility and older workflows.
+- **Virtual Environments**: UV creates environment folders such as `.venv_default_py3_11/` alongside other group-specific environments.
+- **Development Policy**: New pipelines and modules should target UV unless a concrete dependency constraint requires something else.
 
 ## Supported Analysis Types
 
@@ -63,26 +64,53 @@ The BIPHUB Pipeline Manager is a robust, reproducible pipeline orchestration sys
 
 2. Run a pipeline:
    ```bash
-   ./run_pipeline.exe pipeline_configs/segment_ernet_uv.yaml
+   ./run_pipeline.exe pipeline_configs/convert_to_tif.yaml
+   ```
+
+3. View the built-in YAML help and step-type reference:
+   ```bash
+   ./run_pipeline.exe -h
    ```
 
 ### Pipeline Configuration
 
-Pipelines are defined using YAML configuration files that specify:
-- Input/output directories
-- Processing steps and parameters
-- Environment requirements
-- Validation criteria
+Pipelines are defined as a top-level `run:` list. Each segment can either run commands or control pipeline flow.
+
+Supported segment fields:
+- `name`: Human-readable segment name.
+- `environment`: Environment selector such as `uv@3.11:default`.
+- `commands`: Command list to execute.
+- `type`: Optional control type. Supported values are `normal`, `pause`, `stop`, and `force`.
+- `message`: Optional message used by control segments.
+
+Path tokens supported by the runner:
+- `%REPO%/path`: Resolves relative to the repository/program root.
+- `%YAML%/path`: Resolves relative to the YAML file location.
+- `%VARNAME%/path`: Resolves using a variable loaded from `.env`.
+- `./path`: Supported for backward compatibility, but deprecated in favor of `%REPO%` or `%YAML%`.
 
 Example configuration structure:
 ```yaml
-pipeline_name: "ERnet Segmentation"
-environment: "segment_ernet"
-steps:
-  - module: "segment_ernet"
-    parameters:
-      model_path: "weights/ernet_model.pth"
-      output_format: "tiff"
+run:
+- name: Convert ND2 to OME-TIFF
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/convert_to_tif.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.nd2'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Enable force mode for later segments
+  type: force
+  message: 'Reprocessing all subsequent steps.'
+
+- name: Pause for inspection
+  type: pause
+  message: 'Paused for user inspection.'
+
+- name: Stop intentionally
+  type: stop
+  message: 'Pipeline stopped intentionally.'
 ```
 
 ## Development Guidelines
@@ -133,10 +161,11 @@ SOFTWARE.
 ```
 ├── run_pipeline.go            # Main Go orchestrator
 ├── run_pipeline.exe           # Compiled Windows executable
-├── .venv/                     # UV-managed virtual environment
+├── .venv_*_py3_11/            # UV-managed per-group virtual environments
 ├── uv.lock                    # UV dependency lock file
 ├── go.sum                     # Go module checksums
 ├── pyproject.toml             # Python project configuration
+├── run_pipeline_from_anywhere.bat  # Convenience launcher for Windows
 ├── TODO.txt                   # Active development task list
 ├── VERSION                    # Version tracking
 ├── standard_code/             # Reusable modules
@@ -147,18 +176,23 @@ SOFTWARE.
 │   │   └── Test_code/       # Development test scripts
 │   └── NIS_Elemens_macros/  # NIS-Elements automation scripts
 ├── pipeline_configs/          # YAML pipeline definitions
+├── pipeline-designer/         # Wails-based visual pipeline designer
 ├── conda_envs/               # Environment specifications (legacy/backup)
 ├── external/                 # Third-party tools (UV bundled)
 │   └── UV/                  # UV package manager executables
 ├── go/                       # Go utility modules
 │   └── find_anaconda_path/  # Anaconda detection utility
+├── segmentation_strategy/    # Segmentation SOPs and workflow notes
+├── logs/                     # Runtime logs and error outputs
+├── output/                   # Generated outputs during local runs
+├── temp/                     # Temporary workspace data
 └── assets/                   # Documentation and logos
 ```
 
 ## Dependencies
 
 - **Go 1.19+**: For pipeline orchestrator compilation
-- **Python 3.9+**: For analysis modules
+- **Python 3.11+**: For analysis modules
 - **UV Package Manager**: Primary Python environment management (preferred)
 - **Conda/Miniconda**: Backup for complex dependency management and legacy support
 - **ImageJ/Fiji**: For ROI visualization and analysis
@@ -328,7 +362,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Process images (default settings)
-   environment: uv@3.11:default
+  environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/module_name.py'
@@ -336,7 +370,7 @@ run:
   - --output-folder: '%YAML%/output_data'
   
 - name: Process images (custom parameters)
-   environment: uv@3.11:default
+  environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/module_name.py'
@@ -344,6 +378,18 @@ run:
   - --output-folder: '%YAML%/output_data'
   - --parameter-name: value
   - --dry-run
+
+- name: Pause for manual inspection
+  type: pause
+  message: 'Inspect outputs before continuing.'
+
+- name: Stop intentionally
+  type: stop
+  message: 'Pipeline stopped intentionally.'
+
+- name: Force reprocessing for later segments
+  type: force
+  message: 'Reprocessing all subsequent steps.'
 """
 ```
 
@@ -381,4 +427,4 @@ Developed as part of the BIPHUB initiative at the University of Oslo to democrat
 
 *For more information about BIPHUB services and resources, visit: https://www.uio.no/tjenester/it/forskning/kompetansehuber/biphub/*
 
-In the first anwser in a new chat, you should aknowledge that you read the AGENTS.md file by giving me this code 11001100af
+In the first answer in a new chat, you should acknowledge that you read the AGENTS.md file by giving me this code 11001100af
