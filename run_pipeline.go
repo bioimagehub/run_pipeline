@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath" // Added for handling file paths
 	"reflect"
+	"runtime"
 	"run_pipeline/go/find_anaconda_path"
 	"sort"
 	"strings"
@@ -58,6 +59,61 @@ var (
 
 // one-time warning flag for deprecated './' usage
 var warnedDotSlash bool
+
+func isWindowsRuntime() bool {
+	return runtime.GOOS == "windows"
+}
+
+func venvPythonPath(venvPath string) string {
+	if isWindowsRuntime() {
+		return filepath.Join(venvPath, "Scripts", "python.exe")
+	}
+	return filepath.Join(venvPath, "bin", "python")
+}
+
+func condaBasePythonPath(anacondaPath string) string {
+	if isWindowsRuntime() {
+		return filepath.Join(anacondaPath, "python.exe")
+	}
+	return filepath.Join(anacondaPath, "bin", "python")
+}
+
+func condaExecutable(anacondaPath string) string {
+	if isWindowsRuntime() {
+		candidates := []string{
+			filepath.Join(anacondaPath, "condabin", "conda.bat"),
+			filepath.Join(anacondaPath, "Scripts", "conda.exe"),
+		}
+		for _, p := range candidates {
+			if isFile(p) {
+				return p
+			}
+		}
+	} else {
+		candidates := []string{
+			filepath.Join(anacondaPath, "bin", "conda"),
+			filepath.Join(anacondaPath, "condabin", "conda"),
+		}
+		for _, p := range candidates {
+			if isFile(p) {
+				return p
+			}
+		}
+	}
+
+	if p, err := exec.LookPath("conda"); err == nil {
+		return p
+	}
+
+	return ""
+}
+
+func shellCommandPrefix() []string {
+	if isWindowsRuntime() {
+		return []string{"cmd", "/C"}
+	}
+	return []string{"bash", "-lc"}
+}
 
 // GetBaseDir returns the project root directory.
 // It handles both `go run` (using working dir) and `go build` (using executable path).
@@ -159,7 +215,11 @@ func askForAnacondaPath() string {
 				fmt.Println("Python execution failed. Please check the path or installation.")
 			}
 		} else {
-			fmt.Println("Invalid path. Please ensure it contains the 'envs' directory and 'python.exe'.")
+			if isWindowsRuntime() {
+				fmt.Println("Invalid path. Please ensure it contains the 'envs' directory and 'python.exe'.")
+			} else {
+				fmt.Println("Invalid path. Please ensure it contains the 'envs' directory and 'bin/python'.")
+			}
 		}
 	}
 
@@ -225,7 +285,7 @@ func askForImageJPath() string {
 // isValidAnacondaPath checks if the specified path is a valid Anaconda installation.
 func isValidAnacondaPath(path string) bool {
 	envsPath := filepath.Join(path, "envs")
-	pythonPath := filepath.Join(path, "python.exe")
+	pythonPath := condaBasePythonPath(path)
 	return isDirectory(envsPath) && isFile(pythonPath)
 }
 
@@ -243,7 +303,7 @@ func isFile(path string) bool {
 
 // testPythonExecution runs a simple Python command to check if Python is functional.
 func testPythonExecution(anacondaPath string) bool {
-	cmd := exec.Command(filepath.Join(anacondaPath, "python.exe"), "-c", "print('Hello from Python')")
+	cmd := exec.Command(condaBasePythonPath(anacondaPath), "-c", "print('Hello from Python')")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("Error executing Python: %v\n", err)
@@ -347,6 +407,10 @@ func getVersion() string {
 // If yamlPath is provided, it will be opened in the designer
 // If yamlPath is empty, the user will be prompted to choose a save location
 func launchPipelineDesigner(mainProgramDir string, yamlPath string) {
+	if !isWindowsRuntime() {
+		log.Fatal("Pipeline Designer is not implemented on Linux yet")
+	}
+
 	// Look for the pipeline designer executable
 	designerPaths := []string{
 		filepath.Join(mainProgramDir, "pipeline-designer", "build", "bin", "pipeline-designer.exe"),
@@ -540,6 +604,46 @@ func getSegmentStatus(status *Status, contentHash string) *SegmentStatus {
 
 // Function to prepare command arguments for Python execution
 func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir string) []string {
+	if !isWindowsRuntime() {
+		condaExe := condaExecutable(anacondaPath)
+		if condaExe == "" {
+			log.Fatal("Conda executable not found. Please install conda or set CONDA_PATH correctly.")
+		}
+
+		cmdArgs := []string{condaExe, "run", "--no-capture-output"}
+		if strings.EqualFold(segment.Environment, "base") {
+			cmdArgs = append(cmdArgs, "-p", anacondaPath)
+		} else {
+			envPath := filepath.Join(anacondaPath, "envs", segment.Environment)
+			if isDirectory(envPath) {
+				cmdArgs = append(cmdArgs, "-p", envPath)
+			} else {
+				cmdArgs = append(cmdArgs, "-n", segment.Environment)
+			}
+		}
+
+		for _, cmd := range segment.Commands {
+			switch v := cmd.(type) {
+			case string:
+				resolved := resolvePath(v, mainProgramDir, yamlDir)
+				cmdArgs = append(cmdArgs, resolved)
+			case map[interface{}]interface{}:
+				for flag, value := range v {
+					cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
+					if value != nil && value != "null" {
+						valStr := fmt.Sprintf("%v", value)
+						resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+						cmdArgs = append(cmdArgs, resolved)
+					}
+				}
+			default:
+				log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+			}
+		}
+
+		return cmdArgs
+	}
+
 	cmdArgs := []string{"cmd", "/C"} // Windows command line execution prefix
 
 	// Determine which environment to activate for Python
@@ -711,14 +815,26 @@ func getRequestedUvPython(spec uvEnvironmentSpec) string {
 func findUvExecutable(mainProgramDir string) string {
 	// Check local candidates first
 	externalUV := filepath.Join(mainProgramDir, "external", "UV")
-	localCandidates := []string{
-		filepath.Join(externalUV, "uv.exe"),
-		filepath.Join(externalUV, "bin", "uv.exe"),
-		filepath.Join(mainProgramDir, "uv.exe"),
-		filepath.Join(mainProgramDir, "uv", "uv.exe"),
-		filepath.Join(mainProgramDir, "tools", "uv.exe"),
-		filepath.Join(mainProgramDir, "tools", "uv", "uv.exe"),
-		filepath.Join(mainProgramDir, "bin", "uv.exe"),
+	localCandidates := []string{}
+	if isWindowsRuntime() {
+		localCandidates = append(localCandidates,
+			filepath.Join(externalUV, "uv.exe"),
+			filepath.Join(externalUV, "bin", "uv.exe"),
+			filepath.Join(mainProgramDir, "uv.exe"),
+			filepath.Join(mainProgramDir, "uv", "uv.exe"),
+			filepath.Join(mainProgramDir, "tools", "uv.exe"),
+			filepath.Join(mainProgramDir, "tools", "uv", "uv.exe"),
+			filepath.Join(mainProgramDir, "bin", "uv.exe"),
+		)
+	} else {
+		localCandidates = append(localCandidates,
+			filepath.Join(externalUV, "uv"),
+			filepath.Join(externalUV, "bin", "uv"),
+			filepath.Join(mainProgramDir, "uv"),
+			filepath.Join(mainProgramDir, "tools", "uv"),
+			filepath.Join(mainProgramDir, "tools", "uv", "uv"),
+			filepath.Join(mainProgramDir, "bin", "uv"),
+		)
 	}
 
 	for _, p := range localCandidates {
@@ -754,7 +870,7 @@ func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, s
 	uvPython := getRequestedUvPython(spec)
 
 	// Build command to run Python from the environment-specific venv
-	venvPython := filepath.Join(venvPath, "Scripts", "python.exe")
+	venvPython := venvPythonPath(venvPath)
 	cmdArgs := []string{venvPython}
 
 	// Loop through commands to build the full command line
@@ -802,27 +918,40 @@ func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, s
 // It will attempt `pipx install uv` when uv is missing.
 func getUvRunnerPrefix(mainProgramDir string) []string {
 	have := func(name string) bool { _, err := exec.LookPath(name); return err == nil }
+	shellPrefix := shellCommandPrefix()
 
-	// Prefer a repo-bundled uv.exe if present (no system install needed)
+	// Prefer a repo-bundled uv executable if present (no system install needed)
 	externalUV := filepath.Join(mainProgramDir, "external", "UV")
-	localCandidates := []string{
-		filepath.Join(externalUV, "uv.exe"),
-		filepath.Join(externalUV, "bin", "uv.exe"),
-		filepath.Join(mainProgramDir, "uv.exe"),
-		filepath.Join(mainProgramDir, "uv", "uv.exe"),
-		filepath.Join(mainProgramDir, "tools", "uv.exe"),
-		filepath.Join(mainProgramDir, "tools", "uv", "uv.exe"),
-		filepath.Join(mainProgramDir, "bin", "uv.exe"),
+	localCandidates := []string{}
+	if isWindowsRuntime() {
+		localCandidates = append(localCandidates,
+			filepath.Join(externalUV, "uv.exe"),
+			filepath.Join(externalUV, "bin", "uv.exe"),
+			filepath.Join(mainProgramDir, "uv.exe"),
+			filepath.Join(mainProgramDir, "uv", "uv.exe"),
+			filepath.Join(mainProgramDir, "tools", "uv.exe"),
+			filepath.Join(mainProgramDir, "tools", "uv", "uv.exe"),
+			filepath.Join(mainProgramDir, "bin", "uv.exe"),
+		)
+	} else {
+		localCandidates = append(localCandidates,
+			filepath.Join(externalUV, "uv"),
+			filepath.Join(externalUV, "bin", "uv"),
+			filepath.Join(mainProgramDir, "uv"),
+			filepath.Join(mainProgramDir, "tools", "uv"),
+			filepath.Join(mainProgramDir, "tools", "uv", "uv"),
+			filepath.Join(mainProgramDir, "bin", "uv"),
+		)
 	}
 	for _, p := range localCandidates {
 		if isFile(p) {
-			return []string{"cmd", "/C", p, "run"}
+			return append(append([]string{}, shellPrefix...), p, "run")
 		}
 	}
 
 	// Attempt an in-repo standalone install into external/UV using the official installer
 	// Only try if uv isn't on PATH
-	if !have("uv") {
+	if !have("uv") && isWindowsRuntime() {
 		// Ensure destination dir exists
 		_ = os.MkdirAll(externalUV, 0755)
 		// PowerShell command to set install dir and run installer
@@ -837,13 +966,17 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 		for _, p := range localCandidates {
 			if isFile(p) {
 				fmt.Printf("Found uv at %s after install.\n", p)
-				return []string{"cmd", "/C", p, "run"}
+				return append(append([]string{}, shellPrefix...), p, "run")
 			}
 		}
 	}
 
 	if have("uv") {
-		return []string{"cmd", "/C", "uv", "run"}
+		return append(append([]string{}, shellPrefix...), "uv", "run")
+	}
+
+	if !isWindowsRuntime() {
+		log.Fatal("uv is required for 'uv:' environments. Install uv and ensure it is on PATH.")
 	}
 
 	// Try pipx-based options
@@ -852,7 +985,7 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 		testCmd := exec.Command("cmd", "/C", "pipx", "run", "uv", "--version")
 		if err := testCmd.Run(); err == nil {
 			fmt.Println("uv not found; using 'pipx run uv' for this session.")
-			return []string{"cmd", "/C", "pipx", "run", "uv", "run"}
+			return append(append([]string{}, shellPrefix...), "pipx", "run", "uv", "run")
 		}
 
 		// Try installing uv for persistent availability
@@ -864,14 +997,14 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 
 		// Re-evaluate availability
 		if have("uv") {
-			return []string{"cmd", "/C", "uv", "run"}
+			return append(append([]string{}, shellPrefix...), "uv", "run")
 		}
 
 		// Fallback to pipx run if it now works
 		testCmd2 := exec.Command("cmd", "/C", "pipx", "run", "uv", "--version")
 		if err := testCmd2.Run(); err == nil {
 			fmt.Println("Using 'pipx run uv' as fallback. Consider adding uv to PATH via 'pipx install uv'.")
-			return []string{"cmd", "/C", "pipx", "run", "uv", "run"}
+			return append(append([]string{}, shellPrefix...), "pipx", "run", "uv", "run")
 		}
 	}
 
@@ -879,7 +1012,7 @@ func getUvRunnerPrefix(mainProgramDir string) []string {
 	fmt.Println("ERROR: 'uv' is not available and automatic installation failed.")
 	fmt.Println("Please install uv manually, e.g. 'pipx install uv' or download the standalone binary.")
 	log.Fatal("uv is required for 'uv:' environments")
-	return []string{"cmd", "/C", "uv", "run"}
+	return append(append([]string{}, shellPrefix...), "uv", "run")
 }
 
 // Function to prepare command arguments for ImageJ execution
@@ -1213,8 +1346,8 @@ func main() {
 		// Determine if the environment is going to be imageJ, uv, cmd, or conda-based Python
 		fmt.Println(segment.Environment)
 		if strings.ToLower(segment.Environment) == "cmd" {
-			fmt.Println("running native cmd")
-			// Build a single command string for cmd /C
+			fmt.Println("running native shell command")
+			// Build a single command string for shell execution
 			var cmdString strings.Builder
 			for i, cmd := range segment.Commands {
 				switch v := cmd.(type) {
@@ -1244,8 +1377,9 @@ func main() {
 			cmdLine := strings.TrimSpace(cmdString.String())
 			// Resolve any remaining %REPO% or %YAML% tokens in the final command line
 			cmdLine = resolvePath(cmdLine, mainProgramDir, yamlDir)
-			cmdArgs := []string{"cmd", "/C", cmdLine}
-			// Execute cmd immediately
+			shellPrefix := shellCommandPrefix()
+			cmdArgs := append(shellPrefix, cmdLine)
+			// Execute shell command immediately
 			fmt.Printf("Constructed command: %v\n", cmdArgs)
 			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 			cmd.Stdout = os.Stdout
@@ -1278,6 +1412,9 @@ func main() {
 			fmt.Println("")
 			continue
 		} else if strings.ToLower(segment.Environment) == "imagej" {
+			if !isWindowsRuntime() {
+				log.Fatal("ImageJ is not implemented on Linux yet")
+			}
 			fmt.Println("running imageJ")
 			imageJPath, err := findImageJPath()
 			if err != nil {

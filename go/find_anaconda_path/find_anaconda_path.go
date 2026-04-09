@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -28,11 +29,7 @@ func findAnacondaPath() (string, error) {
 	} else {
 		condaPath, exists := os.LookupEnv("CONDA_PATH")
 		if exists {
-			// updateCondaPath(condaPath) // DO NOT UPDATE .env if its already there
-			condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
-			// remove trailing \Scripts\activate
-			condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
-
+			condaPath = normalizeCondaBase(condaPath)
 			return condaPath, nil
 		} else {
 			fmt.Println("CONDA_PATH is not set in .env file")
@@ -43,7 +40,7 @@ func findAnacondaPath() (string, error) {
 	condaPath := os.Getenv("CONDA_PREFIX")
 
 	if condaPath != "" {
-		normalizedPath := strings.ReplaceAll(condaPath, `\`, `/`)
+		normalizedPath := strings.ReplaceAll(condaPath, "\\", "/")
 
 		// Locate path to base env ( this is what is needed run_pipeline)
 		components := strings.Split(normalizedPath, "/")
@@ -58,15 +55,26 @@ func findAnacondaPath() (string, error) {
 			condaPath = strings.Join(components[:envsIndex], `/`)
 		}
 
-		// since envs is not found assume we're already in base env
-		condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
-		// remove trailing \Scripts\activate
-		condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
+		condaPath = normalizeCondaBase(condaPath)
 		updateCondaPath(condaPath)
 		return condaPath, nil
 
 	}
 	fmt.Println("Conda not found using CONDA_PREFIX")
+
+	if base, err := getCondaBaseFromPath(); err == nil {
+		base = normalizeCondaBase(base)
+		updateCondaPath(base)
+		return base, nil
+	}
+
+	if !isWindows() {
+		if base, ok := findLinuxCondaBaseFromCommonLocations(); ok {
+			base = normalizeCondaBase(base)
+			updateCondaPath(base)
+			return base, nil
+		}
+	}
 
 	if isWindows() {
 		// For windows only
@@ -92,10 +100,7 @@ func findAnacondaPath() (string, error) {
 			if err == nil {
 				condaPath := extractAnacondaPath(targetPath)
 				if condaPath != "" {
-					// replace \ with /
-					condaPath = strings.ReplaceAll(condaPath, `\`, `/`)
-					// remove trailing \Scripts\activate
-					condaPath = strings.TrimSuffix(condaPath, `/Scripts/activate`)
+					condaPath = normalizeCondaBase(condaPath)
 					updateCondaPath(condaPath)
 					return condaPath, nil
 				}
@@ -105,6 +110,57 @@ func findAnacondaPath() (string, error) {
 	}
 
 	return "", fmt.Errorf("anaconda path could not be found, please define a")
+}
+
+func normalizeCondaBase(path string) string {
+	normalized := strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
+	normalized = strings.TrimSuffix(normalized, "/Scripts/activate")
+	normalized = strings.TrimSuffix(normalized, "/Scripts/activate.bat")
+	normalized = strings.TrimSuffix(normalized, "/bin/activate")
+	return strings.TrimSuffix(normalized, "/")
+}
+
+func getCondaBaseFromPath() (string, error) {
+	condaExe, err := exec.LookPath("conda")
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(condaExe, "info", "--base")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed running conda info --base: %w", err)
+	}
+
+	base := strings.TrimSpace(string(out))
+	if base == "" {
+		return "", fmt.Errorf("empty base path returned by conda info --base")
+	}
+
+	return base, nil
+}
+
+func findLinuxCondaBaseFromCommonLocations() (string, bool) {
+	homeDir, _ := os.UserHomeDir()
+	common := []string{
+		filepath.Join(homeDir, "miniconda3"),
+		filepath.Join(homeDir, "anaconda3"),
+		"/opt/conda",
+		"/opt/miniconda3",
+		"/usr/local/miniconda3",
+		"/usr/local/anaconda3",
+	}
+
+	for _, candidate := range common {
+		if candidate == "" {
+			continue
+		}
+		if isDirectory(filepath.Join(candidate, "envs")) && isFile(filepath.Join(candidate, "bin", "python")) {
+			return candidate, true
+		}
+	}
+
+	return "", false
 }
 
 // updateCondaPath updates or appends the CONDA_PATH variable in the .env file located in the program's directory.
@@ -221,5 +277,15 @@ func extractAnacondaPath(arguments string) string {
 }
 
 func isWindows() bool {
-	return strings.Contains(strings.ToLower(os.Getenv("OS")), "windows")
+	return runtime.GOOS == "windows"
+}
+
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
