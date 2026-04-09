@@ -1,19 +1,18 @@
 run:
-- name: Merge channels by grouping
+- name: Enhance hole-like regions with defaults
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/enhance_holes.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],2,3]'
 
-- name: Merge channels and export Ilastik H5
+- name: Enhance hole-like regions on channel 0 only
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/enhance_holes.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],[2],[3,4]]'
-  - --output-format: ilastik-h5
+  - --channels: '0'
+  - --downsample-factor: 2

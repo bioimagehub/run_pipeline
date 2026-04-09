@@ -571,7 +571,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Fill nucleoli in nucleus images
-  environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -580,7 +580,7 @@ run:
 
 # 3D mode is written but not tested yet - commented out to avoid confusion until verified
 # - name: Fill holes in 3D Z-stacks (volumetric)
-#   environment: uv@3.11:fill-greyscale-holes
+#   environment: uv@3.11:default
 #   commands:
 #   - python
 #   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -589,7 +589,7 @@ run:
 #   - --mode-3d
 
 - name: Fill holes in channels 0 and 2
-  environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -598,7 +598,7 @@ run:
   - --channels: '0 2'
 
 - name: Fill holes with local sliding kernel
-    environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -608,7 +608,7 @@ run:
     - --kernel-overlap: half
 
 - name: Save positive fill delta map instead of filled intensity
-    environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -618,7 +618,7 @@ run:
     - --return-delta
 
 - name: Save as NumPy array
-  environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -627,7 +627,7 @@ run:
   - --output-format: npy
 
 - name: Save as Ilastik HDF5
-  environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'
@@ -636,7 +636,7 @@ run:
   - --output-format: ilastik-h5
 
 - name: Save as both OME-TIFF and Ilastik HDF5
-  environment: uv@3.11:fill-greyscale-holes
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_holes.py'

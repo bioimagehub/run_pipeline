@@ -1,19 +1,17 @@
 run:
-- name: Merge channels by grouping
+- name: Bleach correct against first frame
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/bleach_correct.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],2,3]'
 
-- name: Merge channels and export Ilastik H5
+- name: Bleach correct neighbor-to-neighbor
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/bleach_correct.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],[2],[3,4]]'
-  - --output-format: ilastik-h5
+  - --match-method: neighbor

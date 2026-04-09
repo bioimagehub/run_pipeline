@@ -1,0 +1,17 @@
+run:
+- name: Compute per-object distance maps
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_get_distance_matrix.py'
+  - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --output-folder: '%YAML%/distance_maps'
+
+- name: Compute distance maps sequentially
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_get_distance_matrix.py'
+  - --input-search-pattern: '%YAML%/masks/**/*.tif'
+  - --output-folder: '%YAML%/distance_maps'
+  - --no-parallel

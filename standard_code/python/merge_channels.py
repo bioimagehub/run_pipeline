@@ -260,7 +260,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Merge channels (sum projection)
-  environment: uv@3.11:merge-channels
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/merge_channels.py'
@@ -269,7 +269,7 @@ run:
   - --merge-channels: '[[0,1], 2, 3]'
 
 - name: Merge channels (with upsampling)
-  environment: uv@3.11:merge-channels
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/merge_channels.py'
@@ -279,7 +279,7 @@ run:
   - --output-scale: '2.0'
 
 - name: Merge channels (export as Ilastik H5)
-  environment: uv@3.11:merge-channels
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/merge_channels.py'

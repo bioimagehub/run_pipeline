@@ -1,19 +1,19 @@
 run:
-- name: Merge channels by grouping
+- name: Bilateral denoise with default settings
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/denoise_bilateral.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],2,3]'
 
-- name: Merge channels and export Ilastik H5
+- name: Bilateral denoise with stronger smoothing
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/denoise_bilateral.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],[2],[3,4]]'
-  - --output-format: ilastik-h5
+  - --filter-size: 9
+  - --sigma-color: 0.15
+  - --sigma-space: 5

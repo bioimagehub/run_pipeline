@@ -1,0 +1,18 @@
+run:
+- name: Fill missing mask timepoints
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_mask_timepoints.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
+  - --output-folder: '%YAML%/output_masks'
+
+- name: Fill timepoints on channel 1 with max gap limit
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_mask_timepoints.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
+  - --output-folder: '%YAML%/output_masks'
+  - --channels: '1'
+  - --max-gap-size: 3

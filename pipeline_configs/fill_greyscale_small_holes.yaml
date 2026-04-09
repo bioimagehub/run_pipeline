@@ -1,19 +1,18 @@
 run:
-- name: Merge channels by grouping
+- name: Fill greyscale small holes with default closing
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],2,3]'
 
-- name: Merge channels and export Ilastik H5
+- name: Fill small holes with larger kernel and npy export
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],[2],[3,4]]'
-  - --output-format: ilastik-h5
+  - --size: 9
+  - --output-format: npy

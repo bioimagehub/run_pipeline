@@ -445,7 +445,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Hole score (ImageJ-style defaults)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_3.py'
@@ -453,7 +453,7 @@ run:
   - --output-folder: '%YAML%/output_data'
 
 - name: Hole score channels 0 and 2
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_3.py'
@@ -462,7 +462,7 @@ run:
   - --channels: '0 2'
 
 - name: Save as NumPy arrays, sequential processing
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_3.py'

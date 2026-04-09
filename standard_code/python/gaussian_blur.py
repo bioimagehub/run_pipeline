@@ -259,7 +259,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Gaussian blur (2D per Z)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/gaussian_blur.py'
@@ -269,7 +269,7 @@ run:
   - --sigma: 1.5
 
 - name: Gaussian blur (3D)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/gaussian_blur.py'
@@ -280,7 +280,7 @@ run:
   - --sigma-z: 0.5
 
 - name: Gaussian blur, only channels 0 and 2
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/gaussian_blur.py'

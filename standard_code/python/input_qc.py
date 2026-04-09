@@ -856,7 +856,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Basic QC (pixel size and intensity)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/input_qc.py'
@@ -865,7 +865,7 @@ run:
   - --output-summary: '%YAML%/QC_summary.tsv'
 
 - name: Full QC with HTML report
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/input_qc.py'
@@ -875,7 +875,7 @@ run:
   - --generate-report: '%YAML%/QC_report.html'
 
 - name: QC with custom thresholds and fail on error
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/input_qc.py'
@@ -888,7 +888,7 @@ run:
   - --fail-on-error
 
 - name: Skip specific tests
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/input_qc.py'

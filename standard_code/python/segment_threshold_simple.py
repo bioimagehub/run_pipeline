@@ -451,71 +451,32 @@ def process_folder(
 # =============================================================================
 """
 Example YAML config for run_pipeline.exe:
-
 ---
 run:
-  - name: Simple threshold segmentation with automatic method
-    environment: uv@3.11:segment-threshold
+- name: Threshold segment with Li method
+    environment: uv@3.11:default
     commands:
-      - python
-      - '%REPO%/standard_code/python/segment_threshold_simple.py'
-      - --input-search-pattern: '%YAML%/input_data/**/*.tif'
-      - --output-folder: '%YAML%/output_masks'
-    - --output-suffix: '_segmented'
-      - --channel: 0
-      - --method: li
-      - --gaussian-sigma: 0
-      - --fill-holes
-      - --remove-xy-edges
-      - --min-size: 100
-      - --max-size: 10000
-      - --no-parallel
+    - python
+    - '%REPO%/standard_code/python/segment_threshold_simple.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_masks'
+    - --output-suffix: '_mask'
+    - --channel: 0
+    - --method: li
+    - --fill-holes
+    - --remove-xy-edges
 
-  - name: With Gaussian blur preprocessing
-    environment: uv@3.11:segment-threshold
+- name: Numeric threshold segment with Gaussian blur
+    environment: uv@3.11:default
     commands:
-      - python
-      - '%REPO%/standard_code/python/segment_threshold_simple.py'
-      - --input-search-pattern: '%YAML%/input_data/**/*.tif'
-      - --output-folder: '%YAML%/output_masks'
-            - --output-suffix: '_segmented'
-      - --channel: 1
-      - --method: otsu
-      - --gaussian-sigma: 2.0
-      - --fill-holes
-      - --remove-xy-edges
-      - --remove-z-edges
-      - --min-size: 500
-      - --max-size: inf
-
-  - name: Threshold distance maps with numeric range
-    environment: uv@3.11:segment-threshold
-    commands:
-      - python
-      - '%REPO%/standard_code/python/segment_threshold_simple.py'
-      - --input-search-pattern: '%YAML%/distance_matrix/**/*.tif'
-      - --output-folder: '%YAML%/mask_edge'
-            - --output-suffix: '_edge_band'
-      - --threshold: 1 10
-
-  - name: Threshold distance maps for nucleus interior
-    environment: uv@3.11:segment-threshold
-    commands:
-      - python
-      - '%REPO%/standard_code/python/segment_threshold_simple.py'
-      - --input-search-pattern: '%YAML%/distance_matrix/**/*.tif'
-      - --output-folder: '%YAML%/mask_bulk'
-            - --output-suffix: '_bulk'
-      - --threshold: 11 inf
-
-Notes:
-  - Available threshold methods: otsu, yen, li, triangle, mean, minimum, isodata, niblack, sauvola
-  - Use --method for automatic threshold detection (default: li)
-  - Use --threshold for numeric thresholding with min and max values (e.g., '--threshold 1 10' or '--threshold 5 inf')
-  - If both --method and --threshold are specified, numeric threshold takes priority with a warning
-  - Set --gaussian-sigma to 0 to skip blurring
-  - Parallel processing is enabled by default, use --no-parallel to disable
-  - Use --verbose to see processing logs (default: only warnings and errors)
+    - python
+    - '%REPO%/standard_code/python/segment_threshold_simple.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_masks'
+    - --threshold: '1 inf'
+    - --gaussian-sigma: 2.0
+    - --min-size: 100
+    - --save-labeled
 """
 
 
@@ -523,18 +484,32 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Simple threshold-based segmentation with optional Gaussian blur",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Available threshold methods:
-  otsu, yen, li, triangle, mean, minimum, isodata, niblack, sauvola
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Threshold segment with Li method
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/segment_threshold_simple.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_masks'
+    - --channel: 0
+    - --method: li
+    - --fill-holes
 
-Example usage (automatic method):
-  python segment_threshold_simple.py --input-search-pattern "data/*.tif" \\
-      --output-folder "output" --channel 0 --method li --fill-holes
-
-Example usage (numeric threshold):
-  python segment_threshold_simple.py --input-search-pattern "data/*.tif" \\
-      --output-folder "output" --threshold 1 10
-        """
+- name: Numeric threshold segment with Gaussian blur
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/segment_threshold_simple.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_masks'
+    - --threshold: '1 inf'
+    - --gaussian-sigma: 2.0
+    - --save-labeled
+                """
     )
     
     parser.add_argument(

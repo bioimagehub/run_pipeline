@@ -1,0 +1,18 @@
+run:
+- name: Copy masks into one flat folder
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/copy_files_with_extension.py'
+  - --input-search-pattern: '%YAML%/masks/**/*.tif'
+  - --output-folder: '%YAML%/merged_masks'
+  - --collapse-delimiter: '__'
+
+- name: Copy failed masks and matching raw images
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/copy_files_with_extension.py'
+  - --input-search-pattern: '%YAML%/masks/**/*_failed*.tif'
+  - --optional-input-search-pattern: '%YAML%/raw/**/*.tif'
+  - --output-folder: '%YAML%/failed_with_raw'

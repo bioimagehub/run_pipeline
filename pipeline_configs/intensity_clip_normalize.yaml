@@ -1,0 +1,20 @@
+run:
+- name: Normalize images to original dtype range
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/intensity_clip_normalize.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Normalize each timepoint to float output
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/intensity_clip_normalize.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --percentile-min: 0.5
+  - --percentile-max: 99.5
+  - --output-mode: float
+  - --per-timepoint

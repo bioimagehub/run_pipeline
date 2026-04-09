@@ -122,7 +122,33 @@ def process_masks(mask1_pattern: str, mask2_pattern: str, output_path: str, outp
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Subtract mask2 from mask1 (set mask1 pixels to 0 where mask2 is nonzero). Optionally, remove all mask regions in mask1 and mask2 that do not overlap any region in the other mask.")
+        parser = argparse.ArgumentParser(
+                description="Subtract mask2 from mask1 (set mask1 pixels to 0 where mask2 is nonzero). Optionally, remove all mask regions in mask1 and mask2 that do not overlap any region in the other mask.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Subtract cytoplasm mask from nucleus mask
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_substract.py'
+    - --mask1-search-pattern: '%YAML%/masks/*_nuc.tif'
+    - --mask2-search-pattern: '%YAML%/masks/*_cyt.tif'
+    - --output-folder: '%YAML%/subtracted_masks'
+
+- name: Subtract masks with strict one-to-one overlap
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_substract.py'
+    - --mask1-search-pattern: '%YAML%/masks/*_mask1.tif'
+    - --mask2-search-pattern: '%YAML%/masks/*_mask2.tif'
+    - --output-folder: '%YAML%/subtracted_masks'
+    - --enforce-one-to-one-overlap
+                """
+        )
     parser.add_argument('--mask1-search-pattern', required=True, help='Glob pattern for mask1 images, e.g. "folder/*_mask1.tif"')
     parser.add_argument('--mask2-search-pattern', required=True, help='Glob pattern for mask2 images, e.g. "folder/*_mask2.tif"')
     parser.add_argument('--output-folder', type=str, required=True, help='Path to the output folder where processed images will be saved')

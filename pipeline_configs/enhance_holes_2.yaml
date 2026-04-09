@@ -1,19 +1,19 @@
 run:
-- name: Merge channels by grouping
+- name: Enhance holes with variance ROI selection
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/enhance_holes_2.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],2,3]'
 
-- name: Merge channels and export Ilastik H5
+- name: Enhance holes with tuned ROI parameters
   environment: uv@3.11:default
   commands:
   - python
-  - '%REPO%/standard_code/python/merge_channels.py'
+  - '%REPO%/standard_code/python/enhance_holes_2.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1],[2],[3,4]]'
-  - --output-format: ilastik-h5
+  - --variance-sigma: 2.5
+  - --median-sigma: 1.0
+  - --roi-padding: 6

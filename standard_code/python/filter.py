@@ -379,7 +379,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Mean filter (2D per Z, uniform 3x3x3)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/filter.py'
@@ -389,7 +389,7 @@ run:
   - --size: 3
 
 - name: Median filter (3D, XY=3 Z=5)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/filter.py'
@@ -400,7 +400,7 @@ run:
   - --size: '3 5'
 
 - name: Max filter (2D, Y=3 X=5)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/filter.py'
@@ -410,7 +410,7 @@ run:
   - --size: '3 5'
 
 - name: Min filter (3D, Y=3 X=4 Z=5)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/filter.py'
@@ -421,7 +421,7 @@ run:
   - --size: '3 4 5'
 
 - name: Gaussian blur (3D)
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/filter.py'
@@ -433,7 +433,7 @@ run:
   - --sigma-z: 0.5
 
 - name: Mean filter, only channels 0 and 2
-  environment: uv@3.11:image-filters
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/filter.py'

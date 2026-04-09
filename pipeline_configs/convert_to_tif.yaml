@@ -1,0 +1,27 @@
+run:
+- name: Convert ND2 to OME-TIFF
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/convert_to_tif.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.nd2'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Convert CZI excluding overview scenes
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/convert_to_tif.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.czi'
+  - --output-folder: '%YAML%/output_data'
+  - --scene-filter: excludes
+  - --scene-filter-strings: Overview
+
+- name: Convert with max Z projection
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/convert_to_tif.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.lif'
+  - --output-folder: '%YAML%/output_data'
+  - --projection-method: max

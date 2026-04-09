@@ -206,11 +206,36 @@ def measure_hierarchical_masks(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Hierarchical measurement of objects within objects. "
-                    "First mask defines parent objects (e.g., nuclei), "
-                    "subsequent masks define child objects within parents."
-    )
+        parser = argparse.ArgumentParser(
+                description="Hierarchical measurement of objects within objects. "
+                                        "First mask defines parent objects (e.g., nuclei), "
+                                        "subsequent masks define child objects within parents.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Measure parent and child masks hierarchically
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_measure_hierarchical.py'
+    - --input-search-pattern: '%YAML%/images/*.tif'
+    - --mask-search-patterns: '%YAML%/masks/*_nuc.tif' '%YAML%/masks/*_spot1.tif' '%YAML%/masks/*_spot2.tif'
+    - --output: '%YAML%/hierarchical_measurements'
+
+- name: Measure only channel 1 within parent masks
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_measure_hierarchical.py'
+    - --input-search-pattern: '%YAML%/images/**/*.tif'
+    - --mask-search-patterns: '%YAML%/masks/*_nuc.tif' '%YAML%/masks/*_puncta.tif'
+    - --output: '%YAML%/hierarchical_measurements'
+    - --channel: 1
+    - --search-subfolders
+                """
+        )
     parser.add_argument(
         '--input-search-pattern',
         required=True,

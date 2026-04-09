@@ -94,7 +94,32 @@ def process_folder(args: argparse.Namespace):
         process_file(mask_path = input_file_path, output_folder_path = args.output_folder, distance_inside=args.distance_inside, distance_outside=args.distance_outside, output_suffix=args.output_suffix)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process masks and convert indexed masks to defined edge regions")
+        parser = argparse.ArgumentParser(
+                description="Process masks and convert indexed masks to defined edge regions",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Extract inner and outer mask edge bands
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_get_edges.py'
+    - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --output-folder: '%YAML%/edge_masks'
+
+- name: Extract thin outer edge only
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_get_edges.py'
+    - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --output-folder: '%YAML%/edge_masks'
+    - --distance-inside: 0
+    - --distance-outside: 2
+                """
+        )
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only if pattern doesn't already include '**')")
     parser.add_argument("--distance-inside", type=int, default= 3, help="How far inside the object should the mask be extended? (default: 3 pixels)")

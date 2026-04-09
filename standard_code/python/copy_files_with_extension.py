@@ -201,7 +201,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Copy masks into one folder
-  environment: uv@3.11:copy-files
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/copy_files_with_extension.py'
@@ -210,7 +210,7 @@ run:
   - --collapse-delimiter: '__'
 
 - name: Copy failed masks and matching raw files
-    environment: uv@3.11:copy-files
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/copy_files_with_extension.py'

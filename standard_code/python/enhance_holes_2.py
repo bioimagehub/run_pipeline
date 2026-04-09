@@ -332,7 +332,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Hole score (default settings)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_2.py'
@@ -340,7 +340,7 @@ run:
   - --output-folder: '%YAML%/output_data'
 
 - name: Hole score channels 0 and 2 with 4x speed-up
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_2.py'
@@ -350,7 +350,7 @@ run:
   - --downsample-factor: 4
 
 - name: Hole score with custom variance and median settings
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_2.py'
@@ -360,7 +360,7 @@ run:
   - --median-sigma: 3
 
 - name: Save as NumPy arrays, sequential processing
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes_2.py'

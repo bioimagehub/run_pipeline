@@ -505,7 +505,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Convert to OME-TIFF (parallel processing by default)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
@@ -518,7 +518,7 @@ run:
   # Uses CPU count - 1 workers by default
 
 - name: Convert with custom worker count
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
@@ -529,7 +529,7 @@ run:
   - --flag=-overwrite
 
 - name: Convert sequentially (no parallel)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
@@ -540,7 +540,7 @@ run:
   - --flag=-overwrite
 
 - name: Split by series
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
@@ -551,7 +551,7 @@ run:
   - --flag=-overwrite
 
 - name: Split by series (with subfolders)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
@@ -564,7 +564,7 @@ run:
   # Input: input/sub1/file.lif -> Output: output/sub1__file/sub1__file_S0.ome.tif
 
 - name: Split by channel and timepoint
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
@@ -576,7 +576,7 @@ run:
   - --flag=-padded
 
 - name: Convert with compression
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'

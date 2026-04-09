@@ -45,7 +45,32 @@ def main():
 
 
 
-    parser = argparse.ArgumentParser(description="Convert indexed mask images to ImageJ ROI zip files.")
+        parser = argparse.ArgumentParser(
+                description="Convert indexed mask images to ImageJ ROI zip files.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Convert labeled masks to ImageJ ROI archives
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask2imageJROI.py'
+    - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --output-folder: '%YAML%/roi_output'
+
+- name: Convert masks recursively without parallel workers
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask2imageJROI.py'
+    - --input-search-pattern: '%YAML%/masks/**/*.tif'
+    - --output-folder: '%YAML%/roi_output'
+    - --search-subfolders
+    - --no-parallel
+                """
+        )
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input mask images, e.g. 'folder/*.tif' or 'folder/somefile*.tif'. Use a single file path for one image.")
     parser.add_argument("--output-folder", type=str, help="Output folder for ROI zip files. Defaults to input folder.")
     parser.add_argument("--output-suffix", type=str, default="_rois", help="Suffix to append to output file name (default: '_rois').")

@@ -1,0 +1,18 @@
+run:
+- name: Extract inner and outer mask edge bands
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_get_edges.py'
+  - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --output-folder: '%YAML%/edge_masks'
+
+- name: Extract thin outer edge only
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_get_edges.py'
+  - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --output-folder: '%YAML%/edge_masks'
+  - --distance-inside: 0
+  - --distance-outside: 2
