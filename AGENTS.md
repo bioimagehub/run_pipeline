@@ -315,6 +315,12 @@ Implementation rules:
 
 When creating or documenting CLI tools (Python scripts in `standard_code/python/`), **ALWAYS** provide examples in YAML config format for `run_pipeline.exe`, not as bash/shell commands.
 
+Environment selection for YAML examples:
+
+- Use `environment: uv@3.11:default` as the standard environment for general-purpose Python CLIs that work with the shared default dependency group.
+- Only use a module-specific or specialized environment when there is a real technical reason, for example Torch/ERNet, TensorFlow/Noise2Void, ImageJ, Ilastik, NIS-Elements, or GPU-specific drift correction.
+- If a CLI works with the shared default environment, prefer documenting it with `uv@3.11:default` even if older YAML examples used a legacy per-module environment name.
+
 **CORRECT format** (in argparse epilog):
 ```python
 epilog="""
@@ -322,7 +328,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Process images (default settings)
-  environment: uv@3.11:module-name
+   environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/module_name.py'
@@ -330,7 +336,7 @@ run:
   - --output-folder: '%YAML%/output_data'
   
 - name: Process images (custom parameters)
-  environment: uv@3.11:module-name
+   environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/module_name.py'
