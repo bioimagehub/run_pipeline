@@ -1,0 +1,22 @@
+run:
+- name: Quantify distance heatmaps with QC filtering (v2)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v2.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --distance-search-pattern: '%YAML%/distance_maps/**/*_geodesic.tif'
+  - --qc-key: nuc_segmentation
+  - --output-folder: '%YAML%/quantification'
+
+- name: Quantify heatmaps with custom smoothing (v2)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v2.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --distance-search-pattern: '%YAML%/distance_maps/**/*_geodesic.tif'
+  - --qc-key: nuc_segmentation
+  - --output-folder: '%YAML%/quantification'
+  - --smooth-sigma-distance: 2.0
+  - --region-grow-threshold: 0.75

@@ -412,31 +412,30 @@ def main():
         description='QC Tracking - Validate track completeness and create QC heatmap',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Check track completeness for all input images (shows all inputs, marks missing masks as failed)
-  python qc_tracking.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_tracked.tif" --qc-key track_completeness
-  
-  # Save to file
-  python qc_tracking.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_tracked.tif" --qc-key track_completeness --output track_qc.png
-  
-  # Custom figure size
-  python qc_tracking.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_tracked.tif" --qc-key track_completeness --width 20 --height 15
-  
-  # Recursive search
-  python qc_tracking.py --input-search-pattern "./input/**/*.tif" --mask-search-pattern "./masks/**/*_tracked.tif" --qc-key track_completeness --search-subfolders
-  
-  # Use different QC key
-  python qc_tracking.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_tracked.tif" --qc-key tracking_validation
-  
-  # Process only first 10 files
-  python qc_tracking.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_tracked.tif" --qc-key track_completeness --mode first10
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: QC tracking completeness heatmap
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/qc_tracking.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --mask-search-pattern: '%YAML%/tracked_masks/**/*_tracked.tif'
+    - --qc-key: track_completeness
+    - --output: '%YAML%/plots/tracking_qc.png'
 
-Note:
-  - The script uses rp.get_grouped_files_to_process to match input files to masks
-  - All input files are shown in the heatmap, even if masks are missing
-  - Missing masks are marked as FAILED with reason "Mask file not found"
-  - Empty masks (zero objects in all timepoints) are marked as FAILED
-  - The * wildcard in patterns is used for matching (e.g., input/image*.tif matches masks/image*_tracked.tif)
+- name: QC tracking with custom figure size
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/qc_tracking.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --mask-search-pattern: '%YAML%/tracked_masks/**/*_tracked.tif'
+    - --qc-key: tracking_validation
+    - --output: '%YAML%/plots/tracking_qc_large.png'
+    - --width: 20
+    - --height: 15
         """
     )
     

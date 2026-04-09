@@ -1,0 +1,11 @@
+run:
+- name: Quantify TSV heatmaps with global threshold DBSCAN (v5)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v5.py'
+  - --input-search-pattern: '%YAML%/quantification_bulk/*bulk_per_distance.tsv'
+  - --output-folder: '%YAML%/quantification_bulk'
+  - --clustering-eps: 0.20
+  - --clustering-min-samples: 30
+  - --threshold-percentile: 50.0

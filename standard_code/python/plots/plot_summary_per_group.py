@@ -495,52 +495,92 @@ def load_decay_summary_from_folder(
     return combined_df
 
 
+def load_metrics_from_search_pattern(input_search_pattern: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load metrics and decay summary TSVs using a glob pattern."""
+    metric_files = sorted(glob.glob(input_search_pattern, recursive=True))
+
+    if not metric_files:
+        raise FileNotFoundError(f"No metrics files found matching: {input_search_pattern}")
+
+    logging.info(f"Found {len(metric_files)} metrics file(s)")
+
+    metric_frames: list[pd.DataFrame] = []
+    parent_folders: set[str] = set()
+    for tsv_file in metric_files:
+        try:
+            df = pd.read_csv(tsv_file, sep='\t')
+            metric_frames.append(df)
+            parent_folders.add(str(Path(tsv_file).parent))
+            logging.info(f"Loaded: {Path(tsv_file).name} ({len(df)} rows)")
+        except Exception as e:
+            logging.error(f"Error loading {tsv_file}: {e}")
+
+    if not metric_frames:
+        raise ValueError("No valid metrics TSV files could be loaded")
+
+    metrics_df = pd.concat(metric_frames, ignore_index=True)
+    logging.info(f"Combined dataset: {len(metrics_df)} total rows")
+
+    decay_frames: list[pd.DataFrame] = []
+    for folder in sorted(parent_folders):
+        for decay_file in sorted(glob.glob(os.path.join(folder, '*_decay_summary.tsv'))):
+            try:
+                decay_frames.append(pd.read_csv(decay_file, sep='\t'))
+                logging.info(f"Loaded decay summary: {Path(decay_file).name}")
+            except Exception as e:
+                logging.error(f"Error loading {decay_file}: {e}")
+
+    decay_df = pd.concat(decay_frames, ignore_index=True) if decay_frames else pd.DataFrame()
+    if not decay_df.empty:
+        logging.info(f"Combined decay summary dataset: {len(decay_df)} total rows")
+
+    return metrics_df, decay_df
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Create per-group summary bar plots from distance heatmap quantification metrics',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Plot Distance_Spread at T=1 for all groups (bar plot)
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread --timepoint 1
-  
-  # Plot multiple metrics at T=1
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread Center_Distance Signal_Area_Bins --timepoint 1
-  
-  # Plot Distance_Spread over time for all groups (line plot - TIME SERIES)
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread --timeseries --output-folder ./group_plots
-  
-  # Plot multiple metrics as time series
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread Center_Distance Signal_Area_Bins --timeseries --output-folder ./group_plots
-  
-  # Save plots to output folder
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread --timepoint 1 --output-folder ./group_plots
-  
-  # Plot average across all timepoints
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread
-  
-  # Plot all decay metrics (signal duration, half-life, etc.)
-  python plot_summary_per_group.py --input-folder ./quantification --metric decay --output-folder ./group_plots
-  
-  # Plot specific decay metrics
-  python plot_summary_per_group.py --input-folder ./quantification --metric Signal_Duration_Timepoints Time_To_50_Percent --output-folder ./group_plots
-  
-  # Plot all available metrics (both per-timepoint and decay summaries)
-  python plot_summary_per_group.py --input-folder ./quantification --metric all --timepoint 1 --output-folder ./group_plots
-  
-  # Plot all available metrics as time series
-  python plot_summary_per_group.py --input-folder ./quantification --metric all --timeseries --output-folder ./group_plots
-  
-  # Customize appearance
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread --timepoint 1 --color-palette Set1 --no-points
-  
-  # Use standard deviation instead of SEM for error bars
-  python plot_summary_per_group.py --input-folder ./quantification --metric Distance_Spread --timepoint 1 --error-bars std
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Plot one metric at a specific timepoint
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/plot_summary_per_group.py'
+    - --input-search-pattern: '%YAML%/quantification/**/*_metrics.tsv'
+    - --metric: Distance_Spread
+    - --timepoint: 1
+    - --output-folder: '%YAML%/group_plots'
+
+- name: Plot multiple metrics as time series
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/plot_summary_per_group.py'
+    - --input-search-pattern: '%YAML%/quantification/**/*_metrics.tsv'
+    - --metric: Distance_Spread Center_Distance Signal_Area_Bins
+    - --timeseries
+    - --output-folder: '%YAML%/group_plots'
+
+- name: Plot decay summary metrics with custom error bars
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/plot_summary_per_group.py'
+    - --input-search-pattern: '%YAML%/quantification/**/*_metrics.tsv'
+    - --metric: decay
+    - --output-folder: '%YAML%/group_plots'
+    - --error-bars: std
         """
     )
-    
-    parser.add_argument('--input-folder', type=str, required=True,
-                       help='Folder containing *_metrics.tsv files from plot_distance_heatmap.py')
+
+        parser.add_argument('--input-search-pattern', type=str, required=False,
+                                             help='Glob pattern for input *_metrics.tsv files, e.g. "%YAML%/quantification/**/*_metrics.tsv"')
+        parser.add_argument('--input-folder', type=str, required=False,
+                                             help='Deprecated alias for a folder containing *_metrics.tsv files')
     parser.add_argument('--metric', type=str, nargs='+', required=True,
                        help='Metric(s) to plot: Distance_Spread, Center_Distance, Signal_Area_Bins, '
                             'Total_Intensity, Spread_Lower, Spread_Upper, '
@@ -576,6 +616,18 @@ Examples:
                        help='Display all plots interactively even when saving to output folder')
     
     args = parser.parse_args()
+
+    if not args.input_search_pattern and not args.input_folder:
+        parser.error('One of --input-search-pattern or --input-folder is required')
+
+    if args.input_search_pattern and args.input_folder:
+        parser.error('Use only one of --input-search-pattern or --input-folder')
+
+    if args.input_folder:
+        logging.warning('--input-folder is deprecated; use --input-search-pattern instead')
+        input_search_pattern = os.path.join(args.input_folder, '*_metrics.tsv')
+    else:
+        input_search_pattern = args.input_search_pattern
     
     # Setup logging
     logging.basicConfig(
@@ -584,7 +636,7 @@ Examples:
     )
     
     # Load metrics
-    df = load_metrics_from_folder(args.input_folder)
+    df, df_decay = load_metrics_from_search_pattern(input_search_pattern)
     
     # Filter out failed QC files if QC_Status column exists
     if 'QC_Status' in df.columns:
@@ -599,9 +651,6 @@ Examples:
     
     if len(df) == 0:
         raise ValueError("No valid data after removing missing Experimental_Group values")
-    
-    # Load decay summary metrics (one row per file)
-    df_decay = load_decay_summary_from_folder(args.input_folder)
     
     if not df_decay.empty:
         # Filter out failed QC files if QC_Status column exists

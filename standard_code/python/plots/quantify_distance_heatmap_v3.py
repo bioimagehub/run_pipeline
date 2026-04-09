@@ -1588,7 +1588,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Quantify with DBSCAN clustering (recommended, T0 subtraction always enabled)
-  environment: uv@3.11:quantify-distance-heatmap
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
@@ -1604,7 +1604,7 @@ run:
   - --metadata-columns: expID,Group,Replicate
 
 - name: Quantify with time smoothing (reduces noise in temporal dimension)
-  environment: uv@3.11:quantify-distance-heatmap
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'
@@ -1614,7 +1614,7 @@ run:
   - --smooth-sigma-time: 1.0
 
 - name: Quantify with origin-based seeding (avoids debris far from photoconversion site)
-  environment: uv@3.11:quantify-distance-heatmap
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v3.py'

@@ -1,0 +1,24 @@
+run:
+- name: QC mask overlay with ROI markers
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/qc_mask.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --mask-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --yaml-search-pattern: '%YAML%/input_data/**/*_metadata.yaml'
+  - --mode: group1
+  - --colormap: random
+  - --output-folder: '%YAML%/plots'
+
+- name: QC mask overlay for one channel and one Z slice
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/qc_mask.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --mask-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --output-folder: '%YAML%/plots'
+  - --channel: 1
+  - --z-slice: 5
+  - --mode: examples3
