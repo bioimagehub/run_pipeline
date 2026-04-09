@@ -1,9 +1,0 @@
-run:
-- name: Extract metadata YAML next to image
-  environment: extract_metadata
-  commands:
-  - python
-  - ./standard_code/python/extract_metadata.py
-  - --input-file: ./pipeline_configs/input_1/small_TCYX_01.ome.tif
-  # Optional: save to custom path
-  # - --output-file: ./output_summary/small_TCYX_01_metadata.yaml

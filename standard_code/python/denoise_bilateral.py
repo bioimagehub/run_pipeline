@@ -123,7 +123,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Denoise images (bilateral filter)
-  environment: uv@3.11:denoise
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bilateral_denoise.py'
@@ -134,7 +134,7 @@ run:
   - --sigma-space: 75
 
 - name: Denoise with stronger smoothing
-  environment: uv@3.11:denoise
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bilateral_denoise.py'

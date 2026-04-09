@@ -208,15 +208,15 @@ Examples (YAML config for run_pipeline.exe):
 ---
 run:
 - name: Rename files with pattern matching
-  environment: uv@3.11:rename-files
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/rename_files.py'
-    - --input-search-pattern: 'data/prefix_*.tif'
+    - --input-search-pattern: '%YAML%/input_data/prefix_*.tif'
     - --replace-term: '_newname'
   
 - name: Rename and move files to output folder
-  environment: uv@3.11:rename-files
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/rename_files.py'
@@ -225,11 +225,11 @@ run:
   - --output-folder: '%YAML%/output_data'
   
 - name: Dry run to preview changes
-  environment: uv@3.11:rename-files
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/rename_files.py'
-  - --input-search-pattern: 'data/*.czi'
+    - --input-search-pattern: '%YAML%/input_data/*.czi'
   - --replace-term: 'renamed'
   - --dry-run
         """

@@ -309,7 +309,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Fill missing timepoints (all channels)
-  environment: uv@3.11:fill-mask-timepoints
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_mask_timepoints.py'
@@ -318,7 +318,7 @@ run:
   - --blend-threshold: 0.3
 
 - name: Fill missing timepoints (channels 0 and 2, max gap 5)
-  environment: uv@3.11:fill-mask-timepoints
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_mask_timepoints.py'

@@ -1484,27 +1484,30 @@ def main():
         description='Quantify signal spread (distance) and decay (time) from distance matrices. Always performs quantification analysis.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Basic quantification with QC filtering
-  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification
-  
-  # Display plots interactively even when saving
-  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key track_completeness --output-folder ./quantification --force-show
-  
-  # Process all files in parallel (DEFAULT)
-  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification --mode all
-  
-  # Process specific groups (e.g., 2 samples per experimental group)
-  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification --mode group2
-  
-  # Recursive search with folder structure collapsing
-  python quantify_distance_heatmap.py --input-search-pattern "./data/**/*.tif" --distance-search-pattern "./distances/**/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification
-  
-  # Customize smoothing and segmentation thresholds
-  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --smooth-sigma-distance 2.0 --region-grow-threshold 0.75 --output-folder ./quantification
-  
-  # Sequential processing (disable parallel)
-  python quantify_distance_heatmap.py --input-search-pattern "./input/*.tif" --distance-search-pattern "./distances/*_geodesic.tif" --qc-key nuc_segmentation --output-folder ./quantification --no-parallel
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Quantify distance heatmaps with QC filtering
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/quantify_distance_heatmap.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --distance-search-pattern: '%YAML%/distance_maps/**/*_geodesic.tif'
+    - --qc-key: nuc_segmentation
+    - --output-folder: '%YAML%/quantification'
+
+- name: Quantify heatmaps with tuned smoothing
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/quantify_distance_heatmap.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --distance-search-pattern: '%YAML%/distance_maps/**/*_geodesic.tif'
+    - --qc-key: track_completeness
+    - --output-folder: '%YAML%/quantification'
+    - --smooth-sigma-distance: 2.0
+    - --region-grow-threshold: 0.75
         """
     )
     

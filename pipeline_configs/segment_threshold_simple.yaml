@@ -1,0 +1,24 @@
+run:
+- name: Threshold segment with Li method
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/segment_threshold_simple.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_masks'
+  - --channel: 0
+  - --method: li
+  - --fill-holes
+  - --remove-xy-edges
+
+- name: Numeric threshold segment with Gaussian blur
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/segment_threshold_simple.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_masks'
+  - --threshold: '1 inf'
+  - --gaussian-sigma: 2.0
+  - --min-size: 100
+  - --save-labeled

@@ -1,0 +1,30 @@
+run:
+- name: Plot one metric at a specific timepoint
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/plot_summary_per_group.py'
+  - --input-search-pattern: '%YAML%/quantification/**/*_metrics.tsv'
+  - --metric: Distance_Spread
+  - --timepoint: 1
+  - --output-folder: '%YAML%/group_plots'
+
+- name: Plot multiple metrics as time series
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/plot_summary_per_group.py'
+  - --input-search-pattern: '%YAML%/quantification/**/*_metrics.tsv'
+  - --metric: Distance_Spread Center_Distance Signal_Area_Bins
+  - --timeseries
+  - --output-folder: '%YAML%/group_plots'
+
+- name: Plot decay summary metrics with standard deviation bars
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/plot_summary_per_group.py'
+  - --input-search-pattern: '%YAML%/quantification/**/*_metrics.tsv'
+  - --metric: decay
+  - --output-folder: '%YAML%/group_plots'
+  - --error-bars: std

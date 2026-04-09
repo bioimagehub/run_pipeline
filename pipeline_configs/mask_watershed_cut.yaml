@@ -1,0 +1,24 @@
+run:
+- name: Watershed split touching masks with ROI export
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_watershed_cut.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
+  - --output-folder: '%YAML%/output_watershed'
+  - --tolerance: 0.5
+  - --max-fragment-length: 100
+  - --save-rois
+
+- name: Watershed split with size filtering
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_watershed_cut.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
+  - --output-folder: '%YAML%/output_watershed'
+  - --tolerance: 0.5
+  - --max-fragment-length: 100
+  - --remove-xy-edges
+  - --min-size: 500
+  - --max-size: inf

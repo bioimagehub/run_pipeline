@@ -1,0 +1,19 @@
+run:
+- name: Measure nuclei masks against source images
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_measure.py'
+  - --input-search-pattern: '%YAML%/images/*.tif'
+  - --mask-search-pattern: '%YAML%/masks/*_nuc.tif'
+  - --output-folder: '%YAML%/measurements'
+
+- name: Measure masks recursively
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_measure.py'
+  - --input-search-pattern: '%YAML%/images/**/*.tif'
+  - --mask-search-pattern: '%YAML%/masks/*_cell.tif'
+  - --output-folder: '%YAML%/measurements'
+  - --search-subfolders

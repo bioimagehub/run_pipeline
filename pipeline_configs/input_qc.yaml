@@ -1,0 +1,20 @@
+run:
+- name: Basic input QC from image and metadata sidecars
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/input_qc.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --yaml-search-pattern: '%YAML%/input_data/**/*_metadata.yaml'
+  - --output-summary: '%YAML%/qc/QC_summary.tsv'
+
+- name: Full QC with HTML report and strict failure
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/input_qc.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --yaml-search-pattern: '%YAML%/input_data/**/*_metadata.yaml'
+  - --output-summary: '%YAML%/qc/QC_summary.tsv'
+  - --generate-report: '%YAML%/qc/QC_report.html'
+  - --fail-on-error

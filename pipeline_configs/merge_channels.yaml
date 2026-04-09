@@ -1,13 +1,19 @@
 run:
-- name: Merge channels into Cellpose input
-	environment: convert_to_tif
-	commands:
-	- python
-	- ./standard_code/python/merge_channels.py
-	- --input-folder: ./input_tif
-	- --output-folder: ./cellpose_input
-	- --merge-channels: '[[0,1,2],3]'
-	# Optional:
-	# - --output-format: tif
-	# - --output-dim-order: TCZYX
-	# - --output-scale: 1
+- name: Merge channels by grouping
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/merge_channels.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --merge-channels: '[[0,1],2,3]'
+
+- name: Merge channels and export Ilastik H5
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/merge_channels.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --merge-channels: '[[0,1],[2],[3,4]]'
+  - --output-format: ilastik-h5

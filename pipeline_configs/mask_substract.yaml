@@ -1,12 +1,19 @@
 run:
-- name: Substract Nucleus from whole cell _mask.cp
-  environment: segment_threshold
+- name: Subtract cytoplasm mask from nucleus mask
+  environment: uv@3.11:default
   commands:
   - python
-  - ./standard_code/python/mask_substract.py
-  - --mask1-search-pattern: ./cellpose_cyt/*_cp_masks.tif
-  - --mask2-search-pattern: ./cellpose_nuc/*_cp_masks.tif
-  - --output-folder: ./output_summary
-  - --output-suffix: _cyt.tif
-  - --output-suffix2: _nuc.tif
+  - '%REPO%/standard_code/python/mask_substract.py'
+  - --mask1-search-pattern: '%YAML%/masks/*_nuc.tif'
+  - --mask2-search-pattern: '%YAML%/masks/*_cyt.tif'
+  - --output-folder: '%YAML%/subtracted_masks'
+
+- name: Subtract masks with strict one-to-one overlap
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_substract.py'
+  - --mask1-search-pattern: '%YAML%/masks/*_mask1.tif'
+  - --mask2-search-pattern: '%YAML%/masks/*_mask2.tif'
+  - --output-folder: '%YAML%/subtracted_masks'
   - --enforce-one-to-one-overlap

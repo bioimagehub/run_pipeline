@@ -1,19 +1,19 @@
----
-# Fill Holes in Greyscale Images Pipeline
-# 
-# Fills dark regions (holes) in greyscale images while preserving intensity.
-# Perfect for filling nucleoli inside nuclei or other dark internal structures.
-#
-# Example use case: Confocal nucleus images where nucleoli appear as dark holes
-#
-# Author: BIPHUB -, University of Oslo
-# License: MIT
-
 run:
-- name: Fill greyscale holes (2D mode - slice by slice)
-  environment: uv:segmentation
+- name: Fill greyscale holes in bright objects
+  environment: uv@3.11:default
   commands:
-  - python: '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
-  - --output-folder: '%YAML%/output_filled'
-  - --output-suffix: '_filled'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Fill holes with local kernel and delta output
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --kernel-size: 40
+  - --kernel-overlap: half
+  - --return-delta

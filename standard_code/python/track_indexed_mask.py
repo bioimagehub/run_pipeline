@@ -124,7 +124,32 @@ def process_folder_or_file(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Track labeled objects across time using TrackPy.")
+        parser = argparse.ArgumentParser(
+                description="Track labeled objects across time using TrackPy.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Track indexed masks over time
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/track_indexed_mask.py'
+    - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --output-folder: '%YAML%/tracked_masks'
+
+- name: Track channel 1 masks recursively
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/track_indexed_mask.py'
+    - --input-search-pattern: '%YAML%/masks/**/*.tif'
+    - --output-folder: '%YAML%/tracked_masks'
+    - --tracking-channel: 1
+    - --search-subfolders
+                """
+        )
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern to search for input files (e.g. './data/*.tif')")
     parser.add_argument("--extension", type=str, default=".tif", help="File extension to search for.")
     parser.add_argument("--search-subfolders", action="store_true", help="Search recursively in subfolders.")

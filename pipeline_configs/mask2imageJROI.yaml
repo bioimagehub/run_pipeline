@@ -1,12 +1,18 @@
 run:
-- name: Convert masks to ImageJ ROI zip files
-  environment: mask2imagejroi
+- name: Convert labeled masks to ImageJ ROI archives
+  environment: uv@3.11:default
   commands:
   - python
-  - ./standard_code/python/mask2imageJROI.py
-  - --input-search-pattern: ./output_summary/*.tif
-  - --output-folder: ./rois
-  # Optional flags:
-  # - --output-suffix: _rois
-  # - --search-subfolders
-  # - --no-parallel
+  - '%REPO%/standard_code/python/mask2imageJROI.py'
+  - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --output-folder: '%YAML%/roi_output'
+
+- name: Convert masks recursively without parallel workers
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask2imageJROI.py'
+  - --input-search-pattern: '%YAML%/masks/**/*.tif'
+  - --output-folder: '%YAML%/roi_output'
+  - --search-subfolders
+  - --no-parallel

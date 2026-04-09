@@ -1,0 +1,19 @@
+run:
+- name: Enhance holes with variance ROI selection
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/enhance_holes_2.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Enhance holes with tuned ROI parameters
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/enhance_holes_2.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --variance-sigma: 2.5
+  - --median-sigma: 1.0
+  - --roi-padding: 6

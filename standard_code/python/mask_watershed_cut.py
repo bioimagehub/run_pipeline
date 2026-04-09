@@ -526,46 +526,31 @@ def process_folder(
 # =============================================================================
 """
 Example YAML config for run_pipeline.exe:
-
 ---
 run:
-  - name: Watershed cut with default merging
-	environment: uv@3.11:segmentation
-	commands:
-	  - python
-	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
-	  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
-	  - --output-folder: '%YAML%/output_watershed'
-	  - --tolerance: 0.5
-	  - --max-fragment-length: 100
-	  - --save-watershed
+- name: Watershed split touching masks with ROI export
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_watershed_cut.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
+  - --output-folder: '%YAML%/output_watershed'
+  - --tolerance: 0.5
+  - --max-fragment-length: 100
+  - --save-rois
 
-  - name: Watershed cut with size filtering
-	environment: uv@3.11:segmentation
-	commands:
-	  - python
-	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
-	  - --input-search-pattern: '%YAML%/masks/**/*.tif'
-	  - --output-folder: '%YAML%/output_watershed'
-	  - --tolerance: 0.5
-	  - --max-fragment-length: 100
-	  - --remove-xy-edges
-	  - --min-size: 500
-	  - --max-size: inf
-	  - --save-watershed
-
-  - name: Watershed cut aggressive merging
-	environment: uv@3.11:segmentation
-	commands:
-	  - python
-	  - '%REPO%/standard_code/python/mask_watershed_cut.py'
-	  - --input-search-pattern: '%YAML%/masks/**/*.tif'
-	  - --output-folder: '%YAML%/output_watershed'
-	  - --tolerance: 1.0
-	  - --max-fragment-length: 50
-	  - --save-watershed
-
-
+- name: Watershed split with size filtering
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/mask_watershed_cut.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*.tif'
+  - --output-folder: '%YAML%/output_watershed'
+  - --tolerance: 0.5
+  - --max-fragment-length: 100
+  - --remove-xy-edges
+  - --min-size: 500
+  - --max-size: inf
 
 Notes:
   - Use --tolerance to control watershed sensitivity (higher = fewer cuts, typical: 0.3-1.0)
@@ -608,10 +593,8 @@ Always enabled:
   - Separator lines (0 pixels) between regions (via watershed algorithm)
   - Binary mask output (foreground=255, background=0)
 
-Example usage:
-	python mask_watershed_cut.py --input-search-pattern "masks/*.tif" \
-	  --output-folder "output" --tolerance 0.5 --max-fragment-length 100 \
-	  --remove-xy-edges --min-size 100 --max-size 100000 --save-rois
+		Example YAML config for run_pipeline.exe:
+		See pipeline_configs/mask_watershed_cut.yaml for complete examples.
 		"""
 	)
 	

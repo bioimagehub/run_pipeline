@@ -1,0 +1,17 @@
+run:
+- name: Bleach correct against first frame
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bleach_correct.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Bleach correct neighbor-to-neighbor
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/bleach_correct.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --match-method: neighbor

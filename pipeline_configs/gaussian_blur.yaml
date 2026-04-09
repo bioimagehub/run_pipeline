@@ -1,0 +1,22 @@
+run:
+- name: Gaussian blur per Z slice
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/gaussian_blur.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --mode: 2d
+  - --sigma-xy: 1.5
+
+- name: Gaussian blur full 3D volume for channel 0
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/gaussian_blur.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --mode: 3d
+  - --channels: '0'
+  - --sigma-xy: 1.0
+  - --sigma-z: 1.0

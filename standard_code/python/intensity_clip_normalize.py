@@ -207,9 +207,34 @@ def process_files(
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description="Percentile clipping / normalization for microscopy images."
-    )
+        parser = argparse.ArgumentParser(
+                description="Percentile clipping / normalization for microscopy images.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Normalize images to original dtype range
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/intensity_clip_normalize.py'
+    - --input-search-pattern: '%YAML%/images/**/*.tif'
+    - --output-folder: '%YAML%/normalized'
+
+- name: Normalize each timepoint to float output
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/intensity_clip_normalize.py'
+    - --input-search-pattern: '%YAML%/images/**/*.tif'
+    - --output-folder: '%YAML%/normalized'
+    - --percentile-min: 0.5
+    - --percentile-max: 99.5
+    - --output-mode: float
+    - --per-timepoint
+                """
+        )
 
     parser.add_argument("--input-search-pattern", required=True)
     parser.add_argument("--output-folder", default=None)

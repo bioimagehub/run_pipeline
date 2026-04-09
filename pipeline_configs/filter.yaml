@@ -1,0 +1,25 @@
+run:
+- name: Apply 2D median filter
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/filter.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --method: median
+  - --mode: 2d
+  - --size-y: 3
+  - --size-x: 3
+
+- name: Apply 3D gaussian filter to channel 0
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/filter.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --method: gaussian
+  - --mode: 3d
+  - --channels: '0'
+  - --sigma-xy: 1.5
+  - --sigma-z: 1.0

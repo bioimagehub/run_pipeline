@@ -415,7 +415,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Quantify with DBSCAN (v5 - global threshold)
-  environment: uv@3.11:segmentation
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/plots/quantify_distance_heatmap_v5.py'

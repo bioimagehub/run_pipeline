@@ -115,7 +115,31 @@ def process_folder(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process masks and convert indexed masks to distance matrix")
+        parser = argparse.ArgumentParser(
+                description="Process masks and convert indexed masks to distance matrix",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Compute per-object distance maps
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_get_distance_matrix.py'
+    - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --output-folder: '%YAML%/distance_maps'
+
+- name: Compute distance maps sequentially
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_get_distance_matrix.py'
+    - --input-search-pattern: '%YAML%/masks/**/*.tif'
+    - --output-folder: '%YAML%/distance_maps'
+    - --no-parallel
+                """
+        )
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'")
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_distance_matrix", help="Suffix appended to output filenames before the extension")

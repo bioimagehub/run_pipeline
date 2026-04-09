@@ -662,7 +662,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Convert ND2 files to OME-TIFF (keep largest scene only)
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/convert_to_tif.py'
@@ -671,7 +671,7 @@ run:
   - --log-level: INFO
 
 - name: Convert OBF files, keep only MLE scenes
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/convert_to_tif.py'
@@ -683,7 +683,7 @@ run:
   - --log-level: INFO
 
 - name: Convert CZI files, exclude overview scenes
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/convert_to_tif.py'
@@ -694,7 +694,7 @@ run:
   - --log-level: INFO
 
 - name: Convert LIF files, process all scenes with max projection
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/convert_to_tif.py'

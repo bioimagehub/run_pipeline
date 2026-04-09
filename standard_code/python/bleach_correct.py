@@ -275,7 +275,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Bleach correction (default settings)
-  environment: uv@3.11:bleach-correct
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bleach_correct.py'
@@ -283,7 +283,7 @@ run:
   - --output-folder: '%YAML%/output_bleach_corrected'
 
 - name: Bleach correction (neighbor matching, 8-bit)
-  environment: uv@3.11:bleach-correct
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bleach_correct.py'
@@ -294,7 +294,7 @@ run:
   - --contrast-max: 255
 
 - name: Bleach correction (dry run preview)
-  environment: uv@3.11:bleach-correct
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/bleach_correct.py'

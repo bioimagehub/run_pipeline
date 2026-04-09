@@ -1,0 +1,18 @@
+run:
+- name: Fill greyscale small holes with default closing
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Fill small holes with larger kernel and npy export
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --size: 9
+  - --output-format: npy

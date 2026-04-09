@@ -260,7 +260,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Hole score on nucleus images
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes.py'
@@ -268,7 +268,7 @@ run:
   - --output-folder: '%YAML%/output_data'
 
 - name: Hole score for channels 0 and 2
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes.py'
@@ -277,7 +277,7 @@ run:
   - --channels: '0 2'
 
 - name: Hole score with runtime limit and sequential fallback
-  environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/enhance_holes.py'
@@ -287,7 +287,7 @@ run:
   - --no-parallel
 
 - name: Save output as NumPy arrays
-    environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/enhance_holes.py'
@@ -296,7 +296,7 @@ run:
     - --output-format: npy
 
 - name: Speed up with XY downsampling
-    environment: uv@3.11:convert-to-tif
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/enhance_holes.py'

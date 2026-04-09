@@ -1,0 +1,22 @@
+run:
+- name: QC tracking completeness heatmap
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/qc_tracking.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --mask-search-pattern: '%YAML%/tracked_masks/**/*_tracked.tif'
+  - --qc-key: track_completeness
+  - --output: '%YAML%/plots/tracking_qc.png'
+
+- name: QC tracking with custom figure size
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/qc_tracking.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --mask-search-pattern: '%YAML%/tracked_masks/**/*_tracked.tif'
+  - --qc-key: tracking_validation
+  - --output: '%YAML%/plots/tracking_qc_large.png'
+  - --width: 20
+  - --height: 15

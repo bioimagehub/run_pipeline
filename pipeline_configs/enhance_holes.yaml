@@ -1,0 +1,18 @@
+run:
+- name: Enhance hole-like regions with defaults
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/enhance_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Enhance hole-like regions on channel 0 only
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/enhance_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --channels: '0'
+  - --downsample-factor: 2

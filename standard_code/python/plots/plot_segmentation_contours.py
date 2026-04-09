@@ -391,18 +391,31 @@ def main():
         description='Plot segmentation contours from multiple samples, colored by experimental group. Filters out QC-failed images.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Create overlay plot with QC filtering
-  python plot_segmentation_contours.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./output/*_mask.tif" --qc-key nuc_segmentation -o overlay.png
-  
-  # Customize appearance
-  python plot_segmentation_contours.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_mask.tif" --qc-key track_completeness -o overlay.png --linewidth 3.0 --alpha 0.9
-  
-  # Display interactively instead of saving
-  python plot_segmentation_contours.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_mask.tif" --qc-key nuc_segmentation --force-show
-  
-  # Use different mode selection
-  python plot_segmentation_contours.py --input-search-pattern "./input/*.tif" --mask-search-pattern "./masks/*_mask.tif" --qc-key nuc_segmentation --mode group1 -o overlay.png
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Plot segmentation contour overlays with QC filtering
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/plot_segmentation_contours.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --mask-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --qc-key: nuc_segmentation
+    - --output: '%YAML%/plots/segmentation_contours.png'
+
+- name: Plot contour overlays with custom styling
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/plots/plot_segmentation_contours.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --mask-search-pattern: '%YAML%/masks/**/*_mask.tif'
+    - --qc-key: track_completeness
+    - --output: '%YAML%/plots/segmentation_contours_custom.png'
+    - --linewidth: 3.0
+    - --alpha: 0.9
+    - --mode: group1
         """
     )
     

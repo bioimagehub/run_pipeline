@@ -154,7 +154,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Fill grayscale small holes (default settings)
-    environment: uv@3.11:segmentation
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'
@@ -163,7 +163,7 @@ run:
   - --log-level: INFO
 
 - name: Fill grayscale small holes (custom kernel and mode)
-    environment: uv@3.11:segmentation
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'
@@ -176,7 +176,7 @@ run:
   - --log-level: INFO
 
 - name: Fill grayscale small holes (save as npy)
-    environment: uv@3.11:segmentation
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/fill_greyscale_small_holes.py'

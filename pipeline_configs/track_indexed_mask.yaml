@@ -1,0 +1,18 @@
+run:
+- name: Track indexed masks across time
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/track_indexed_mask.py'
+  - --input-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --output-folder: '%YAML%/tracked_masks'
+
+- name: Track channel 1 masks recursively
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/track_indexed_mask.py'
+  - --input-search-pattern: '%YAML%/masks/**/*.tif'
+  - --output-folder: '%YAML%/tracked_masks'
+  - --tracking-channel: 1
+  - --search-subfolders

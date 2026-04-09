@@ -133,7 +133,35 @@ def find_maxima_in_image(image_path: str, output_csv: str, min_distance, thresho
         print("No maxima found.")
 
 def main():
-    parser = argparse.ArgumentParser(description="Find local maxima in a TCZYX image and save coordinates to CSV.")
+        parser = argparse.ArgumentParser(
+                description="Find local maxima in a TCZYX image and save coordinates to CSV.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Find local maxima with absolute threshold
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/find_maxima.py'
+    - --input-search-pattern: '%YAML%/images/**/*.tif'
+    - --output-folder: '%YAML%/maxima_csv'
+    - --min-distance: '10'
+    - --threshold-abs: '250'
+
+- name: Find maxima with dynamic thresholds and mask labels
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/find_maxima.py'
+    - --input-search-pattern: '%YAML%/images/**/*.tif'
+    - --output-folder: '%YAML%/maxima_csv'
+    - --min-distance: '8,12'
+    - --threshold-abs: '2*mean,median'
+    - --mask-search-patterns: '%YAML%/masks/*_nuc.tif' '%YAML%/masks/*_cyt.tif'
+                """
+        )
     parser.add_argument('--input-search-pattern', required=True, help='Glob pattern for input images, e.g. "folder/*.tif" or "folder/somefile*.tif". Use a single file path for one image.')
     parser.add_argument('--output-folder', required=False, default=None, help='Destination folder for output CSV files. For a single matched file, a full .csv path is also accepted for compatibility.')
     parser.add_argument('--output-suffix', required=False, default='_maxima', help='Suffix appended to output CSV filenames before the extension.')

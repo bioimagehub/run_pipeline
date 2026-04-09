@@ -90,7 +90,33 @@ def measure_masked_image(image_path: str, mask_path: str, output_csv: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Measure regions in a mask for a TCZYX image or batch of images.")
+        parser = argparse.ArgumentParser(
+                description="Measure regions in a mask for a TCZYX image or batch of images.",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Measure nuclei masks against source images
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_measure.py'
+    - --input-search-pattern: '%YAML%/images/*.tif'
+    - --mask-search-pattern: '%YAML%/masks/*_nuc.tif'
+    - --output-folder: '%YAML%/measurements'
+
+- name: Measure masks recursively
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/mask_measure.py'
+    - --input-search-pattern: '%YAML%/images/**/*.tif'
+    - --mask-search-pattern: '%YAML%/masks/*_cell.tif'
+    - --output-folder: '%YAML%/measurements'
+    - --search-subfolders
+                """
+        )
     parser.add_argument('--input-search-pattern', required=True, help='Glob pattern for input images, e.g. "folder/*.tif" or "folder/somefile*.tif". Use a single file path for one image.')
     parser.add_argument('--mask-search-pattern', nargs='?', required=True, help='Glob pattern for mask images, e.g. "folder/*_nuc.tif". The * will be replaced with the prefix of the input image before the * in its pattern.')
     parser.add_argument('--output-folder', required=False, default=None, help='Destination folder for output CSV files. For a single matched file, a full .csv path is also accepted for compatibility.')

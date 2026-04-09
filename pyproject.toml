@@ -44,6 +44,37 @@ torchaudio = { index = "pytorch" }
 cucim-cu12 = { index = "nvidia" }
 
  [dependency-groups]
+default = [
+    "numpy>=2.1",
+    "scipy",
+    "scikit-image",
+    "scikit-learn",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "tqdm",
+    "joblib",
+    "h5py",
+    "dask[array]",
+    "nd2reader",
+    "trackpy",
+    "opencv-python>=4.11.0.86",
+    "pystackreg",
+    "pyGPUreg",
+    "roifile",
+
+    "jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
+    "bioio",
+    "bioio-bioformats",
+    "bioio-ome-tiff",
+    "bioio-tifffile",
+    "bioio-nd2",
+    "bioio_lif",
+    "bioio_czi",
+    "bioio_dv",
+]
+
 convert-to-tif = [
 	"numpy",
 	"matplotlib",

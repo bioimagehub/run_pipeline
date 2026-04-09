@@ -1005,7 +1005,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: QC mask overlay with ROI markers
-  environment: uv@3.11:qc-mask
+    environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/plots/qc_mask.py'

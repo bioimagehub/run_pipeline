@@ -1,0 +1,18 @@
+run:
+- name: Rename files in place by replacing suffix term
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/rename_files.py'
+  - --input-search-pattern: '%YAML%/input_data/prefix_*.tif'
+  - --replace-term: '_renamed'
+
+- name: Preview renaming into output folder
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/rename_files.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.nd2'
+  - --replace-term: '_processed'
+  - --output-folder: '%YAML%/renamed_data'
+  - --dry-run

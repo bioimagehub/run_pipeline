@@ -1,0 +1,18 @@
+run:
+- name: Fill short tracking gaps in masks
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_mask_gaps.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*_tracked.tif'
+  - --output-folder: '%YAML%/output_masks'
+
+- name: Fill larger gaps sequentially
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_mask_gaps.py'
+  - --input-search-pattern: '%YAML%/input_masks/**/*_tracked.tif'
+  - --output-folder: '%YAML%/output_masks'
+  - --max-gap-size: 4
+  - --no-parallel

@@ -473,7 +473,7 @@ Example YAML config for run_pipeline.exe:
 ---
 run:
 - name: Fill mask gaps (parallel by default)
-    environment: uv@3.11:fill-mask-gaps
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/fill_mask_gaps.py'
@@ -482,7 +482,7 @@ run:
     - --max-gap-size: 2
 
 - name: Fill mask gaps (sequential)
-    environment: uv@3.11:fill-mask-gaps
+    environment: uv@3.11:default
     commands:
     - python
     - '%REPO%/standard_code/python/fill_mask_gaps.py'

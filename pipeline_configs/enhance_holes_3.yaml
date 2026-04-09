@@ -1,0 +1,19 @@
+run:
+- name: Enhance holes with ImageJ-like prototype settings
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/enhance_holes_3.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+
+- name: Enhance holes with custom smoothing
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/enhance_holes_3.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --channels: '0 1'
+  - --downsample-factor: 2
+  - --foreground-smoothing: 2.0

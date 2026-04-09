@@ -1,0 +1,23 @@
+run:
+- name: Plot segmentation contour overlays with QC filtering
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/plot_segmentation_contours.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --mask-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --qc-key: nuc_segmentation
+  - --output: '%YAML%/plots/segmentation_contours.png'
+
+- name: Plot contour overlays with custom styling
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/plots/plot_segmentation_contours.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --mask-search-pattern: '%YAML%/masks/**/*_mask.tif'
+  - --qc-key: track_completeness
+  - --output: '%YAML%/plots/segmentation_contours_custom.png'
+  - --linewidth: 3.0
+  - --alpha: 0.9
+  - --mode: group1

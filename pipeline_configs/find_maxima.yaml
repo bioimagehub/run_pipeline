@@ -1,14 +1,21 @@
 run:
-- name: Find local maxima and save CSVs
-  environment: mask_measure
+- name: Find local maxima with absolute threshold
+  environment: uv@3.11:default
   commands:
   - python
-  - ./standard_code/python/find_maxima.py
-  - --input-search-pattern: ./input_tif/*.tif
-  # Optional: provide masks to annotate maxima with mask label values
-  - --mask-search-patterns
-  - ./output_summary/*_cp_masks_cyt.tif
-  - ./output_summary/*_cp_masks_nuc.tif
-  - --min-distance: 10
-  - --threshold-abs: 2*median,-1,2*median,-1
-  - --output: ./output_summary
+  - '%REPO%/standard_code/python/find_maxima.py'
+  - --input-search-pattern: '%YAML%/images/**/*.tif'
+  - --output-folder: '%YAML%/maxima_csv'
+  - --min-distance: '10'
+  - --threshold-abs: '250'
+
+- name: Find maxima with dynamic thresholds and mask labels
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/find_maxima.py'
+  - --input-search-pattern: '%YAML%/images/**/*.tif'
+  - --output-folder: '%YAML%/maxima_csv'
+  - --min-distance: '8,12'
+  - --threshold-abs: '2*mean,median'
+  - --mask-search-patterns: '%YAML%/masks/*_nuc.tif' '%YAML%/masks/*_cyt.tif'
