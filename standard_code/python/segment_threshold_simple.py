@@ -26,7 +26,6 @@ from skimage.filters import (
     threshold_niblack, threshold_sauvola
 )
 from skimage.measure import label
-from skimage.morphology import remove_small_objects
 
 # Local imports
 import bioimage_pipeline_utils as rp
@@ -124,56 +123,89 @@ def apply_numeric_threshold(image: np.ndarray, min_val: float, max_val: float, c
 
 
 def fill_holes_in_mask(mask: np.ndarray) -> np.ndarray:
-    """Fill holes in each labeled region independently."""
-    filled = np.copy(mask)
+    """Fill holes in each plane and relabel connected components."""
+    filled = np.zeros_like(mask)
     t, c, z, y, x = mask.shape
     
     for ti in range(t):
         for ci in range(c):
             for zi in range(z):
                 plane = mask[ti, ci, zi]
-                for label_id in np.unique(plane):
-                    if label_id == 0:
-                        continue
-                    region_mask = plane == label_id
-                    filled_region = binary_fill_holes(region_mask)
-                    holes = filled_region & ~region_mask
-                    filled[ti, ci, zi][holes] = label_id
+                if not np.any(plane):
+                    continue
+                filled_binary = binary_fill_holes(plane > 0)
+                filled[ti, ci, zi] = label(filled_binary).astype(np.uint16)
     
     return filled
 
 
 def remove_edge_objects(mask: np.ndarray, remove_xy: bool = True, remove_z: bool = False) -> np.ndarray:
     """Remove objects touching image edges."""
-    cleaned = np.zeros_like(mask)
+    if not remove_xy and not remove_z:
+        return mask
+
+    cleaned = np.copy(mask)
     t, c, z, y, x = mask.shape
     
     for ti in range(t):
         for ci in range(c):
             for zi in range(z):
                 plane = mask[ti, ci, zi]
-                for label_id in np.unique(plane):
-                    if label_id == 0:
-                        continue
-                    
-                    region_mask = plane == label_id
-                    
-                    # Check XY edges
-                    touches_xy = (
-                        np.any(region_mask[0, :]) or np.any(region_mask[-1, :]) or
-                        np.any(region_mask[:, 0]) or np.any(region_mask[:, -1])
-                    )
-                    
-                    if remove_xy and touches_xy:
-                        continue
-                    
-                    # Check Z edges (across all z-planes for this object)
-                    if remove_z and (zi == 0 or zi == z - 1):
-                        if np.any(region_mask):
-                            continue
-                    
-                    cleaned[ti, ci, zi][region_mask] = label_id
+                if not np.any(plane):
+                    continue
+
+                labels_to_remove = np.array([], dtype=plane.dtype)
+
+                if remove_xy:
+                    border_labels = np.concatenate([
+                        plane[0, :],
+                        plane[-1, :],
+                        plane[:, 0],
+                        plane[:, -1],
+                    ])
+                    labels_to_remove = np.unique(border_labels)
+
+                if remove_z and (zi == 0 or zi == z - 1):
+                    z_edge_labels = np.unique(plane)
+                    labels_to_remove = np.union1d(labels_to_remove, z_edge_labels)
+
+                labels_to_remove = labels_to_remove[labels_to_remove != 0]
+                if labels_to_remove.size == 0:
+                    continue
+
+                cleaned_plane = cleaned[ti, ci, zi]
+                cleaned_plane[np.isin(cleaned_plane, labels_to_remove)] = 0
     
+    return cleaned
+
+
+def _filter_labels_by_size(mask: np.ndarray, keep_min: int = 0, keep_max: float = float('inf')) -> np.ndarray:
+    """Filter labeled objects by size using per-plane bincounts."""
+    if keep_min <= 0 and keep_max >= float('inf'):
+        return mask
+
+    cleaned = np.copy(mask)
+    t, c, z, y, x = mask.shape
+
+    for ti in range(t):
+        for ci in range(c):
+            for zi in range(z):
+                plane = mask[ti, ci, zi]
+                if not np.any(plane):
+                    continue
+
+                label_sizes = np.bincount(plane.ravel())
+                keep = np.ones(label_sizes.shape[0], dtype=bool)
+                keep[0] = False
+
+                if keep_min > 0:
+                    keep &= label_sizes >= keep_min
+                if keep_max < float('inf'):
+                    keep &= label_sizes <= keep_max
+
+                cleaned_plane = cleaned[ti, ci, zi]
+                cleaned_plane[~keep[plane]] = 0
+
     return cleaned
 
 
@@ -181,46 +213,16 @@ def remove_small_objects_from_mask(mask: np.ndarray, min_size: int) -> np.ndarra
     """Remove objects smaller than min_size pixels."""
     if min_size <= 0:
         return mask
-    
-    cleaned = np.zeros_like(mask)
-    t, c, z, y, x = mask.shape
-    
-    for ti in range(t):
-        for ci in range(c):
-            for zi in range(z):
-                plane = mask[ti, ci, zi]
-                for label_id in np.unique(plane):
-                    if label_id == 0:
-                        continue
-                    
-                    region_mask = plane == label_id
-                    if np.sum(region_mask) >= min_size:
-                        cleaned[ti, ci, zi][region_mask] = label_id
-    
-    return cleaned
+
+    return _filter_labels_by_size(mask, keep_min=min_size)
 
 
 def remove_large_objects_from_mask(mask: np.ndarray, max_size: float) -> np.ndarray:
     """Remove objects larger than max_size pixels."""
     if max_size >= float('inf'):
         return mask
-    
-    cleaned = np.zeros_like(mask)
-    t, c, z, y, x = mask.shape
-    
-    for ti in range(t):
-        for ci in range(c):
-            for zi in range(z):
-                plane = mask[ti, ci, zi]
-                for label_id in np.unique(plane):
-                    if label_id == 0:
-                        continue
-                    
-                    region_mask = plane == label_id
-                    if np.sum(region_mask) <= max_size:
-                        cleaned[ti, ci, zi][region_mask] = label_id
-    
-    return cleaned
+
+    return _filter_labels_by_size(mask, keep_max=max_size)
 
 
 def process_image(

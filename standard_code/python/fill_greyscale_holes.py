@@ -20,12 +20,42 @@ from typing import Optional
 import logging
 import h5py
 import json
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+import tifffile
 from skimage.morphology import reconstruction
 from tqdm import tqdm
 
 # Local imports
 import bioimage_pipeline_utils as rp
+
+
+def _estimate_nbytes(shape: tuple[int, ...], dtype: np.dtype) -> int:
+    return int(np.prod(shape, dtype=np.int64)) * np.dtype(dtype).itemsize
+
+
+def _build_ome_metadata(physical_pixel_sizes) -> dict[str, object]:
+    metadata: dict[str, object] = {"axes": "TCZYX"}
+    if physical_pixel_sizes is None:
+        return metadata
+
+    x_size = getattr(physical_pixel_sizes, "X", None)
+    y_size = getattr(physical_pixel_sizes, "Y", None)
+    z_size = getattr(physical_pixel_sizes, "Z", None)
+
+    if x_size is not None:
+        metadata["PhysicalSizeX"] = float(x_size)
+    if y_size is not None:
+        metadata["PhysicalSizeY"] = float(y_size)
+    if z_size is not None:
+        metadata["PhysicalSizeZ"] = float(z_size)
+
+    return metadata
+
+
+def _load_czyx_timepoint(img, t: int) -> np.ndarray:
+    if hasattr(img, "dask_data") and img.dask_data is not None:
+        return np.asarray(img.dask_data[t].compute())
+    return np.asarray(img.get_image_data("CZYX", T=t))
 
 
 def greyscale_fill_holes_2d(image: np.ndarray) -> np.ndarray:
@@ -363,109 +393,119 @@ def process_single_image(
     # --- Memory-efficient streaming approach ---
     # ilastik-h5: pre-create the dataset and write one T-slice at a time (no full array needed).
     # tif/npy: accumulate in a pre-allocated array (one allocation instead of load + copy).
-    needs_full_array = any(fmt in ('tif', 'npy') for fmt in output_formats)
+    needs_full_array = 'npy' in output_formats
     full_output: Optional[np.ndarray] = (
         np.empty((T, n_out, Z, Y, X), dtype=img_dtype) if needs_full_array else None
     )
 
-    open_h5_files: dict[str, tuple] = {}
-    for fmt in output_formats:
-        if fmt == 'ilastik-h5':
-            output_path = f"{output_stem}.h5"
-            logging.info(f"Preparing Ilastik HDF5 (streaming): {Path(output_path).name}")
-            axis_configs = [
-                {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},
-                {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},
-                {'key': 'y', 'typeFlags': 2, 'resolution': 0, 'description': ''},
-                {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},
-                {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''},
-            ]
-            f = h5py.File(output_path, 'w')
-            # Ilastik layout: TZYXC
-            dset = f.create_dataset(
-                'data',
-                shape=(T, Z, Y, X, n_out),
-                dtype=img_dtype,
-                compression='gzip',
-                compression_opts=4,
-            )
-            dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
-            open_h5_files[output_path] = (f, dset)
-
     total_operations = T * len(channels_to_process)
+    write_tif = 'tif' in output_formats
+    tif_output_path = f"{output_stem}.tif"
 
-    try:
-        with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
-            for t in range(T):
-                # Load just one timepoint: shape (C, Z, Y, X) — far smaller than the full array
-                czyx = img.get_image_data("CZYX", T=t)
+    saved_h5_paths: list[str] = []
+    with ExitStack() as exit_stack:
+        open_h5_files: dict[str, tuple] = {}
 
-                if include_input:
-                    out_czyx = np.empty((n_out, Z, Y, X), dtype=img_dtype)
-                else:
-                    out_czyx = czyx.copy()  # preserve non-processed channels
+        for fmt in output_formats:
+            if fmt == 'ilastik-h5':
+                output_path = f"{output_stem}.h5"
+                logging.info(f"Preparing Ilastik HDF5 (streaming): {Path(output_path).name}")
+                axis_configs = [
+                    {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},
+                    {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+                    {'key': 'y', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+                    {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+                    {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''},
+                ]
+                f = exit_stack.enter_context(h5py.File(output_path, 'w'))
+                # Ilastik layout: TZYXC
+                dset = f.create_dataset(
+                    'data',
+                    shape=(T, Z, Y, X, n_out),
+                    dtype=img_dtype,
+                    compression='gzip',
+                    compression_opts=4,
+                )
+                dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
+                open_h5_files[output_path] = (f, dset)
+                saved_h5_paths.append(output_path)
 
-                for c_idx, c in enumerate(channels_to_process):
-                    if kernel_size is None and mode_3d and Z > 1:
-                        raise NotImplementedError("3D kernel mode is not implemented. Use 2D kernel or disable kernel mode.")
-                        # volume = czyx[c]  # ZYX
-                        # filled_volume = greyscale_fill_holes_3d(volume)
-                        # result = (
-                        #     _positive_delta(filled_volume, volume, img_dtype)
-                        #     if return_delta
-                        #     else _cast_to_dtype(filled_volume, img_dtype)
-                        # )
-                        # if include_input:
-                        #     out_czyx[c_idx * 2] = czyx[c]
-                        #     out_czyx[c_idx * 2 + 1] = result
-                        # else:
-                        #     out_czyx[c] = result
+        def _processed_planes():
+            with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
+                for t in range(T):
+                    # Load just one timepoint: shape (C, Z, Y, X) — far smaller than the full array
+                    czyx = _load_czyx_timepoint(img, t)
+
+                    if include_input:
+                        out_czyx = np.empty((n_out, Z, Y, X), dtype=img_dtype)
                     else:
-                        # use 2D kernel
-                        for z in range(Z):
-                            slice_2d = czyx[c, z]
-                            filled_slice = (
-                                greyscale_fill_holes_kernel_2d(
-                                    slice_2d,
-                                    kernel_size=kernel_size,
-                                    kernel_overlap=overlap_px,
+                        out_czyx = czyx.copy()  # preserve non-processed channels
+
+                    for c_idx, c in enumerate(channels_to_process):
+                        if kernel_size is None and mode_3d and Z > 1:
+                            raise NotImplementedError("3D kernel mode is not implemented. Use 2D kernel or disable kernel mode.")
+                        else:
+                            for z in range(Z):
+                                slice_2d = czyx[c, z]
+                                filled_slice = (
+                                    greyscale_fill_holes_kernel_2d(
+                                        slice_2d,
+                                        kernel_size=kernel_size,
+                                        kernel_overlap=overlap_px,
+                                    )
+                                    if kernel_size is not None
+                                    else greyscale_fill_holes_2d(slice_2d)
                                 )
-                                if kernel_size is not None
-                                else greyscale_fill_holes_2d(slice_2d)
-                            )
-                            result_2d = (
-                                _positive_delta(filled_slice, slice_2d, img_dtype)
-                                if return_delta
-                                else _cast_to_dtype(filled_slice, img_dtype)
-                            )
-                            if include_input:
-                                out_czyx[c_idx * 2, z] = slice_2d
-                                out_czyx[c_idx * 2 + 1, z] = result_2d
-                            else:
-                                out_czyx[c, z] = result_2d
+                                result_2d = (
+                                    _positive_delta(filled_slice, slice_2d, img_dtype)
+                                    if return_delta
+                                    else _cast_to_dtype(filled_slice, img_dtype)
+                                )
+                                if include_input:
+                                    out_czyx[c_idx * 2, z] = slice_2d
+                                    out_czyx[c_idx * 2 + 1, z] = result_2d
+                                else:
+                                    out_czyx[c, z] = result_2d
 
-                    pbar.update(1)
+                        pbar.update(1)
 
-                # Stream to open HDF5 files (reorder CZYX -> ZYXC for Ilastik)
-                for _path, (_f, _dset) in open_h5_files.items():
-                    _dset[t] = np.transpose(out_czyx, (1, 2, 3, 0))
+                    for _path, (_f, _dset) in open_h5_files.items():
+                        _dset[t] = np.transpose(out_czyx, (1, 2, 3, 0))
 
-                if full_output is not None:
-                    full_output[t] = out_czyx
+                    if full_output is not None:
+                        full_output[t] = out_czyx
 
-    finally:
-        for output_path, (f, _dset) in open_h5_files.items():
-            f.close()
-            logging.info(f"Saved Ilastik HDF5: {Path(output_path).name}")
+                    if write_tif:
+                        for c in range(n_out):
+                            for z in range(Z):
+                                yield out_czyx[c, z]
+
+        if write_tif:
+            logging.info(f"Preparing OME-TIFF (streaming): {Path(tif_output_path).name}")
+            tifffile.imwrite(
+                tif_output_path,
+                _processed_planes(),
+                shape=(T, n_out, Z, Y, X),
+                dtype=np.dtype(img_dtype),
+                photometric='minisblack',
+                compression='deflate',
+                ome=True,
+                metadata=_build_ome_metadata(img.physical_pixel_sizes),
+                bigtiff=_estimate_nbytes((T, n_out, Z, Y, X), img_dtype) >= (4 * 1024**3 - 32 * 1024**2),
+            )
+        else:
+            for _ in _processed_planes():
+                pass
+
+    for output_path in saved_h5_paths:
+        logging.info(f"Saved Ilastik HDF5: {Path(output_path).name}")
+    if write_tif:
+        logging.info(f"Saved OME-TIFF: {Path(tif_output_path).name}")
 
     # Write formats that require the complete array
     if full_output is not None:
         for fmt in output_formats:
-            if fmt == 'tif':
-                output_path = f"{output_stem}.tif"
-                logging.info(f"Saving OME-TIFF: {Path(output_path).name}")
-                rp.save_tczyx_image(full_output, output_path, physical_pixel_sizes=img.physical_pixel_sizes)
-            elif fmt == 'npy':
+            if fmt == 'npy':
                 output_path = f"{output_stem}.npy"
                 logging.info(f"Saving NumPy array: {Path(output_path).name}")
                 np.save(output_path, full_output)

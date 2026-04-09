@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
+import tifffile
 from skimage.registration import phase_cross_correlation
 
 import bioimage_pipeline_utils as rp
@@ -49,6 +50,66 @@ https://github.com/fiji/Correct_3D_Drift/blob/master/src/main/resources/scripts/
 
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_nbytes(shape: tuple[int, ...], dtype: np.dtype) -> int:
+    return int(np.prod(shape, dtype=np.int64)) * np.dtype(dtype).itemsize
+
+
+def _build_ome_metadata(physical_pixel_sizes) -> dict[str, object]:
+    metadata: dict[str, object] = {"axes": "TCZYX"}
+    if physical_pixel_sizes is None:
+        return metadata
+
+    x_size = getattr(physical_pixel_sizes, "X", None)
+    y_size = getattr(physical_pixel_sizes, "Y", None)
+    z_size = getattr(physical_pixel_sizes, "Z", None)
+
+    if x_size is not None:
+        metadata["PhysicalSizeX"] = float(x_size)
+    if y_size is not None:
+        metadata["PhysicalSizeY"] = float(y_size)
+    if z_size is not None:
+        metadata["PhysicalSizeZ"] = float(z_size)
+
+    return metadata
+
+
+def write_ome_tiff_streaming(
+    data: np.ndarray,
+    output_path: str | Path,
+    physical_pixel_sizes=None,
+) -> None:
+    arr = np.asarray(data)
+    if arr.ndim != 5:
+        raise ValueError(f"Expected 5D TCZYX data, got shape {arr.shape}.")
+
+    shape = tuple(int(v) for v in arr.shape)
+    dtype = np.dtype(arr.dtype)
+    metadata = _build_ome_metadata(physical_pixel_sizes)
+    bigtiff = _estimate_nbytes(shape, dtype) >= (4 * 1024**3 - 32 * 1024**2)
+    output_path = str(output_path)
+
+    if os.path.exists(output_path):
+        os.remove(output_path)
+
+    def _plane_iter():
+        for t in range(shape[0]):
+            for c in range(shape[1]):
+                for z in range(shape[2]):
+                    yield arr[t, c, z]
+
+    tifffile.imwrite(
+        output_path,
+        _plane_iter(),
+        shape=shape,
+        dtype=dtype,
+        photometric="minisblack",
+        compression="deflate",
+        ome=True,
+        metadata=metadata,
+        bigtiff=bigtiff,
+    )
 
 @dataclass
 class ShiftVec:
@@ -497,7 +558,11 @@ def run_single_file(
 
         img.set_scene(scene_id)
         physical_pixel_sizes = getattr(img, 'physical_pixel_sizes', None)
-        rp.save_tczyx_image(result, str(scene_output_path), physical_pixel_sizes=physical_pixel_sizes)
+        write_ome_tiff_streaming(
+            result,
+            scene_output_path,
+            physical_pixel_sizes=physical_pixel_sizes,
+        )
 
         mmap_path = getattr(result, "filename", None)
         if mmap_path and isinstance(mmap_path, str) and os.path.exists(mmap_path):
