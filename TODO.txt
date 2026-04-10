@@ -87,6 +87,22 @@
 - Implement regression testing for output validation
 - Create CI/CD pipeline for automated testing
 
+## Repository Architecture
+- Consider splitting the project into separate repositories:
+  - Keep the Go orchestrator in this repo as the generic `run_pipeline` engine
+  - Move Python CLI modules in `standard_code/python/` to a separate repo/package
+- Motivation:
+  - clearer separation between orchestration and analysis tools
+  - independent versioning and releases for Go runner vs Python tools
+  - cleaner CI/CD and dependency management
+  - easier reuse of Python tools outside this runner
+- Before splitting:
+  - make Python tools installable as a package with stable CLI entry points
+  - update YAML configs to call installed commands or `python -m ...` instead of `%REPO%/standard_code/...`
+  - update status/version tracking to record both runner version and tool/package version
+- Optional future step:
+  - move `pipeline_configs/` into its own repo if workflows should be versioned independently from both runner and tools
+
 ## Add citations to the yaml config file 
 - for each file in standard code check if a package or theory that needs citing is used.
 - find a way to add this to the config file

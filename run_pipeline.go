@@ -1501,7 +1501,8 @@ func main() {
 
 		if forcePointIndex == -1 {
 			fmt.Println("\n✓ All segments up to date. No reprocessing needed.")
-			fmt.Println("  Use --force to run anyway.\n")
+			fmt.Println("  Use --force to run anyway.")
+			fmt.Println()
 
 			// Even when everything is up to date, ensure 1-to-1 correspondence
 			// by keeping only one status entry per config segment (in order)
@@ -1531,7 +1532,8 @@ func main() {
 			fmt.Printf("\n⚠ Changes detected at segment %d: '%s'\n",
 				forcePointIndex+1, config.Run[forcePointIndex].Name)
 			fmt.Println("  → Force mode activated from this point onwards")
-			fmt.Println("  → Clearing status entries from this point onwards\n")
+			fmt.Println("  → Clearing status entries from this point onwards")
+			fmt.Println()
 
 			// Keep only status entries that match config segments BEFORE the force point
 			// This ensures 1-to-1 mapping between config and status
@@ -1558,7 +1560,8 @@ func main() {
 		}
 	} else {
 		fmt.Println("\n⚠ Force mode enabled via --force flag")
-		fmt.Println("  → All segments will be reprocessed\n")
+		fmt.Println("  → All segments will be reprocessed")
+		fmt.Println()
 		forcePointIndex = 0
 	}
 

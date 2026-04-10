@@ -10,6 +10,18 @@ dist/
 *.egg-info/
 __pycache__/
 
+# Local Python environments
+.venv/
+.venv*/
+
+# Go and release build artifacts
+/run_pipeline.exe
+/run_pipeline
+/*.zip
+/*.tar.gz
+/*.tgz
+/*.sha256
+
 # Ignore all folders inside pipeline_configs/
 pipeline_configs/*/
 
@@ -19,3 +31,9 @@ pipeline_configs/*_status.yaml
 # Ignore all files and folders inside external/
 external/ERnet-v2/*
 *.tif
+
+# Generated runtime folders
+logs/*
+output/*
+temp/*
+!temp/do_not_delete_this.txt

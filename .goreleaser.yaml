@@ -1,0 +1,56 @@
+version: 2
+
+project_name: run_pipeline
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: run_pipeline
+    main: .
+    binary: run_pipeline
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{ .Version }} -X main.Commit={{ .ShortCommit }} -X main.BuildDate={{ .Date }}
+
+archives:
+  - id: default
+    ids:
+      - run_pipeline
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - VERSION
+      - run_pipeline_from_anywhere.bat
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
