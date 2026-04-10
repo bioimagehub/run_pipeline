@@ -15,7 +15,7 @@ __pycache__/
 .venv*/
 
 # Go and release build artifacts
-/run_pipeline.exe
+#/run_pipeline.exe
 /run_pipeline
 /*.zip
 /*.tar.gz
