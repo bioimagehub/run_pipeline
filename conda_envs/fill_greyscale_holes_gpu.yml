@@ -1,0 +1,41 @@
+name: fill_greyscale_holes_gpu
+channels:
+  - rapidsai
+  - nvidia
+  - conda-forge
+
+dependencies:
+  # cuCIM conda packages are published for Linux (linux-64/linux-aarch64), not Windows.
+  # Use this environment on a Linux machine or under WSL2 with Conda/Mamba.
+  - python=3.11
+
+  # Core array + morphology stack
+  - numpy
+  - scipy
+  - scikit-image
+  - tifffile
+  - h5py
+  - tqdm
+  - joblib
+  - dask
+
+  # GPU stack
+  - cuda-version=12
+  - cupy
+  - cudnn
+  - cutensor
+  - cucim
+
+  - pip
+  - pip:
+      # Image I/O stack used by bioimage_pipeline_utils.py
+      - jdk4py>=21.0.8.0
+      - scyjava>=1.12.4
+      - bioio
+      - bioio-bioformats
+      - bioio-ome-tiff
+      - bioio-tifffile
+      - bioio-nd2
+      - bioio_lif
+      - bioio_czi
+      - bioio_dv

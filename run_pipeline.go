@@ -7,10 +7,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath" // Added for handling file paths
 	"reflect"
-	"runtime"
 	"run_pipeline/go/find_anaconda_path"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,11 +24,13 @@ import (
 
 // Segment struct defines each segment of the pipeline with relevant attributes
 type Segment struct {
-	Name        string        `yaml:"name"`                  // The name of the segment
-	Type        string        `yaml:"type,omitempty"`        // Optional: type of step (pause, stop, or normal)
-	Message     string        `yaml:"message,omitempty"`     // Optional: message for pause/stop
-	Environment string        `yaml:"environment,omitempty"` // The Python environment to use
-	Commands    []interface{} `yaml:"commands,omitempty"`    // Commands to execute (can be strings or maps)
+	Name           string                 `yaml:"name"`                       // The name of the segment
+	Type           string                 `yaml:"type,omitempty"`             // Optional: type of step (pause, stop, or normal)
+	Message        string                 `yaml:"message,omitempty"`          // Optional: message for pause/stop
+	Environment    string                 `yaml:"environment,omitempty"`      // The Python environment to use
+	Env            map[string]interface{} `yaml:"env,omitempty"`              // Optional: environment variables for the segment
+	UseLinuxDistro string                 `yaml:"use-linux-distro,omitempty"` // Optional: route Windows execution through WSL
+	Commands       []interface{}          `yaml:"commands,omitempty"`         // Commands to execute (can be strings or maps)
 }
 
 // Config struct to hold the overall configuration structure
@@ -62,6 +65,10 @@ var warnedDotSlash bool
 
 func isWindowsRuntime() bool {
 	return runtime.GOOS == "windows"
+}
+
+func isLinuxRuntime() bool {
+	return runtime.GOOS == "linux"
 }
 
 func venvPythonPath(venvPath string) string {
@@ -113,6 +120,115 @@ func shellCommandPrefix() []string {
 		return []string{"cmd", "/C"}
 	}
 	return []string{"bash", "-lc"}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func isWindowsDrivePath(value string) bool {
+	if len(value) < 3 {
+		return false
+	}
+	drive := value[0]
+	if !((drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')) {
+		return false
+	}
+	return value[1] == ':' && (value[2] == '\\' || value[2] == '/')
+}
+
+func toWslPath(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return trimmed
+	}
+	if strings.HasPrefix(trimmed, `\\`) {
+		log.Fatalf("UNC paths are not supported for WSL-routed segments yet: %s", value)
+	}
+	if !isWindowsDrivePath(trimmed) {
+		return strings.ReplaceAll(trimmed, `\`, `/`)
+	}
+
+	drive := strings.ToLower(trimmed[:1])
+	remainder := strings.ReplaceAll(trimmed[2:], `\`, `/`)
+	remainder = strings.TrimPrefix(remainder, "/")
+	if remainder == "" {
+		return "/mnt/" + drive
+	}
+	return "/mnt/" + drive + "/" + remainder
+}
+
+func maybeTranslateArgumentForWsl(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return trimmed
+	}
+	if isWindowsDrivePath(trimmed) || strings.HasPrefix(trimmed, `\\`) {
+		return toWslPath(trimmed)
+	}
+	if strings.Contains(trimmed, `\`) {
+		return strings.ReplaceAll(trimmed, `\`, `/`)
+	}
+	return trimmed
+}
+
+func resolveRequestedWslDistro(request string) string {
+	if !isWindowsRuntime() {
+		return ""
+	}
+	if _, err := exec.LookPath("wsl"); err != nil {
+		log.Fatal("use-linux-distro was requested, but wsl.exe was not found. Install WSL first.")
+	}
+
+	trimmed := strings.TrimSpace(request)
+	if trimmed == "" || strings.EqualFold(trimmed, "default") {
+		return ""
+	}
+
+	cmd := exec.Command("wsl", "-l", "-q")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Fatalf("Failed to list WSL distros while resolving '%s': %v", request, err)
+	}
+
+	available := make([]string, 0)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		available = append(available, line)
+		if strings.EqualFold(line, trimmed) {
+			return line
+		}
+	}
+
+	if len(available) == 0 {
+		log.Fatalf("No WSL distros are available, but use-linux-distro was requested for '%s'.", request)
+	}
+	log.Fatalf("WSL distro '%s' was not found. Available distros: %s", request, strings.Join(available, ", "))
+	return ""
+}
+
+func resolveWslHomeDir(distro string) string {
+	if !isWindowsRuntime() {
+		return ""
+	}
+	cmdArgs := []string{"wsl"}
+	if distro != "" {
+		cmdArgs = append(cmdArgs, "-d", distro)
+	}
+	cmdArgs = append(cmdArgs, "--", "bash", "-lc", `printf %s "$HOME"`)
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Fatalf("Failed to resolve the WSL home directory: %v", err)
+	}
+	homeDir := strings.TrimSpace(string(out))
+	if homeDir == "" {
+		log.Fatal("Failed to resolve the WSL home directory: empty result")
+	}
+	return homeDir
 }
 
 // GetBaseDir returns the project root directory.
@@ -487,7 +603,25 @@ func computeSegmentHash(segment Segment) string {
 	builder.WriteString(segment.Message)
 	builder.WriteString("|env:")
 	builder.WriteString(segment.Environment)
+	if strings.TrimSpace(segment.UseLinuxDistro) != "" {
+		builder.WriteString("|linux:")
+		builder.WriteString(strings.TrimSpace(segment.UseLinuxDistro))
+	}
 	builder.WriteString("|cmds:")
+	if len(segment.Env) > 0 {
+		keys := make([]string, 0, len(segment.Env))
+		for key := range segment.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		builder.WriteString("|envvars:")
+		for _, key := range keys {
+			builder.WriteString(key)
+			builder.WriteString("=")
+			builder.WriteString(fmt.Sprintf("%v", segment.Env[key]))
+			builder.WriteString(";")
+		}
+	}
 
 	// Process commands deterministically
 	for _, cmd := range segment.Commands {
@@ -516,6 +650,25 @@ func computeSegmentHash(segment Segment) string {
 	// Compute SHA256 hash
 	hash := sha256.Sum256([]byte(builder.String()))
 	return fmt.Sprintf("%x", hash)
+}
+
+func resolveSegmentEnv(segment Segment, mainProgramDir, yamlDir string) []string {
+	if len(segment.Env) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(segment.Env))
+	for key := range segment.Env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	resolved := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := fmt.Sprintf("%v", segment.Env[key])
+		resolved = append(resolved, fmt.Sprintf("%s=%s", key, resolvePath(value, mainProgramDir, yamlDir)))
+	}
+	return resolved
 }
 
 // determineForcePoint finds the first segment that needs reprocessing
@@ -600,6 +753,24 @@ func getSegmentStatus(status *Status, contentHash string) *SegmentStatus {
 		}
 	}
 	return nil
+}
+
+func updateSegmentStatus(status *Status, statusPath string, segment Segment, contentHash string, startTime time.Time) {
+	segmentStatus := getSegmentStatus(status, contentHash)
+	if segmentStatus == nil {
+		newStatus := SegmentStatus{
+			Name:        segment.Name,
+			ContentHash: contentHash,
+		}
+		status.Segments = append(status.Segments, newStatus)
+		segmentStatus = &status.Segments[len(status.Segments)-1]
+	}
+	segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
+	segmentStatus.CodeVersion = getVersion()
+	segmentStatus.RunDuration = time.Since(startTime).String()
+	if err := saveStatus(statusPath, *status); err != nil {
+		log.Fatalf("%v", err)
+	}
 }
 
 // Function to prepare command arguments for Python execution
@@ -702,11 +873,7 @@ func ensureUvEnvironment(mainProgramDir string, environment string) string {
 
 	// Create environment-specific venv directory.
 	// For explicit versions, keep separate env folders to avoid stale reuse.
-	venvName := fmt.Sprintf(".venv_%s", spec.Group)
-	if spec.PythonVersion != "" {
-		versionSuffix := strings.NewReplacer(".", "_", "-", "_", " ", "", "/", "_", "\\", "_").Replace(spec.PythonVersion)
-		venvName = fmt.Sprintf(".venv_%s_py%s", spec.Group, versionSuffix)
-	}
+	venvName := uvVenvName(spec)
 	venvPath := filepath.Join(mainProgramDir, venvName)
 	legacyVenvPath := filepath.Join(mainProgramDir, fmt.Sprintf(".venv_%s", spec.Group))
 
@@ -768,6 +935,33 @@ func ensureUvEnvironment(mainProgramDir string, environment string) string {
 type uvEnvironmentSpec struct {
 	Group         string
 	PythonVersion string
+}
+
+func uvVenvName(spec uvEnvironmentSpec) string {
+	venvName := fmt.Sprintf(".venv_%s", spec.Group)
+	if spec.PythonVersion != "" {
+		versionSuffix := strings.NewReplacer(".", "_", "-", "_", " ", "", "/", "_", "\\", "_").Replace(spec.PythonVersion)
+		venvName = fmt.Sprintf(".venv_%s_py%s", spec.Group, versionSuffix)
+	}
+	return venvName
+}
+
+func computeUvEnvironmentSyncHash(mainProgramDir string, environment string) string {
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(strings.TrimSpace(environment)))
+
+	files := []string{
+		filepath.Join(mainProgramDir, "pyproject.toml"),
+		filepath.Join(mainProgramDir, "uv.lock"),
+	}
+	for _, filePath := range files {
+		_, _ = hasher.Write([]byte("\nFILE:" + filepath.Base(filePath) + "\n"))
+		if data, err := os.ReadFile(filePath); err == nil {
+			_, _ = hasher.Write(data)
+		}
+	}
+
+	return fmt.Sprintf("%x", hasher.Sum(nil))
 }
 
 // parseUvEnvironment parses environment values like "uv:group" and "uv@3.11:group".
@@ -909,6 +1103,96 @@ func makeUvCommand(segment Segment, mainProgramDir, yamlDir string) ([]string, s
 		}
 	}
 
+	return cmdArgs, uvPython
+}
+
+func makeWslUvCommand(segment Segment, mainProgramDir, yamlDir, distro string) ([]string, string) {
+	spec, err := parseUvEnvironment(segment.Environment)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	wslRepoDir := toWslPath(mainProgramDir)
+	uvPython := getRequestedUvPython(spec)
+	repoSlug := strings.NewReplacer(" ", "_", ":", "_", `\\`, "_", "/", "_").Replace(filepath.Base(mainProgramDir))
+	wslHomeDir := resolveWslHomeDir(distro)
+	venvPath := path.Join(wslHomeDir, ".run_pipeline_wsl_venvs", repoSlug, uvVenvName(spec))
+	syncHash := computeUvEnvironmentSyncHash(mainProgramDir, segment.Environment)
+	stampPath := path.Join(venvPath, ".run_pipeline_uv_sync_hash")
+
+	translatedArgs := make([]string, 0)
+	for _, cmd := range segment.Commands {
+		switch v := cmd.(type) {
+		case string:
+			if strings.ToLower(v) == "python" {
+				continue
+			}
+			resolved := resolvePath(v, mainProgramDir, yamlDir)
+			translatedArgs = append(translatedArgs, maybeTranslateArgumentForWsl(resolved))
+		case map[interface{}]interface{}:
+			for flag, value := range v {
+				flagStr := fmt.Sprintf("%v", flag)
+				if strings.ToLower(flagStr) == "python" {
+					if value != nil && value != "null" {
+						valStr := fmt.Sprintf("%v", value)
+						resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+						translatedArgs = append(translatedArgs, maybeTranslateArgumentForWsl(resolved))
+					}
+					continue
+				}
+
+				translatedArgs = append(translatedArgs, flagStr)
+				if value != nil && value != "null" {
+					valStr := fmt.Sprintf("%v", value)
+					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
+					translatedArgs = append(translatedArgs, maybeTranslateArgumentForWsl(resolved))
+				}
+			}
+		default:
+			log.Fatalf("unexpected type %v", reflect.TypeOf(v))
+		}
+	}
+
+	quotedArgs := make([]string, 0, len(translatedArgs))
+	for _, arg := range translatedArgs {
+		quotedArgs = append(quotedArgs, shellQuote(arg))
+	}
+
+	setupCommands := []string{
+		"set -euo pipefail",
+		"cd " + shellQuote(wslRepoDir),
+		"export UV_LINK_MODE=copy",
+		"if ! command -v uv >/dev/null 2>&1; then echo " + shellQuote("UV not found inside the selected Linux distro. Install uv in WSL before using use-linux-distro.") + " >&2; exit 1; fi",
+		"mkdir -p " + shellQuote(path.Dir(venvPath)),
+	}
+	for _, envEntry := range resolveSegmentEnv(segment, mainProgramDir, yamlDir) {
+		parts := strings.SplitN(envEntry, "=", 2)
+		setupCommands = append(setupCommands, "export "+parts[0]+"="+shellQuote(parts[1]))
+	}
+	if uvPython != "" {
+		setupCommands = append(
+			setupCommands,
+			"if [ ! -d "+shellQuote(venvPath)+" ]; then uv venv "+shellQuote(venvPath)+" --python "+shellQuote(uvPython)+"; fi",
+			"if [ ! -f "+shellQuote(stampPath)+" ] || ! grep -qxF "+shellQuote(syncHash)+" "+shellQuote(stampPath)+"; then uv pip install --python "+shellQuote(path.Join(venvPath, "bin", "python"))+" --group "+shellQuote(spec.Group)+" . && printf %s "+shellQuote(syncHash)+" > "+shellQuote(stampPath)+"; fi",
+		)
+	} else {
+		setupCommands = append(
+			setupCommands,
+			"if [ ! -d "+shellQuote(venvPath)+" ]; then uv venv "+shellQuote(venvPath)+"; fi",
+			"if [ ! -f "+shellQuote(stampPath)+" ] || ! grep -qxF "+shellQuote(syncHash)+" "+shellQuote(stampPath)+"; then uv pip install --python "+shellQuote(path.Join(venvPath, "bin", "python"))+" --group "+shellQuote(spec.Group)+" . && printf %s "+shellQuote(syncHash)+" > "+shellQuote(stampPath)+"; fi",
+		)
+	}
+	runCommand := shellQuote(path.Join(venvPath, "bin", "python"))
+	if len(quotedArgs) > 0 {
+		runCommand += " " + strings.Join(quotedArgs, " ")
+	}
+	setupCommands = append(setupCommands, runCommand)
+
+	cmdArgs := []string{"wsl"}
+	if distro != "" {
+		cmdArgs = append(cmdArgs, "-d", distro)
+	}
+	cmdArgs = append(cmdArgs, "--", "bash", "-lc", strings.Join(setupCommands, "; "))
 	return cmdArgs, uvPython
 }
 
@@ -1342,10 +1626,55 @@ func main() {
 
 		// Prepare command arguments for executing the environment and subsequent commands
 		var cmdArgs []string // Declare cmdArgs here
+		useLinuxDistro := strings.TrimSpace(segment.UseLinuxDistro)
+		lowerEnvironment := strings.ToLower(segment.Environment)
+
+		if useLinuxDistro != "" {
+			if isWindowsRuntime() {
+				if lowerEnvironment == "imagej" || lowerEnvironment == "cmd" {
+					log.Fatalf("use-linux-distro is not supported with environment '%s'", segment.Environment)
+				}
+				if !strings.HasPrefix(lowerEnvironment, "uv:") && !strings.HasPrefix(lowerEnvironment, "uv@") {
+					log.Fatalf("use-linux-distro is currently only supported for UV environments. Segment '%s' uses '%s'", segment.Name, segment.Environment)
+				}
+
+				resolvedDistro := resolveRequestedWslDistro(useLinuxDistro)
+				if resolvedDistro == "" {
+					fmt.Printf("[info] Routing segment '%s' through the default WSL distro\n", segment.Name)
+				} else {
+					fmt.Printf("[info] Routing segment '%s' through WSL distro '%s'\n", segment.Name, resolvedDistro)
+				}
+
+				var uvPython string
+				cmdArgs, uvPython = makeWslUvCommand(segment, mainProgramDir, yamlDir, resolvedDistro)
+				fmt.Printf("Constructed command: %v with UV_PYTHON=%s\n", cmdArgs, uvPython)
+
+				cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				startTime := time.Now()
+				err := cmd.Run()
+				if err != nil {
+					fmt.Printf("Error executing command: %v\n", err)
+					log.Fatalf("Error")
+				}
+
+				updateSegmentStatus(&status, statusPath, segment, currentHash, startTime)
+				fmt.Println("")
+				fmt.Println("")
+				continue
+			}
+
+			if isLinuxRuntime() {
+				fmt.Printf("[info] Already running on Linux; skipping distro selection for segment '%s'.\n", segment.Name)
+			} else {
+				log.Fatalf("use-linux-distro is only supported on Windows hosts with WSL or on Linux hosts. Current OS: %s", runtime.GOOS)
+			}
+		}
 
 		// Determine if the environment is going to be imageJ, uv, cmd, or conda-based Python
 		fmt.Println(segment.Environment)
-		if strings.ToLower(segment.Environment) == "cmd" {
+		if lowerEnvironment == "cmd" {
 			fmt.Println("running native shell command")
 			// Build a single command string for shell execution
 			var cmdString strings.Builder
@@ -1382,6 +1711,7 @@ func main() {
 			// Execute shell command immediately
 			fmt.Printf("Constructed command: %v\n", cmdArgs)
 			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+			cmd.Env = append(os.Environ(), resolveSegmentEnv(segment, mainProgramDir, yamlDir)...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			startTime := time.Now()
@@ -1392,26 +1722,11 @@ func main() {
 			}
 			// Update status in status file
 			currentHash := computeSegmentHash(segment)
-			segmentStatus := getSegmentStatus(&status, currentHash)
-			if segmentStatus == nil {
-				// Segment not in status, add it
-				newStatus := SegmentStatus{
-					Name:        segment.Name,
-					ContentHash: currentHash,
-				}
-				status.Segments = append(status.Segments, newStatus)
-				segmentStatus = &status.Segments[len(status.Segments)-1]
-			}
-			segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
-			segmentStatus.CodeVersion = getVersion()
-			segmentStatus.RunDuration = time.Since(startTime).String()
-			if err := saveStatus(statusPath, status); err != nil {
-				log.Fatalf("%v", err)
-			}
+			updateSegmentStatus(&status, statusPath, segment, currentHash, startTime)
 			fmt.Println("")
 			fmt.Println("")
 			continue
-		} else if strings.ToLower(segment.Environment) == "imagej" {
+		} else if lowerEnvironment == "imagej" {
 			if !isWindowsRuntime() {
 				log.Fatal("ImageJ is not implemented on Linux yet")
 			}
@@ -1424,7 +1739,7 @@ func main() {
 			}
 
 			cmdArgs = makeImageJCommand(segment, imageJPath, mainProgramDir, yamlDir)
-		} else if strings.HasPrefix(strings.ToLower(segment.Environment), "uv:") || strings.HasPrefix(strings.ToLower(segment.Environment), "uv@") {
+		} else if strings.HasPrefix(lowerEnvironment, "uv:") || strings.HasPrefix(lowerEnvironment, "uv@") {
 			// uv-managed environment: no conda activation
 			var uvPython string
 			cmdArgs, uvPython = makeUvCommand(segment, mainProgramDir, yamlDir)
@@ -1434,7 +1749,8 @@ func main() {
 				fmt.Printf("[note] Requesting UV_PYTHON=%s (override via UV_DEFAULT_PYTHON). 3.11 is recommended for best wheel coverage on Windows.\n", uvPython)
 			}
 			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-			cmd.Env = append(os.Environ(), fmt.Sprintf("UV_PYTHON=%s", uvPython))
+			cmd.Env = append(os.Environ(), resolveSegmentEnv(segment, mainProgramDir, yamlDir)...)
+			cmd.Env = append(cmd.Env, fmt.Sprintf("UV_PYTHON=%s", uvPython))
 			fmt.Printf("Constructed command: %v with UV_PYTHON=%s\n", cmdArgs, uvPython)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -1445,22 +1761,7 @@ func main() {
 				log.Fatalf("Error")
 			}
 			// Update status in status file
-			segmentStatus := getSegmentStatus(&status, currentHash)
-			if segmentStatus == nil {
-				// Segment not in status, add it
-				newStatus := SegmentStatus{
-					Name:        segment.Name,
-					ContentHash: currentHash,
-				}
-				status.Segments = append(status.Segments, newStatus)
-				segmentStatus = &status.Segments[len(status.Segments)-1]
-			}
-			segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
-			segmentStatus.CodeVersion = getVersion()
-			segmentStatus.RunDuration = time.Since(startTime).String()
-			if err := saveStatus(statusPath, status); err != nil {
-				log.Fatalf("%v", err)
-			}
+			updateSegmentStatus(&status, statusPath, segment, currentHash, startTime)
 			fmt.Println("")
 			fmt.Println("")
 			continue
@@ -1480,6 +1781,7 @@ func main() {
 
 		// Create the command using the constructed arguments
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		cmd.Env = append(os.Environ(), resolveSegmentEnv(segment, mainProgramDir, yamlDir)...)
 		cmd.Stdout = os.Stdout // Redirect standard output to console
 		cmd.Stderr = os.Stderr // Redirect standard error to console
 
@@ -1492,22 +1794,7 @@ func main() {
 		}
 
 		// Update status in status file
-		segmentStatus := getSegmentStatus(&status, currentHash)
-		if segmentStatus == nil {
-			// Segment not in status, add it
-			newStatus := SegmentStatus{
-				Name:        segment.Name,
-				ContentHash: currentHash,
-			}
-			status.Segments = append(status.Segments, newStatus)
-			segmentStatus = &status.Segments[len(status.Segments)-1]
-		}
-		segmentStatus.LastProcessed = time.Now().Format("2006-01-02")
-		segmentStatus.CodeVersion = getVersion()
-		segmentStatus.RunDuration = time.Since(startTime).String()
-		if err := saveStatus(statusPath, status); err != nil {
-			log.Fatalf("%v", err)
-		}
+		updateSegmentStatus(&status, statusPath, segment, currentHash, startTime)
 		fmt.Println("") // Add some space between the segment prints
 		fmt.Println("") // Add some space between the segment prints
 	}

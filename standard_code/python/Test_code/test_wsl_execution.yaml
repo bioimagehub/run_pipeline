@@ -1,0 +1,64 @@
+run: 
+    - name: Fill holes CPU
+      environment: uv@3.11:default
+      commands:
+      - python
+      - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+      - --input-search-pattern: '%YAML%/input_frames.tif'
+#      - --kernel-size: 40
+#      - --kernel-overlap: half
+      - --return-delta
+      - --no-parallel
+      - --output-folder: '%YAML%'
+      - --output-suffix: _cpu_delta
+
+    - name: Fill holes CPU with kernel 40
+      environment: uv@3.11:default
+      commands:
+      - python
+      - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+      - --input-search-pattern: '%YAML%/input_frames.tif'
+      - --kernel-size: 40
+      - --kernel-overlap: half
+      - --return-delta
+      - --no-parallel
+      - --output-folder: '%YAML%'
+      - --output-suffix: _cpu_delta_k40
+    
+    
+    - name: Fill holes Linux GPU
+      environment: uv@3.11:fill-holes-gpu
+      use-linux-distro: Default
+      env:
+        RP_GPU_KERNEL_TARGET_FREE_FRACTION: '0.85'
+        RP_GPU_KERNEL_MAX_BATCH_WINDOWS: '16384'
+        RP_GPU_KERNEL_WINDOW_BYTES_FACTOR: '6'
+      commands:
+      - python
+      - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+      - --input-search-pattern: '%YAML%/input_frames.tif'
+#      - --kernel-size: 40
+#      - --kernel-overlap: half
+      - --return-delta
+      - --no-parallel
+      - --output-folder: '%YAML%'
+      - --output-suffix: _gpu_delta
+
+    - name: Fill holes Linux GPU with kernel 40
+      environment: uv@3.11:fill-holes-gpu
+      use-linux-distro: Default
+      env:
+        RP_GPU_KERNEL_TARGET_FREE_FRACTION: '0.85'
+        RP_GPU_KERNEL_MAX_BATCH_WINDOWS: '16384'
+        RP_GPU_KERNEL_WINDOW_BYTES_FACTOR: '6'
+        RP_GPU_KERNEL_FRAME_GROUP_SIZE: '8'
+      commands:
+      - python
+      - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+      - --input-search-pattern: '%YAML%/input_frames.tif'
+      - --kernel-size: 40
+      - --kernel-overlap: half
+      - --return-delta
+      - --no-parallel
+      - --output-folder: '%YAML%'
+      - --output-suffix: _gpu_k40_delta

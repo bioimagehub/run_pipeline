@@ -75,6 +75,31 @@ default = [
     "bioio_dv",
 ]
 
+fill-holes-gpu = [
+	"numpy>=2.1",
+	"scipy",
+	"scikit-image",
+	"tqdm",
+	"joblib",
+	"h5py",
+	"dask[array]",
+	"cupy-cuda12x",
+	"cucim-cu12",
+	"nvidia-cuda-runtime-cu12",
+	"nvidia-cuda-nvrtc-cu12",
+
+	"jdk4py>=21.0.8.0",
+    "scyjava>=1.12.4",
+	"bioio",
+	"bioio-bioformats",
+	"bioio-ome-tiff",
+	"bioio-tifffile",
+	"bioio-nd2",
+	"bioio_lif",
+	"bioio_czi",
+	"bioio_dv",
+]
+
 convert-to-tif = [
 	"numpy",
 	"matplotlib",

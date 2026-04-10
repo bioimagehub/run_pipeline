@@ -79,9 +79,16 @@ Pipelines are defined as a top-level `run:` list. Each segment can either run co
 Supported segment fields:
 - `name`: Human-readable segment name.
 - `environment`: Environment selector such as `uv@3.11:default`.
+- `env`: Optional environment-variable map applied only to that segment.
+- `use-linux-distro`: Optional WSL routing selector such as `Default` or a specific distro name.
 - `commands`: Command list to execute.
 - `type`: Optional control type. Supported values are `normal`, `pause`, `stop`, and `force`.
 - `message`: Optional message used by control segments.
+
+Common `env` use cases:
+- Tune GPU batching per segment without changing code.
+- Pass tool-specific configuration only to one pipeline step.
+- Keep benchmark settings in YAML so they participate in status hashing and reprocessing.
 
 Path tokens supported by the runner:
 - `%REPO%/path`: Resolves relative to the repository/program root.
@@ -99,6 +106,21 @@ run:
   - '%REPO%/standard_code/python/convert_to_tif.py'
   - --input-search-pattern: '%YAML%/input_data/**/*.nd2'
   - --output-folder: '%YAML%/output_data'
+
+- name: Fill holes on Linux GPU with custom batching
+  environment: uv@3.11:fill-holes-gpu
+  use-linux-distro: Default
+  env:
+    RP_GPU_KERNEL_TARGET_FREE_FRACTION: '0.85'
+    RP_GPU_KERNEL_MAX_BATCH_WINDOWS: '16384'
+    RP_GPU_KERNEL_WINDOW_BYTES_FACTOR: '6'
+  commands:
+  - python
+  - '%REPO%/standard_code/python/fill_greyscale_holes.py'
+  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --kernel-size: 40
+  - --kernel-overlap: half
 
 - name: Enable force mode for later segments
   type: force

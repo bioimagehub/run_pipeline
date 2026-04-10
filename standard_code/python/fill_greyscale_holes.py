@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import argparse
 import numpy as np
+import sysconfig
 from pathlib import Path
 from typing import Optional
 import logging
@@ -29,8 +30,286 @@ from tqdm import tqdm
 import bioimage_pipeline_utils as rp
 
 
+def _prepend_env_path(name: str, values: list[str]) -> None:
+    existing = [item for item in os.environ.get(name, "").split(os.pathsep) if item]
+    merged: list[str] = []
+    for value in values + existing:
+        if value and value not in merged:
+            merged.append(value)
+    if merged:
+        os.environ[name] = os.pathsep.join(merged)
+
+
+def _configure_gpu_runtime_environment() -> None:
+    purelib = Path(sysconfig.get_paths()["purelib"])
+    nvidia_root = purelib / "nvidia"
+    if not nvidia_root.exists():
+        return
+
+    lib_dirs: list[str] = []
+    bin_dirs: list[str] = []
+    cuda_path: Optional[str] = None
+
+    for child in sorted(nvidia_root.iterdir()):
+        if not child.is_dir():
+            continue
+        lib_dir = child / "lib"
+        bin_dir = child / "bin"
+        if lib_dir.is_dir():
+            lib_dirs.append(str(lib_dir))
+        if bin_dir.is_dir():
+            bin_dirs.append(str(bin_dir))
+        if child.name == "cuda_runtime":
+            cuda_path = str(child)
+
+    if cuda_path is not None:
+        os.environ.setdefault("CUDA_PATH", cuda_path)
+        os.environ.setdefault("CUDA_HOME", cuda_path)
+
+    _prepend_env_path("LD_LIBRARY_PATH", lib_dirs)
+    _prepend_env_path("PATH", bin_dirs + lib_dirs)
+
+
+_configure_gpu_runtime_environment()
+
+try:
+    import cupy as cp
+    from cucim.skimage.morphology import reconstruction as gpu_reconstruction
+    _GPU_IMPORT_ERROR: Optional[Exception] = None
+except Exception as gpu_import_error:
+    cp = None
+    gpu_reconstruction = None
+    _GPU_IMPORT_ERROR = gpu_import_error
+
+_GPU_DISABLED_REASON: Optional[str] = (
+    None if _GPU_IMPORT_ERROR is None else f"GPU imports unavailable: {_GPU_IMPORT_ERROR}"
+)
+
+
+def _get_env_float(name: str, default: float) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        logging.warning("Invalid float for %s=%r, using default %s", name, raw_value, default)
+        return default
+
+
+def _get_env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        logging.warning("Invalid integer for %s=%r, using default %s", name, raw_value, default)
+        return default
+
+
+_GPU_KERNEL_TARGET_FREE_FRACTION = min(
+    max(_get_env_float("RP_GPU_KERNEL_TARGET_FREE_FRACTION", 0.6), 0.05),
+    0.9,
+)
+_GPU_KERNEL_MAX_BATCH_WINDOWS = max(_get_env_int("RP_GPU_KERNEL_MAX_BATCH_WINDOWS", 8192), 1)
+_GPU_KERNEL_WINDOW_BYTES_FACTOR = max(_get_env_int("RP_GPU_KERNEL_WINDOW_BYTES_FACTOR", 8), 1)
+_GPU_KERNEL_FRAME_GROUP_SIZE = max(_get_env_int("RP_GPU_KERNEL_FRAME_GROUP_SIZE", 1), 1)
+
+
 def _estimate_nbytes(shape: tuple[int, ...], dtype: np.dtype) -> int:
     return int(np.prod(shape, dtype=np.int64)) * np.dtype(dtype).itemsize
+
+
+def _kernel_window_starts(length: int, kernel_size: int, stride: int) -> list[int]:
+    last_start = max(0, length - kernel_size)
+    starts = list(range(0, last_start + 1, stride))
+    if not starts:
+        starts = [0]
+    if starts[-1] != last_start:
+        starts.append(last_start)
+    return starts
+
+
+def _estimate_gpu_kernel_batch_size(
+    tile_shape: tuple[int, int],
+    dtype: np.dtype,
+    window_count: int,
+) -> tuple[int, int, int]:
+    if cp is None:
+        return 1, 0, 0
+
+    tile_bytes = _estimate_nbytes(tile_shape, dtype)
+    bytes_per_window = max(tile_bytes * _GPU_KERNEL_WINDOW_BYTES_FACTOR, 1)
+    try:
+        free_bytes, _total_bytes = cp.cuda.runtime.memGetInfo()
+        target_bytes = max(int(free_bytes * _GPU_KERNEL_TARGET_FREE_FRACTION), bytes_per_window)
+        batch_size = target_bytes // bytes_per_window
+    except Exception:
+        free_bytes = 0
+        batch_size = 256
+        target_bytes = bytes_per_window * batch_size
+
+    resolved_batch_size = max(1, min(window_count, int(batch_size), _GPU_KERNEL_MAX_BATCH_WINDOWS))
+    return resolved_batch_size, free_bytes, bytes_per_window
+
+
+def _greyscale_fill_holes_gpu_batch(
+    image_gpu,
+    windows: list[tuple[int, int, int, int]],
+    tile_shape: tuple[int, int],
+):
+    if cp is None or gpu_reconstruction is None:
+        raise ImportError("cupy/cucim GPU reconstruction is not available")
+    if not windows:
+        return cp.empty((0,) + tile_shape, dtype=image_gpu.dtype)
+
+    tile_height, tile_width = tile_shape
+    tile_count = len(windows)
+    gap = 1
+    tiles_per_row = max(1, int(np.ceil(np.sqrt(tile_count))))
+    tile_rows = int(np.ceil(tile_count / tiles_per_row))
+    packed_height = tile_rows * tile_height + (tile_rows + 1) * gap
+    packed_width = tiles_per_row * tile_width + (tiles_per_row + 1) * gap
+
+    filled_tiles = cp.empty((tile_count, tile_height, tile_width), dtype=image_gpu.dtype)
+    tile_maxima = cp.empty((tile_count,), dtype=image_gpu.dtype)
+
+    packed_mask = cp.empty((packed_height, packed_width), dtype=image_gpu.dtype)
+    for tile_index, (y0, x0, *_rest) in enumerate(windows):
+        y1 = y0 + tile_height
+        x1 = x0 + tile_width
+        tile_gpu = image_gpu[y0:y1, x0:x1]
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        packed_mask[packed_y0:packed_y0 + tile_height, packed_x0:packed_x0 + tile_width] = tile_gpu
+        tile_maxima[tile_index] = tile_gpu.max()
+
+    separator_value = image_gpu.min()
+    packed_mask.fill(separator_value)
+    for tile_index, (y0, x0, *_rest) in enumerate(windows):
+        y1 = y0 + tile_height
+        x1 = x0 + tile_width
+        tile_gpu = image_gpu[y0:y1, x0:x1]
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        packed_mask[packed_y0:packed_y0 + tile_height, packed_x0:packed_x0 + tile_width] = tile_gpu
+
+    image_max = packed_mask.max()
+    packed_inverted = image_max - packed_mask
+    packed_seed = packed_inverted.copy()
+
+    for tile_index in range(tile_count):
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        packed_seed[
+            packed_y0 + 1:packed_y0 + tile_height - 1,
+            packed_x0 + 1:packed_x0 + tile_width - 1,
+        ] = image_max - tile_maxima[tile_index]
+
+    packed_filled = image_max - gpu_reconstruction(packed_seed, packed_inverted, method='dilation')
+    for tile_index in range(tile_count):
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        filled_tiles[tile_index] = packed_filled[
+            packed_y0:packed_y0 + tile_height,
+            packed_x0:packed_x0 + tile_width,
+        ]
+
+    return filled_tiles
+
+
+def _greyscale_fill_holes_gpu_batch_across_frames(
+    stack_gpu,
+    windows: list[tuple[int, int, int]],
+    tile_shape: tuple[int, int],
+):
+    if cp is None or gpu_reconstruction is None:
+        raise ImportError("cupy/cucim GPU reconstruction is not available")
+    if not windows:
+        return cp.empty((0,) + tile_shape, dtype=stack_gpu.dtype)
+
+    tile_height, tile_width = tile_shape
+    tile_count = len(windows)
+    gap = 1
+    tiles_per_row = max(1, int(np.ceil(np.sqrt(tile_count))))
+    tile_rows = int(np.ceil(tile_count / tiles_per_row))
+    packed_height = tile_rows * tile_height + (tile_rows + 1) * gap
+    packed_width = tiles_per_row * tile_width + (tiles_per_row + 1) * gap
+
+    filled_tiles = cp.empty((tile_count, tile_height, tile_width), dtype=stack_gpu.dtype)
+    tile_maxima = cp.empty((tile_count,), dtype=stack_gpu.dtype)
+
+    packed_mask = cp.empty((packed_height, packed_width), dtype=stack_gpu.dtype)
+    separator_value = stack_gpu.min()
+    packed_mask.fill(separator_value)
+
+    for tile_index, (frame_index, y0, x0) in enumerate(windows):
+        y1 = y0 + tile_height
+        x1 = x0 + tile_width
+        tile_gpu = stack_gpu[frame_index, y0:y1, x0:x1]
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        packed_mask[packed_y0:packed_y0 + tile_height, packed_x0:packed_x0 + tile_width] = tile_gpu
+        tile_maxima[tile_index] = tile_gpu.max()
+
+    image_max = packed_mask.max()
+    packed_inverted = image_max - packed_mask
+    packed_seed = packed_inverted.copy()
+
+    for tile_index in range(tile_count):
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        packed_seed[
+            packed_y0 + 1:packed_y0 + tile_height - 1,
+            packed_x0 + 1:packed_x0 + tile_width - 1,
+        ] = image_max - tile_maxima[tile_index]
+
+    packed_filled = image_max - gpu_reconstruction(packed_seed, packed_inverted, method='dilation')
+    for tile_index in range(tile_count):
+        tile_row = tile_index // tiles_per_row
+        tile_col = tile_index % tiles_per_row
+        packed_y0 = gap + tile_row * (tile_height + gap)
+        packed_x0 = gap + tile_col * (tile_width + gap)
+        filled_tiles[tile_index] = packed_filled[
+            packed_y0:packed_y0 + tile_height,
+            packed_x0:packed_x0 + tile_width,
+        ]
+
+    return filled_tiles
+
+
+def _merge_gpu_tiles(
+    merged_gpu,
+    filled_tiles_gpu,
+    batch_windows: list[tuple[int, int, int, int]],
+    tile_shape: tuple[int, int],
+) -> None:
+    if cp is None:
+        raise ImportError("cupy GPU support is not available")
+
+    tile_height, tile_width = tile_shape
+    filled_tiles_gpu = filled_tiles_gpu.astype(merged_gpu.dtype, copy=False)
+    for tile_index, (y0, x0, _y_index, _x_index) in enumerate(batch_windows):
+        y1 = y0 + tile_height
+        x1 = x0 + tile_width
+        cp.maximum(
+            merged_gpu[y0:y1, x0:x1],
+            filled_tiles_gpu[tile_index],
+            out=merged_gpu[y0:y1, x0:x1],
+        )
 
 
 def _build_ome_metadata(physical_pixel_sizes) -> dict[str, object]:
@@ -58,7 +337,215 @@ def _load_czyx_timepoint(img, t: int) -> np.ndarray:
     return np.asarray(img.get_image_data("CZYX", T=t))
 
 
-def greyscale_fill_holes_2d(image: np.ndarray) -> np.ndarray:
+def _disable_gpu_hole_fill(reason: str) -> None:
+    global _GPU_DISABLED_REASON
+    if _GPU_DISABLED_REASON is None:
+        logging.warning("GPU hole filling unavailable, falling back to CPU: %s", reason)
+    _GPU_DISABLED_REASON = reason
+
+
+def _describe_hole_fill_backend(use_gpu: bool) -> str:
+    if not use_gpu:
+        return "CPU (forced by --no-gpu)"
+    if _GPU_DISABLED_REASON is None and cp is not None and gpu_reconstruction is not None:
+        return "GPU (cuCIM reconstruction)"
+    if _GPU_DISABLED_REASON is not None:
+        return f"CPU fallback ({_GPU_DISABLED_REASON})"
+    return "CPU fallback (GPU libraries unavailable)"
+
+
+def _greyscale_fill_holes_2d_cpu(image: np.ndarray) -> np.ndarray:
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape}")
+
+    if image.size == 0 or np.all(image == image.flat[0]):
+        return image.copy()
+
+    image_max = image.max()
+    inverted = image_max - image
+
+    seed = inverted.copy()
+    seed[1:-1, 1:-1] = inverted.min()
+
+    reconstructed = reconstruction(seed, inverted, method='dilation')
+    filled = image_max - reconstructed
+    return filled
+
+
+def _greyscale_fill_holes_2d_gpu_array(image_gpu):
+    if cp is None or gpu_reconstruction is None:
+        raise ImportError("cupy/cucim GPU reconstruction is not available")
+    if image_gpu.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image_gpu.shape}")
+
+    if image_gpu.size == 0:
+        return image_gpu.copy()
+    if bool(cp.all(image_gpu == image_gpu.ravel()[0]).item()):
+        return image_gpu.copy()
+
+    image_max = image_gpu.max()
+    inverted = image_max - image_gpu
+
+    seed = inverted.copy()
+    seed[1:-1, 1:-1] = inverted.min()
+
+    reconstructed = gpu_reconstruction(seed, inverted, method='dilation')
+    return image_max - reconstructed
+
+
+def _greyscale_fill_holes_2d_gpu(image: np.ndarray) -> np.ndarray:
+    if cp is None or gpu_reconstruction is None:
+        raise ImportError("cupy/cucim GPU reconstruction is not available")
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape}")
+
+    image_gpu = cp.asarray(image)
+    filled = _greyscale_fill_holes_2d_gpu_array(image_gpu)
+    return cp.asnumpy(filled)
+
+
+def _greyscale_fill_holes_kernel_2d_gpu(
+    image: np.ndarray,
+    kernel_size: int,
+    kernel_overlap: int,
+) -> np.ndarray:
+    if cp is None or gpu_reconstruction is None:
+        raise ImportError("cupy/cucim GPU reconstruction is not available")
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape}")
+    if image.size == 0 or np.all(image == image.flat[0]):
+        return image.copy()
+
+    h, w = image.shape
+    stride = kernel_size - kernel_overlap
+    if stride < 1:
+        raise ValueError("Invalid stride: kernel_size - kernel_overlap must be >= 1")
+
+    y_starts = _kernel_window_starts(h, kernel_size, stride)
+    x_starts = _kernel_window_starts(w, kernel_size, stride)
+    tile_shape = (min(kernel_size, h), min(kernel_size, w))
+    windows = [
+        (y0, x0, y_index, x_index)
+        for y_index, y0 in enumerate(y_starts)
+        for x_index, x0 in enumerate(x_starts)
+    ]
+    image_gpu = cp.asarray(image)
+    merged_gpu = image_gpu.astype(cp.float64, copy=True)
+
+    batch_size, free_bytes, bytes_per_window = _estimate_gpu_kernel_batch_size(
+        tile_shape,
+        image_gpu.dtype,
+        len(windows),
+    )
+    logging.info(
+        "GPU kernel batching: %s windows, batch size %s, tile shape %sx%s, free VRAM %.2f GiB, est %.2f MiB/window group",
+        len(windows),
+        batch_size,
+        tile_shape[0],
+        tile_shape[1],
+        free_bytes / (1024 ** 3),
+        (batch_size * bytes_per_window) / (1024 ** 2),
+    )
+
+    for batch_start in range(0, len(windows), batch_size):
+        batch_windows = windows[batch_start:batch_start + batch_size]
+        filled_batch_gpu = _greyscale_fill_holes_gpu_batch(image_gpu, batch_windows, tile_shape)
+        _merge_gpu_tiles(
+            merged_gpu,
+            filled_batch_gpu,
+            batch_windows,
+            tile_shape,
+        )
+
+    merged = cp.asnumpy(merged_gpu)
+    return _cast_to_dtype(merged, image.dtype)
+
+
+def _greyscale_fill_holes_kernel_multiframe_2d_gpu(
+    stack: np.ndarray,
+    kernel_size: int,
+    kernel_overlap: int,
+    frame_group_size: int,
+) -> np.ndarray:
+    if cp is None or gpu_reconstruction is None:
+        raise ImportError("cupy/cucim GPU reconstruction is not available")
+    if stack.ndim != 3:
+        raise ValueError(f"Expected stack shape (T, Y, X), got {stack.shape}")
+    if stack.size == 0:
+        return stack.copy()
+
+    frame_count, height, width = stack.shape
+    stride = kernel_size - kernel_overlap
+    if stride < 1:
+        raise ValueError("Invalid stride: kernel_size - kernel_overlap must be >= 1")
+
+    effective_frame_group_size = max(1, min(frame_group_size, frame_count))
+    y_starts = _kernel_window_starts(height, kernel_size, stride)
+    x_starts = _kernel_window_starts(width, kernel_size, stride)
+    tile_shape = (min(kernel_size, height), min(kernel_size, width))
+
+    stack_gpu = cp.asarray(stack)
+    merged_gpu = stack_gpu.astype(cp.float64, copy=True)
+
+    windows_per_frame = len(y_starts) * len(x_starts)
+    window_batch_size, free_bytes, bytes_per_window = _estimate_gpu_kernel_batch_size(
+        tile_shape,
+        stack_gpu.dtype,
+        windows_per_frame * effective_frame_group_size,
+    )
+    logging.info(
+        "GPU kernel multiframe batching: %s frames, frame group size %s, windows/frame %s, tile shape %sx%s, free VRAM %.2f GiB, est %.2f MiB/window group",
+        frame_count,
+        effective_frame_group_size,
+        windows_per_frame,
+        tile_shape[0],
+        tile_shape[1],
+        free_bytes / (1024 ** 3),
+        (window_batch_size * bytes_per_window) / (1024 ** 2),
+    )
+
+    positions_per_batch = max(1, window_batch_size // effective_frame_group_size)
+    window_positions = [(y0, x0) for y0 in y_starts for x0 in x_starts]
+
+    for frame_start in range(0, frame_count, effective_frame_group_size):
+        frame_stop = min(frame_count, frame_start + effective_frame_group_size)
+        group_frame_count = frame_stop - frame_start
+        group_frame_slice = slice(frame_start, frame_stop)
+
+        for position_start in range(0, len(window_positions), positions_per_batch):
+            batch_positions = window_positions[position_start:position_start + positions_per_batch]
+            batch_windows = [
+                (frame_index, y0, x0)
+                for y0, x0 in batch_positions
+                for frame_index in range(frame_start, frame_stop)
+            ]
+            filled_tiles_gpu = _greyscale_fill_holes_gpu_batch_across_frames(
+                stack_gpu,
+                batch_windows,
+                tile_shape,
+            )
+            filled_tiles_gpu = filled_tiles_gpu.astype(merged_gpu.dtype, copy=False)
+            filled_tiles_gpu = filled_tiles_gpu.reshape(
+                len(batch_positions),
+                group_frame_count,
+                tile_shape[0],
+                tile_shape[1],
+            )
+
+            for position_index, (y0, x0) in enumerate(batch_positions):
+                y1 = y0 + tile_shape[0]
+                x1 = x0 + tile_shape[1]
+                cp.maximum(
+                    merged_gpu[group_frame_slice, y0:y1, x0:x1],
+                    filled_tiles_gpu[position_index],
+                    out=merged_gpu[group_frame_slice, y0:y1, x0:x1],
+                )
+
+    merged = cp.asnumpy(merged_gpu)
+    return _cast_to_dtype(merged, stack.dtype)
+
+
+def greyscale_fill_holes_2d(image: np.ndarray, use_gpu: bool = True) -> np.ndarray:
     """
     Fill holes in 2D greyscale image using morphological reconstruction.
     
@@ -97,29 +584,13 @@ def greyscale_fill_holes_2d(image: np.ndarray) -> np.ndarray:
     ----------
     MATLAB's imfill: http://www.ece.northwestern.edu/CSEL/local-apps/matlabhelp/toolbox/images/morph13.html
     """
-    if image.ndim != 2:
-        raise ValueError(f"Expected 2D image, got shape {image.shape}")
-    
-    # Handle edge case: empty or constant image
-    if image.size == 0 or np.all(image == image.flat[0]):
-        return image.copy()
-    
-    # Invert the image (holes become peaks)
-    image_max = image.max()
-    inverted = image_max - image
-    
-    # Create seed: keep border, clear interior
-    seed = inverted.copy()
-    seed[1:-1, 1:-1] = inverted.min()
-    
-    # Morphological reconstruction: flood fill from borders
-    # Border regions are connected, holes are isolated
-    reconstructed = reconstruction(seed, inverted, method='dilation')
-    
-    # Invert back to get filled result
-    filled = image_max - reconstructed
-    
-    return filled
+    if use_gpu and _GPU_DISABLED_REASON is None:
+        try:
+            return _greyscale_fill_holes_2d_gpu(image)
+        except Exception as exc:
+            _disable_gpu_hole_fill(str(exc))
+
+    return _greyscale_fill_holes_2d_cpu(image)
 
 
 # def greyscale_fill_holes_3d(image: np.ndarray) -> np.ndarray:
@@ -248,6 +719,7 @@ def greyscale_fill_holes_kernel_2d(
     image: np.ndarray,
     kernel_size: int,
     kernel_overlap: int,
+    use_gpu: bool = True,
 ) -> np.ndarray:
     """
     Fill holes in 2D greyscale image using sliding local windows.
@@ -271,19 +743,18 @@ def greyscale_fill_holes_kernel_2d(
     if stride < 1:
         raise ValueError("Invalid stride: kernel_size - kernel_overlap must be >= 1")
 
-    y_last = max(0, h - kernel_size)
-    x_last = max(0, w - kernel_size)
+    y_starts = _kernel_window_starts(h, kernel_size, stride)
+    x_starts = _kernel_window_starts(w, kernel_size, stride)
 
-    y_starts = list(range(0, y_last + 1, stride))
-    x_starts = list(range(0, x_last + 1, stride))
-    if not y_starts:
-        y_starts = [0]
-    if not x_starts:
-        x_starts = [0]
-    if y_starts[-1] != y_last:
-        y_starts.append(y_last)
-    if x_starts[-1] != x_last:
-        x_starts.append(x_last)
+    if use_gpu and _GPU_DISABLED_REASON is None:
+        try:
+            return _greyscale_fill_holes_kernel_2d_gpu(
+                image,
+                kernel_size=kernel_size,
+                kernel_overlap=kernel_overlap,
+            )
+        except Exception as exc:
+            _disable_gpu_hole_fill(str(exc))
 
     merged = image.astype(np.float64, copy=True)
 
@@ -292,7 +763,7 @@ def greyscale_fill_holes_kernel_2d(
         for x0 in x_starts:
             x1 = min(x0 + kernel_size, w)
             tile = image[y0:y1, x0:x1]
-            filled_tile = greyscale_fill_holes_2d(tile)
+            filled_tile = greyscale_fill_holes_2d(tile, use_gpu=False)
             np.maximum(merged[y0:y1, x0:x1], filled_tile, out=merged[y0:y1, x0:x1])
 
     return _cast_to_dtype(merged, image.dtype)
@@ -309,6 +780,7 @@ def process_single_image(
     kernel_overlap: str = "half",
     return_delta: bool = False,
     include_input: bool = False,
+    use_gpu: bool = True,
 ) -> bool:
     """
     Process a single image file: load, fill holes, save.
@@ -368,6 +840,7 @@ def process_single_image(
     
     logging.info(f"  Processing channels: {channels_to_process}")
     logging.info(f"  Mode: {'3D (Z-stack as volume)' if mode_3d else '2D (slice-by-slice)'}")
+    logging.info(f"  Hole-fill backend: {_describe_hole_fill_backend(use_gpu)}")
     if kernel_size is not None:
         overlap_px = _resolve_kernel_overlap(kernel_size, kernel_overlap)
         stride_px = kernel_size - overlap_px
@@ -378,6 +851,12 @@ def process_single_image(
             logging.info("  Kernel mode runs per 2D Z-slice (XY local windows)")
     else:
         overlap_px = 0
+
+    gpu_kernel_frame_group_size = 1
+    if kernel_size is not None and use_gpu and not mode_3d:
+        gpu_kernel_frame_group_size = min(_GPU_KERNEL_FRAME_GROUP_SIZE, T)
+        if gpu_kernel_frame_group_size > 1:
+            logging.info("  GPU kernel frame grouping: %s timepoints per batch", gpu_kernel_frame_group_size)
 
     if return_delta:
         logging.info("  Output mode: positive delta map (filled - input)")
@@ -432,53 +911,84 @@ def process_single_image(
 
         def _processed_planes():
             with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
-                for t in range(T):
-                    # Load just one timepoint: shape (C, Z, Y, X) — far smaller than the full array
-                    czyx = _load_czyx_timepoint(img, t)
+                timepoint_step = gpu_kernel_frame_group_size if gpu_kernel_frame_group_size > 1 else 1
+                for t_start in range(0, T, timepoint_step):
+                    t_stop = min(T, t_start + timepoint_step)
+                    czyx_group = [_load_czyx_timepoint(img, t) for t in range(t_start, t_stop)]
 
                     if include_input:
-                        out_czyx = np.empty((n_out, Z, Y, X), dtype=img_dtype)
+                        out_group = [np.empty((n_out, Z, Y, X), dtype=img_dtype) for _ in czyx_group]
                     else:
-                        out_czyx = czyx.copy()  # preserve non-processed channels
+                        out_group = [czyx.copy() for czyx in czyx_group]
 
                     for c_idx, c in enumerate(channels_to_process):
                         if kernel_size is None and mode_3d and Z > 1:
                             raise NotImplementedError("3D kernel mode is not implemented. Use 2D kernel or disable kernel mode.")
-                        else:
-                            for z in range(Z):
-                                slice_2d = czyx[c, z]
-                                filled_slice = (
-                                    greyscale_fill_holes_kernel_2d(
-                                        slice_2d,
+
+                        for z in range(Z):
+                            used_grouped_gpu = False
+                            if (
+                                kernel_size is not None
+                                and use_gpu
+                                and gpu_kernel_frame_group_size > 1
+                                and _GPU_DISABLED_REASON is None
+                                and len(czyx_group) > 1
+                            ):
+                                try:
+                                    slice_stack = np.stack([czyx[c, z] for czyx in czyx_group], axis=0)
+                                    filled_stack = _greyscale_fill_holes_kernel_multiframe_2d_gpu(
+                                        slice_stack,
                                         kernel_size=kernel_size,
                                         kernel_overlap=overlap_px,
+                                        frame_group_size=gpu_kernel_frame_group_size,
                                     )
-                                    if kernel_size is not None
-                                    else greyscale_fill_holes_2d(slice_2d)
-                                )
+                                    used_grouped_gpu = True
+                                except Exception as exc:
+                                    logging.warning(
+                                        "GPU kernel frame grouping failed, falling back to per-frame processing: %s",
+                                        exc,
+                                    )
+
+                            for local_index, czyx in enumerate(czyx_group):
+                                slice_2d = czyx[c, z]
+                                if used_grouped_gpu:
+                                    filled_slice = filled_stack[local_index]
+                                else:
+                                    filled_slice = (
+                                        greyscale_fill_holes_kernel_2d(
+                                            slice_2d,
+                                            kernel_size=kernel_size,
+                                            kernel_overlap=overlap_px,
+                                            use_gpu=use_gpu,
+                                        )
+                                        if kernel_size is not None
+                                        else greyscale_fill_holes_2d(slice_2d, use_gpu=use_gpu)
+                                    )
                                 result_2d = (
                                     _positive_delta(filled_slice, slice_2d, img_dtype)
                                     if return_delta
                                     else _cast_to_dtype(filled_slice, img_dtype)
                                 )
                                 if include_input:
-                                    out_czyx[c_idx * 2, z] = slice_2d
-                                    out_czyx[c_idx * 2 + 1, z] = result_2d
+                                    out_group[local_index][c_idx * 2, z] = slice_2d
+                                    out_group[local_index][c_idx * 2 + 1, z] = result_2d
                                 else:
-                                    out_czyx[c, z] = result_2d
+                                    out_group[local_index][c, z] = result_2d
 
-                        pbar.update(1)
+                        pbar.update(len(czyx_group))
 
-                    for _path, (_f, _dset) in open_h5_files.items():
-                        _dset[t] = np.transpose(out_czyx, (1, 2, 3, 0))
+                    for local_index, out_czyx in enumerate(out_group):
+                        t = t_start + local_index
+                        for _path, (_f, _dset) in open_h5_files.items():
+                            _dset[t] = np.transpose(out_czyx, (1, 2, 3, 0))
 
-                    if full_output is not None:
-                        full_output[t] = out_czyx
+                        if full_output is not None:
+                            full_output[t] = out_czyx
 
-                    if write_tif:
-                        for c in range(n_out):
-                            for z in range(Z):
-                                yield out_czyx[c, z]
+                        if write_tif:
+                            for c in range(n_out):
+                                for z in range(Z):
+                                    yield out_czyx[c, z]
 
         if write_tif:
             logging.info(f"Preparing OME-TIFF (streaming): {Path(tif_output_path).name}")
@@ -747,6 +1257,12 @@ Notes:
             'Produces interleaved pairs per processed channel: [orig_c0, filled_c0, orig_c1, filled_c1, ...].'
         )
     )
+
+    parser.add_argument(
+        '--no-gpu',
+        action='store_true',
+        help='Disable GPU hole filling and force the CPU reconstruction implementation.'
+    )
     
     parser.add_argument(
         '--output-format',
@@ -821,6 +1337,7 @@ Notes:
                 kernel_overlap=args.kernel_overlap,
                 return_delta=args.return_delta,
                 include_input=args.include_input,
+                use_gpu=not args.no_gpu,
             )
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")

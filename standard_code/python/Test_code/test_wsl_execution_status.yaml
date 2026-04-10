@@ -1,0 +1,26 @@
+segments:
+- name: Fill holes CPU
+  content_hash: 51a0cd9b9346204660647e39d5c5ab355a3c0601774bc9c5c9375d2510d880be
+  last_processed: "2026-04-09"
+  code_version: 0.0.17
+  run_duration: 1m4.4882005s
+- name: Fill holes CPU with kernel 40
+  content_hash: 37e7df1ec5ff0599fc58d2876d458f298b1c093e8f331a1fd263445d6a8f0a51
+  last_processed: "2026-04-09"
+  code_version: 0.0.17
+  run_duration: 5m2.5139429s
+- name: Fill holes Linux GPU
+  content_hash: 6befbee7b29f51a4d4756ad09773bc3c23687bd43f7bed29f8269a6d19ae1b4f
+  last_processed: "2026-04-09"
+  code_version: 0.0.17
+  run_duration: 25.7357943s
+- name: Fill holes Linux GPU with kernel 40
+  content_hash: 842c4cf12f543fd499e663e575463a301a4871c8f1246510343a0de7639c0309
+  last_processed: "2026-04-09"
+  code_version: 0.0.17
+  run_duration: 1m59.2394363s
+- name: Fill holes Linux GPU with kernel 40
+  content_hash: 944b8cc2426c06adcc75bac6038c094bca8a2692bb6e506b19e0bc87bedfa1dd
+  last_processed: "2026-04-09"
+  code_version: 0.0.17
+  run_duration: 1m53.7491164s

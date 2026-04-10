@@ -1,0 +1,41 @@
+{
+  "frames": 8,
+  "kernel_size": 40,
+  "kernel_overlap": 20,
+  "frame_group_sizes": [
+    2,
+    4,
+    8
+  ],
+  "skip_cpu_baseline": true,
+  "baseline_gpu_time": 41.738922055999865,
+  "experiments": [
+    {
+      "frame_group_size": 2,
+      "experimental_time": 39.81840176999685,
+      "speedup_vs_baseline_gpu": 1.0482319781968277,
+      "speedup_vs_cpu": null,
+      "equal_to_baseline_gpu": true,
+      "equal_to_cpu": null,
+      "output_sum": 9440591123
+    },
+    {
+      "frame_group_size": 4,
+      "experimental_time": 39.18031347899523,
+      "speedup_vs_baseline_gpu": 1.0653034228114666,
+      "speedup_vs_cpu": null,
+      "equal_to_baseline_gpu": true,
+      "equal_to_cpu": null,
+      "output_sum": 9440591123
+    },
+    {
+      "frame_group_size": 8,
+      "experimental_time": 38.97046257900365,
+      "speedup_vs_baseline_gpu": 1.071039943941743,
+      "speedup_vs_cpu": null,
+      "equal_to_baseline_gpu": true,
+      "equal_to_cpu": null,
+      "output_sum": 9440591123
+    }
+  ]
+}
