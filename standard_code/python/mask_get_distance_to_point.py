@@ -12,13 +12,6 @@ from scipy.spatial.distance import cdist
 from bioio.writers import OmeTiffWriter
 import bioimage_pipeline_utils as rp
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
-
 def get_coordinates_from_metadata(yaml_path: str) -> Optional[List[tuple[int, int]]]:
     """Extract (x, y) coordinates from ROI metadata."""
     with open(yaml_path, 'r') as f:
@@ -276,8 +269,14 @@ if __name__ == "__main__":
     parser.add_argument("--bin-size", type=int, default=None, help="Bin size for distance values. E.g., bin_size=5 maps distances 1-5 to 1, 6-10 to 2, etc.")
     parser.add_argument("--output-folder", type=str, help="Destination folder for output distance maps.")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     if not args.mask_search_pattern and not args.yaml_search_pattern:
         parser.error("Provide at least one of --mask-search-pattern or --yaml-search-pattern.")

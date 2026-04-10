@@ -13,7 +13,6 @@ from pathlib import Path
 import argparse
 import logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -160,8 +159,16 @@ run:
                         help='Suffix for output files (default: "_denoised")')
     parser.add_argument('--no-parallel', action='store_true',
                         help='Disable parallel processing (currently unused; processing is sequential).')
+    parser.add_argument('--log-level', type=str, default='WARNING',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        help='Logging level (default: WARNING)')
     
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     
     # Create output folder
     output_folder = Path(args.output_folder)

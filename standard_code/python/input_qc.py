@@ -919,12 +919,15 @@ run:
                        help='Tests to skip (e.g., QC_focus QC_saturation)')
     parser.add_argument('--generate-report', type=str, default=None,
                        help='Generate HTML report at specified path (e.g., QC_report.html)')
+    parser.add_argument('--log-level', type=str, default='WARNING',
+                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                       help='Logging level (default: WARNING)')
     
     args = parser.parse_args()
     
     # Setup logging
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
         format='%(asctime)s | %(levelname)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )

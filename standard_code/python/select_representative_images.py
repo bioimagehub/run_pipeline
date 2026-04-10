@@ -12,9 +12,6 @@ from skimage import filters, measure
 # local imports
 import bioimage_pipeline_utils as rp  
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
-
 # ==============================
 # FEATURE EXTRACTION
 # ==============================
@@ -269,7 +266,15 @@ if __name__ == "__main__":
 
     parser.add_argument("--no-parallel", action="store_true",
                         help="Disable parallel processing")
+    parser.add_argument("--log-level", type=str, default="WARNING",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        help="Logging level (default: WARNING)")
 
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     process_folder(args, use_parallel=not args.no_parallel)

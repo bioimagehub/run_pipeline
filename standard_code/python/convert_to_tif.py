@@ -815,7 +815,7 @@ run:
 
     parser.add_argument('--log-level', type=str, default='WARNING',
                     choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                    help='Logging level (default: INFO)')
+                    help='Logging level (default: WARNING)')
     
 
 

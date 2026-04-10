@@ -7,7 +7,6 @@ import numpy as np
 
 # Module-level logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)
 
 from bioio.writers import OmeTiffWriter  # type: ignore
 from bioio import BioImage
@@ -311,6 +310,7 @@ def main() -> None:
 
     parser.add_argument("--dry-run", action="store_true", help="Print planned actions but do not write any files.")
     parser.add_argument("--version", action="store_true", help="Print version and exit.")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()
 
@@ -327,7 +327,7 @@ def main() -> None:
         return
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
         format='%(asctime)s | %(levelname)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )

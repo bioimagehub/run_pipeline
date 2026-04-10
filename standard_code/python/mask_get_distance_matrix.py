@@ -1,5 +1,6 @@
 import os
 import argparse
+import logging
 from tqdm import tqdm
 import numpy as np
 from scipy.ndimage import distance_transform_edt, label
@@ -10,6 +11,8 @@ import tifffile
 
 import bioimage_pipeline_utils as rp
 
+logger = logging.getLogger(__name__)
+
 
 
 def process_file(mask_path: str, output_folder_path: str, output_suffix: str) -> None:
@@ -18,21 +21,21 @@ def process_file(mask_path: str, output_folder_path: str, output_suffix: str) ->
     mask = rp.load_tczyx_image(mask_path)  # TCZYX
     # Check if mask is correctly loaded and has valid data
     if mask is None or mask.data is None:
-        print(f"Error: Mask data is None for file {mask_path}. Skipping this file.")
+        logger.error(f"Mask data is None for file {mask_path}. Skipping this file.")
         return
 
     # Image dimensions
     try:
         t, c, z = mask.dims.T, mask.dims.C, mask.dims.Z
     except AttributeError:
-        print(f"Error: Invalid dimensions in mask for file {mask_path}. Skipping this file.")
+        logger.error(f"Invalid dimensions in mask for file {mask_path}. Skipping this file.")
         return
 
     # Get metadata
     try:
         physical_pixel_sizes = mask.physical_pixel_sizes if mask.physical_pixel_sizes is not None else (None, None, None)
     except Exception as e:
-        print(f"Error retrieving physical pixel sizes: {e} for file {mask_path}. Using None.")
+        logger.error(f"Error retrieving physical pixel sizes: {e} for file {mask_path}. Using None.")
         physical_pixel_sizes = (None, None, None)
 
     # Prepare to store overall distance matrix
@@ -66,7 +69,7 @@ def process_file(mask_path: str, output_folder_path: str, output_suffix: str) ->
                     if distance_to_edge_mask is not None:
                         distance_matrix_for_frame[object_mask == 1] = distance_to_edge_mask[object_mask == 1]
                     else:
-                        print(f"Warning: Distance transform returned None for object {object_id} in file {mask_path}.")
+                        logger.warning(f"Distance transform returned None for object {object_id} in file {mask_path}.")
 
                 # Store the distance matrix for the current frame, channel, and z-slice
                 overall_distance_matrix[mask_frame, mask_channel, mask_zslice, :, :] = distance_matrix_for_frame
@@ -110,7 +113,7 @@ def process_folder(args: argparse.Namespace):
                 try:
                     future.result()
                 except Exception as e:
-                    print(f"Error processing file: {e}")
+                    logger.error(f"Error processing file: {e}")
 
 
 
@@ -144,8 +147,14 @@ run:
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_distance_matrix", help="Suffix appended to output filenames before the extension")
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
 
     parsed_args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, parsed_args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     if not parsed_args.output_folder:
         parsed_args.output_folder = os.path.dirname(parsed_args.input_search_pattern) or "."

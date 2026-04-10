@@ -362,9 +362,16 @@ Required argument names for batch file-processing CLIs:
    - Disable parallel processing.
    - If a CLI can process multiple files, it should expose this flag even if parallel execution is enabled by default.
 
+- `--log-level`
+  - Logging verbosity for the CLI.
+  - Use this exact name for user-facing Python CLIs so pipeline runs can control verbosity consistently.
+  - Standard definition:
+    `parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')`
+
 Implementation rules:
 
 - Prefer these exact four names in both argparse definitions and YAML examples.
+- New CLI modules should also define a module-level logger with `logger = logging.getLogger(__name__)` and configure logging in `main()` after parsing arguments with `logging.basicConfig(level=getattr(logging, args.log_level), format='%(asctime)s - %(levelname)s - %(message)s')`.
 - If a script currently uses legacy names such as `--suffix` or `--output-file-name-extension`, rename them to the standardized form.
 - If a module is a true single-file utility and cannot reasonably support one or more of these arguments, document the reason clearly in the CLI help text and keep the deviation intentional rather than accidental.
 - New modules should be reviewed against this standard before they are added to `standard_code/python/`.

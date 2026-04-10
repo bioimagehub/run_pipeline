@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 from bioio import BioImage
 import yaml
@@ -7,6 +8,8 @@ from nd2reader import ND2Reader
 import os
 
 import bioimage_pipeline_utils as rp
+
+logger = logging.getLogger(__name__)
 
 def get_core_metadata(input_file):
     img = rp.load_tczyx_image(input_file)
@@ -40,7 +43,7 @@ def get_nd2_roi_metadata(file_path):
             metadata = images.metadata
     
     except Exception as e:
-        print(f"Error reading metadata: {e}")
+        logger.error(f"Error reading metadata: {e}")
         return None
     
     try:
@@ -49,7 +52,7 @@ def get_nd2_roi_metadata(file_path):
         # Access ROIs from metadata (avoid noisy prints)
         rois = metadata.get('rois', [])
     except Exception as e:
-        print(f"Error counting rois: {e}")
+        logger.error(f"Error counting rois: {e}")
         return None
 
     if len(rois)<1:
@@ -86,7 +89,7 @@ def get_nd2_roi_metadata(file_path):
                 roi_info.append(roi_pixels)
                     
     except Exception as e:
-        print(f"Error processing: {e}")
+        logger.error(f"Error processing: {e}")
         return None
     
     return roi_info
@@ -116,8 +119,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract metadata from a BioImage file.")
     parser.add_argument("--input-file", type=str, required=True, help="Path to the input BioImage file")
     parser.add_argument("--output-file", type=str, required=False, help="Path to save the metadata YAML file")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     metadata = get_all_metadata(input_file = args.input_file, output_file= args.output_file)
     print(metadata)

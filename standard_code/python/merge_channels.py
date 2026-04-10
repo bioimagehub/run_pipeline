@@ -20,10 +20,6 @@ from extract_metadata import get_all_metadata
 
 from skimage.transform import resize
 
-# Configure logging
-logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-
-
 
 def process_file(input_file_path: str, output_tif_file_path: str, merge_channels: str, output_format: str = "tif", output_dim_order: str = "TCZYX", scale:float = 1) -> None:
     try:
@@ -299,8 +295,14 @@ run:
     parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")
     parser.add_argument("--output-scale", type=float, default=1, help="Over or under-sampling factor for the output image. Default is 1 (no scaling).")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     # Check if output folder path is provided, if not set default
     if args.output_folder is None:

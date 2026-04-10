@@ -16,11 +16,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import os
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -75,12 +70,22 @@ All unknown arguments are passed directly to the ImageJ script as parameters.
         action='store_true',
         help='Enable verbose logging'
     )
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        default='WARNING',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        help='Logging level (default: WARNING)'
+    )
     
     # Parse known args and capture all unknown args
     args, unknown = parser.parse_known_args()
-    
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+
+    resolved_log_level = 'DEBUG' if args.verbose else args.log_level
+    logging.basicConfig(
+        level=getattr(logging, resolved_log_level),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     
     # Convert script path to absolute path
     script_path = Path(args.script).resolve()

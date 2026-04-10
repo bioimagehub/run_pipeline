@@ -32,9 +32,6 @@ except Exception:
                 pass
         return SimplePbar()
 
-# Configure logging
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s [%(levelname)s] %(message)s')
-
 def get_expected_output_path(input_file):
     """Get the expected H5 output path for an input file."""
     in_dir = os.path.dirname(input_file)
@@ -380,12 +377,17 @@ Note: Output H5 files are saved next to input files with '_Probabilities.h5' suf
     parser.add_argument("--project-path", type=str, required=True, help="Path to trained Ilastik project file (.ilp)")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (process all files in one batch)")
     parser.add_argument("--workers", type=int, default=None, help="Number of parallel workers (default: CPU count)")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
 
 
 
 
     args = parser.parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s [%(levelname)s] %(message)s'
+    )
     if not os.path.exists(args.project_path):
         print(f"Please start Ilastik and save the project file to: {args.project_path}")
     while not os.path.exists(args.project_path):

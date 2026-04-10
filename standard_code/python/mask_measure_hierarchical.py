@@ -21,8 +21,6 @@ import logging
 # Local imports
 import bioimage_pipeline_utils as rp
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -272,8 +270,20 @@ run:
         default=None,
         help='Specific channel index to measure (0-based). If not provided, measures all channels.'
     )
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        default='WARNING',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        help='Logging level (default: WARNING)'
+    )
     
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     
     # Get input image files
     image_files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)

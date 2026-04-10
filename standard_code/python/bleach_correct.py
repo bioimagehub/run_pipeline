@@ -370,6 +370,13 @@ run:
         action="store_true",
         help="Print version and exit"
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: WARNING)"
+    )
     
     args = parser.parse_args()
     
@@ -384,7 +391,7 @@ run:
     
     # Setup logging
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
         format='%(asctime)s | %(levelname)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )

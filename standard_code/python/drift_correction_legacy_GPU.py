@@ -290,6 +290,13 @@ if __name__ == "__main__":
         default=50.0,
         help="Maximum expected shift in pixels. Warning issued if exceeded (default: 50.0)"
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: WARNING)"
+    )
 
     # parser.add_argument(
     #     "--bandpass-low-sigma",
@@ -307,7 +314,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
 

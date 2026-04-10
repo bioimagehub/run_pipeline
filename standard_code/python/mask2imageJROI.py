@@ -1,9 +1,12 @@
 
 import argparse
+import logging
 import os
 from roifile import ImagejRoi, roiwrite
 import numpy as np
 import bioimage_pipeline_utils as rp
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -76,11 +79,17 @@ run:
     parser.add_argument("--output-suffix", type=str, default="_rois", help="Suffix to append to output file name (default: '_rois').")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only relevant if pattern does not already include '**')")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (default: parallel enabled)")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     if not files:
-        print("No files found to process.")
+        logger.warning("No files found to process.")
         return
 
     input_base = os.path.dirname(args.input_search_pattern)
@@ -105,12 +114,12 @@ run:
             for f in tqdm(concurrent.futures.as_completed(futures), total=len(files), desc='Converting masks to ROIs'):
                 file_path, error = f.result()
                 if error is not None:
-                    print(f"Error processing {file_path}: {error}")
+                    logger.error(f"Error processing {file_path}: {error}")
     else:
         for file_path in tqdm(files, desc='Converting masks to ROIs'):
             _, error = process_file(file_path)
             if error is not None:
-                print(f"Error processing {file_path}: {error}")
+                logger.error(f"Error processing {file_path}: {error}")
 
 if __name__ == "__main__":
     main()

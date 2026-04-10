@@ -505,12 +505,15 @@ run:
                        help='Suffix to add to output filenames (default: "_filled")')
     parser.add_argument('--no-parallel', action='store_true',
                        help='Disable parallel processing')
+    parser.add_argument('--log-level', type=str, default='WARNING',
+                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                       help='Logging level (default: WARNING)')
     
     args = parser.parse_args()
     
     # Setup logging
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     

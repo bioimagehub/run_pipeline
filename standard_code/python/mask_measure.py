@@ -1,6 +1,7 @@
 
 import os
 import argparse
+import logging
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -8,6 +9,8 @@ from skimage import measure
 
 # Local imports
 import bioimage_pipeline_utils as rp
+
+logger = logging.getLogger(__name__)
 
 
 def measure_masked_image(image_path: str, mask_path: str, output_csv: str):
@@ -86,7 +89,7 @@ def measure_masked_image(image_path: str, mask_path: str, output_csv: str):
         results = pd.concat(all_results, ignore_index=True)
         results.to_csv(output_csv, index=False)
     else:
-        print("No regions found in mask.")
+        logger.warning("No regions found in mask.")
 
 
 def main():
@@ -123,7 +126,13 @@ run:
     parser.add_argument('--output-suffix', required=False, default='_measurements', help='Suffix appended to output CSV filenames before the extension.')
     parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     image_files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     is_batch = len(image_files) > 1
@@ -161,10 +170,10 @@ run:
         mask_pattern = args.mask_search_pattern.replace('*', rel_img_noext)
         mask_files = rp.get_files_to_process2(mask_pattern, args.search_subfolders)
         if len(mask_files) == 0:
-            print(f"Warning: Mask not found for {image_path} using pattern {mask_pattern}, skipping.")
+            logger.warning(f"Mask not found for {image_path} using pattern {mask_pattern}, skipping.")
             continue
         if len(mask_files) > 1:
-            print(f"Warning: Multiple masks found for {image_path} using pattern {mask_pattern}, skipping.")
+            logger.warning(f"Multiple masks found for {image_path} using pattern {mask_pattern}, skipping.")
             continue
         mask_path = mask_files[0]
         base_name = os.path.splitext(os.path.basename(mask_path))[0]

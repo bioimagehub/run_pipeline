@@ -1,4 +1,5 @@
 import argparse
+import logging
 import numpy as np
 import multiprocessing
 from typing import List, Tuple
@@ -6,6 +7,8 @@ import bioimage_pipeline_utils as rp
 from bioio.writers import OmeTiffWriter
 import re
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def process_file(mask1_path: str, mask2_path: str, output_path: str, output_suffix: str = "_subtracted.tif", output_suffix2: str = "_filtered.tif", enforce_one_to_one_overlap: bool = False) -> None:
@@ -157,7 +160,13 @@ run:
     parser.add_argument('--enforce-one-to-one-overlap', action='store_true', help='Enforce strict one-to-one pairing between mask1 and mask2 objects (labels in mask2 will match paired mask1).')
     parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Do not use parallel processing')
+    parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     parallel = not args.no_parallel
     os.makedirs(args.output_folder, exist_ok=True)

@@ -374,9 +374,20 @@ Notes:
         help="Do not use parallel processing.",
     )
 
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: WARNING)",
+    )
+
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
 
     logging.info(f"Searching for files: {args.input_search_pattern}")
     input_files = rp.get_files_to_process2(args.input_search_pattern, True)

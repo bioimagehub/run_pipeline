@@ -19,7 +19,6 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 warnings.filterwarnings('ignore')
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -289,8 +288,16 @@ run:
                         help='Disable parallel processing (currently unused; processing is sequential).')
     parser.add_argument('--no-normalize', action='store_true',
                         help='Disable input normalization')
+    parser.add_argument('--log-level', type=str, default='WARNING',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        help='Logging level (default: WARNING)')
     
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     
     # Validate arguments
     if args.mode in ['denoise', 'train_and_denoise'] and not args.output_folder:

@@ -1,5 +1,6 @@
 
 import argparse
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +11,8 @@ from skimage.feature import peak_local_max
 from tqdm import tqdm
 
 import bioimage_pipeline_utils as rp
+
+logger = logging.getLogger(__name__)
 
 def find_maxima_in_image(image_path: str, output_csv: str, min_distance, threshold_abs, mask_patterns=None, search_subfolders=False):
     """
@@ -130,7 +133,7 @@ def find_maxima_in_image(image_path: str, output_csv: str, min_distance, thresho
         results = pd.concat(all_results, ignore_index=True)
         results.to_csv(output_csv, index=False)
     else:
-        print("No maxima found.")
+        logger.warning("No maxima found.")
 
 def main():
         parser = argparse.ArgumentParser(
@@ -170,7 +173,13 @@ run:
     parser.add_argument('--mask-search-patterns', nargs='*', default=None, help='List of glob patterns for mask images, e.g. "folder/*_nuc.tif folder/*_cyt.tif". For each maxima, the value at XY in each mask will be stored in a column <masklabel>_label.')
     parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     image_files = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     is_batch = len(image_files) > 1
@@ -212,12 +221,12 @@ run:
             for f in tqdm(as_completed(futures), total=len(jobs), desc='Finding maxima'):
                 result = f.result()
                 if result[2] is not None:
-                    print(f"Error processing {result[0]}: {result[2]}")
+                    logger.error(f"Error processing {result[0]}: {result[2]}")
     else:
         for job in tqdm(jobs, desc='Finding maxima'):
             result = process_job(job)
             if result[2] is not None:
-                print(f"Error processing {result[0]}: {result[2]}")
+                logger.error(f"Error processing {result[0]}: {result[2]}")
 
 if __name__ == "__main__":
     main()

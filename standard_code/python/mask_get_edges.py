@@ -1,5 +1,6 @@
 import os
 import argparse
+import logging
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
@@ -8,27 +9,29 @@ from bioio.writers import OmeTiffWriter
 
 import bioimage_pipeline_utils as rp
 
+logger = logging.getLogger(__name__)
+
 def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int, output_suffix: str) -> None:
     output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
     
     mask = rp.load_tczyx_image(mask_path)  # Load the mask
     
     if mask is None or mask.data is None:
-        print(f"Error: Mask data is None for file {mask_path}. Skipping this file.")
+        logger.error(f"Mask data is None for file {mask_path}. Skipping this file.")
         return
 
     # Image dimensions
     try:
         t, c, z = mask.dims.T, mask.dims.C, mask.dims.Z
     except AttributeError:
-        print(f"Error: Invalid dimensions in mask for file {mask_path}. Skipping this file.")
+        logger.error(f"Invalid dimensions in mask for file {mask_path}. Skipping this file.")
         return
 
     # Metadata
     try:
         physical_pixel_sizes = mask.physical_pixel_sizes if mask.physical_pixel_sizes is not None else (None, None, None)
     except Exception as e:
-        print(f"Error retrieving physical pixel sizes: {e} for file {mask_path}. Using None.")
+        logger.error(f"Error retrieving physical pixel sizes: {e} for file {mask_path}. Using None.")
         physical_pixel_sizes = (None, None, None)
 
     # Prepare to store the indexed mask with edges defined
@@ -54,7 +57,7 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
                     if isinstance(result, np.ndarray):
                         distance_to_outside = result
                     else:
-                        print("Warning: distance_transform_edt returned unexpected type. Skipping this object.")
+                        logger.warning("distance_transform_edt returned unexpected type. Skipping this object.")
                         continue
                         
                     result = distance_transform_edt(object_mask == 0)
@@ -62,7 +65,7 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
                     if isinstance(result, np.ndarray):
                         distance_to_inside = result
                     else:
-                        print("Warning: distance_transform_edt returned unexpected type. Skipping this object.")
+                        logger.warning("distance_transform_edt returned unexpected type. Skipping this object.")
                         continue
 
                     global_distance_mask = distance_to_outside - distance_to_inside
@@ -127,7 +130,13 @@ run:
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_edge", help="Suffix appended to output filenames before the extension")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (currently unused; processing is sequential).")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
     parsed_args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, parsed_args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     
     if not parsed_args.output_folder:
         parsed_args.output_folder = os.path.dirname(parsed_args.input_search_pattern) or "."

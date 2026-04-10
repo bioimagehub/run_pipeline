@@ -1,6 +1,9 @@
 import os
 import shutil
 import argparse
+import logging
+
+logger = logging.getLogger(__name__)
 
 def merge_folders(source_folder, target_folder):
     """Merges the source_folder into target_folder, renaming conflicting files."""
@@ -23,7 +26,7 @@ def merge_folders(source_folder, target_folder):
                     suffix += 1
 
             shutil.move(source_path, target_path)
-            print(f'Moved file: {source_path} to {target_path}')
+            logger.info(f'Moved file: {source_path} to {target_path}')
 
         # Handling directories
         elif os.path.isdir(source_path):
@@ -33,27 +36,33 @@ def rename_or_move_folder(old_folder_path, new_folder_path):
     """Renames or moves the folder to the new path, merging if necessary."""
     
     if not os.path.exists(old_folder_path):
-        print(f"The folder '{old_folder_path}' does not exist.")
+        logger.error(f"The folder '{old_folder_path}' does not exist.")
         return
 
     # If the new folder already exists, merge it
     if os.path.exists(new_folder_path):
-        print(f"The folder '{new_folder_path}' already exists. Merging...")
+        logger.info(f"The folder '{new_folder_path}' already exists. Merging...")
         merge_folders(old_folder_path, new_folder_path)
         shutil.rmtree(old_folder_path)  # Remove the original folder after merging
-        print(f'Merged and removed original folder: {old_folder_path}')
+        logger.info(f'Merged and removed original folder: {old_folder_path}')
     else:
         shutil.move(old_folder_path, new_folder_path)
-        print(f'Renamed/moved folder: {old_folder_path} to {new_folder_path}')
+        logger.info(f'Renamed/moved folder: {old_folder_path} to {new_folder_path}')
 
 def main():
     # Set up the argument parser
     parser = argparse.ArgumentParser(description='Rename or move a folder and merge if necessary.')
     parser.add_argument('--old-folder-path', type=str, help='The path to the folder to rename or move')
     parser.add_argument('--new-folder-path', type=str, help='The new path for the folder')
+    parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
 
     # Parse the arguments
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     # Call the function with provided folder paths
     rename_or_move_folder(args.old_folder_path, args.new_folder_path)

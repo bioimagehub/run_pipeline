@@ -1289,6 +1289,14 @@ Notes:
             'Reduce when processing large files to avoid out-of-memory errors.'
         )
     )
+
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        default='WARNING',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        help='Logging level (default: WARNING)'
+    )
     
     args = parser.parse_args()
 
@@ -1301,7 +1309,7 @@ Notes:
     
     # Setup logging
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level),
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     

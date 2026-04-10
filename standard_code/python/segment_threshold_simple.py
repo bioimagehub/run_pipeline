@@ -577,13 +577,20 @@ run:
         "--verbose", "-v", action="store_true",
         help="Enable verbose logging output"
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: WARNING)"
+    )
     
     args = parser.parse_args()
     
     # Configure logging
-    log_level = logging.INFO if args.verbose else logging.WARNING
+    log_level = "INFO" if args.verbose and args.log_level == "WARNING" else args.log_level
     logging.basicConfig(
-        level=log_level,
+        level=getattr(logging, log_level),
         format='%(message)s'
     )
     

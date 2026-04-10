@@ -437,20 +437,31 @@ def run_single_file(
     pad_width = 1 if n_scenes <= 9 else len(str(n_scenes))
 
     def _with_scene_suffix(path_in: Path, scene_index_1based: int) -> Path:
-        # For multi-scene inputs, always append scene suffix before extension.
+        # For multi-scene inputs, insert the scene suffix before the configured
+        # output suffix so names read like "input_1_drift.ome.tif".
         if n_scenes <= 1:
             return path_in
-        suffix = f"_{scene_index_1based:0{pad_width}d}"
+        scene_suffix = f"_{scene_index_1based:0{pad_width}d}"
         if path_in.name.lower().endswith(".shifts.txt"):
-            stem = path_in.name[:-11]
-            return path_in.with_name(f"{stem}{suffix}.shifts.txt")
-        if path_in.name.lower().endswith(".ome.tiff"):
-            stem = path_in.name[:-9]
-            return path_in.with_name(f"{stem}{suffix}.ome.tiff")
-        if path_in.name.lower().endswith(".ome.tif"):
-            stem = path_in.name[:-8]
-            return path_in.with_name(f"{stem}{suffix}.ome.tif")
-        return path_in.with_name(f"{path_in.stem}{suffix}{path_in.suffix}")
+            trailing_extension = ".shifts.txt"
+            stem = path_in.name[:-len(trailing_extension)]
+        elif path_in.name.lower().endswith(".ome.tiff"):
+            trailing_extension = ".ome.tiff"
+            stem = path_in.name[:-len(trailing_extension)]
+        elif path_in.name.lower().endswith(".ome.tif"):
+            trailing_extension = ".ome.tif"
+            stem = path_in.name[:-len(trailing_extension)]
+        else:
+            trailing_extension = path_in.suffix
+            stem = path_in.stem
+
+        output_suffix = "_corrected" if output_path is None else options.output_suffix
+        if output_suffix and stem.endswith(output_suffix):
+            stem = stem[: -len(output_suffix)] + scene_suffix + output_suffix
+        else:
+            stem = stem + scene_suffix
+
+        return path_in.with_name(f"{stem}{trailing_extension}")
 
     for scene_idx, scene_id in enumerate(scenes, start=1):
         img.set_scene(scene_id)

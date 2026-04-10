@@ -158,6 +158,11 @@ run:
     parser.add_argument("--output-folder", type=str, default=None, help="Output folder for tracked mask files (default: <input_root>_tracked).")
     parser.add_argument("--output-suffix", type=str, default="_tracked", help="Suffix to append to output file name (default: '_tracked').")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing.")
+    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     process_folder_or_file(args)
