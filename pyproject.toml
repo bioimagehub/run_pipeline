@@ -1,3 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["standard_code/python"]
+addopts = "-v"
+
 [project]
 name = "run-pipeline"
 dynamic = ["version"]
