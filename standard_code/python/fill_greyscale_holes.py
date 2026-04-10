@@ -1281,11 +1281,11 @@ Notes:
     )
 
     parser.add_argument(
-        '--max-workers',
+        '--maxcores',
         type=int,
         default=None,
         help=(
-            'Maximum number of parallel worker processes (default: use all CPU cores). '
+            'Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). '
             'Reduce when processing large files to avoid out-of-memory errors.'
         )
     )
@@ -1356,7 +1356,7 @@ Notes:
     # Process files (with or without parallel processing)
     if not args.no_parallel:
         from joblib import Parallel, delayed
-        n_jobs = -1 if args.max_workers is None else args.max_workers
+        n_jobs = rp.resolve_maxcores(args.maxcores, len(input_files))
         logging.info(f"Processing {len(input_files)} files in parallel (n_jobs={n_jobs})...")
         with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
             with _tqdm_joblib(pbar):

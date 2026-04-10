@@ -544,6 +544,7 @@ def process_files(
     output_folder: Optional[str] = None,
     projection_method: Optional[str] = None,
     collapse_delimiter: str = "__",
+    maxcores: Optional[int] = None,
     no_parallel: bool = False,
     save_metadata: bool = True,
     output_extension: str = "",
@@ -562,6 +563,7 @@ def process_files(
         output_folder: Output directory (default: input_dir + '_tif')
         projection_method: Optional Z-projection method
         collapse_delimiter: Delimiter for collapsing subfolder paths
+        maxcores: Maximum CPU cores to use for parallel processing
         no_parallel: Disable parallel processing
         save_metadata: Whether to save metadata YAML sidecars
         output_extension: Additional extension to add before .ome.tif
@@ -629,7 +631,7 @@ def process_files(
             )
     else:
         # Parallel processing
-        max_workers = min(os.cpu_count() or 4, len(file_pairs))
+        max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
         logger.info(f"Processing with {max_workers} workers")
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -740,6 +742,13 @@ run:
         action="store_true",
         help="Disable parallel processing (process files sequentially)"
     )
+
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set."
+    )
     
     parser.add_argument(
         "--no-metadata",
@@ -843,6 +852,7 @@ run:
         output_folder=args.output_folder,
         projection_method=args.projection_method,
         collapse_delimiter=args.collapse_delimiter,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel,
         save_metadata=not args.no_metadata,
         output_extension=args.output_suffix,

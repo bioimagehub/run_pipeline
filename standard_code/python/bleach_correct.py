@@ -179,6 +179,7 @@ def process_files(
     contrast_limits: Tuple[int, int] = (0, 65535),
     match_method: str = "first",
     collapse_delimiter: str = "__",
+    maxcores: Optional[int] = None,
     no_parallel: bool = False,
     output_extension: str = "_bleach_corrected",
     dry_run: bool = False
@@ -192,6 +193,7 @@ def process_files(
         contrast_limits: Min and max intensity values to clip to
         match_method: "first" or "neighbor" histogram matching method
         collapse_delimiter: Delimiter for collapsing subfolder paths
+        maxcores: Maximum CPU cores to use for parallel processing
         no_parallel: Disable parallel processing
         output_extension: Extension to add before .tif
         dry_run: Only print planned actions without executing
@@ -246,7 +248,7 @@ def process_files(
             correct_single_file(src, dst, contrast_limits, match_method)
     else:
         # Parallel processing
-        max_workers = min(os.cpu_count() or 4, len(file_pairs))
+        max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
         logger.info(f"Processing with {max_workers} workers")
         
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -351,6 +353,13 @@ run:
         action="store_true",
         help="Disable parallel processing (process files sequentially)"
     )
+
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set."
+    )
     
     parser.add_argument(
         "--output-suffix",
@@ -406,6 +415,7 @@ run:
         contrast_limits=contrast_limits,
         match_method=args.match_method,
         collapse_delimiter=args.collapse_delimiter,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel,
         output_extension=args.output_suffix,
         dry_run=args.dry_run

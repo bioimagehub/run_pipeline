@@ -505,6 +505,12 @@ run:
         help='Disable parallel processing (default: parallel enabled)'
     )
     parser.add_argument(
+        '--maxcores',
+        type=int,
+        default=None,
+        help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.'
+    )
+    parser.add_argument(
         '--log-level',
         type=str,
         default='WARNING',
@@ -613,7 +619,7 @@ run:
             results.append(result)
     else:
         # Parallel processing (default)
-        n_workers = cpu_count()
+        n_workers = rp.resolve_maxcores(args.maxcores, len(processing_args))
         logging.info(f"Parallel processing mode: {n_workers} workers")
         logging.info(f"Processing {files_with_both} files in parallel...")
         

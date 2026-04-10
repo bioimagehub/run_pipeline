@@ -271,6 +271,12 @@ if __name__ == "__main__":
         help="Disable parallel processing"
     )
     parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing. Ignored if --no-parallel is set."
+    )
+    parser.add_argument(
         "--crop-fraction",
         type=float,
         default=1.0,

@@ -887,10 +887,10 @@ run:
         help="Disable parallel processing (process groups sequentially)",
     )
     parser.add_argument(
-        "--max-workers",
+        "--maxcores",
         type=int,
         default=None,
-        help="Maximum number of parallel workers (default: CPU count)",
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.",
     )
     parser.add_argument(
         "--log-level",
@@ -986,7 +986,7 @@ run:
             else:
                 failed += 1
     else:
-        max_workers = args.max_workers or min(os.cpu_count() or 4, len(group_items))
+        max_workers = rp.resolve_maxcores(args.maxcores, len(group_items))
         logging.getLogger().setLevel(logging.ERROR)
         logger.setLevel(logging.ERROR)
 

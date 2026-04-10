@@ -1465,8 +1465,8 @@ run:
                             '(default: ["Experiment", "Group", "Replicate"])')
     parser.add_argument('--no-parallel', action='store_true',
                        help='Disable parallel processing. By default, files are processed in parallel when saving to output folder.')
-    parser.add_argument('--n-jobs', type=int, default=None,
-                       help='Number of parallel jobs to run. Default: use all available CPU cores. Ignored if --no-parallel is set.')
+    parser.add_argument('--maxcores', type=int, default=None,
+                       help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     
     args = parser.parse_args()
     
@@ -1652,8 +1652,7 @@ run:
     
     if use_parallel:
         # Parallel processing (DEFAULT for batch saves)
-        n_jobs = args.n_jobs if args.n_jobs is not None else cpu_count()
-        n_jobs = min(n_jobs, len(selected_basenames))  # Don't use more cores than files
+        n_jobs = rp.resolve_maxcores(args.maxcores, len(selected_basenames))
         
         logging.info(f"Processing {len(selected_basenames)} files in PARALLEL using {n_jobs} CPU cores")
         logging.info("Parallel mode: plots will be saved but not displayed")

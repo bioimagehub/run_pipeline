@@ -651,6 +651,8 @@ run:
                        help='Alpha transparency for mask overlay (default: 0.3)')
     parser.add_argument('--no-parallel', action='store_true',
                        help='Disable parallel processing')
+    parser.add_argument('--maxcores', type=int, default=None,
+                       help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--log-level', type=str, default='INFO',
                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        help='Logging level (default: INFO)')
@@ -677,7 +679,7 @@ run:
     
     # Process files
     if not args.no_parallel and len(tsv_files) > 1:
-        n_workers = min(cpu_count(), len(tsv_files))
+        n_workers = rp.resolve_maxcores(args.maxcores, len(tsv_files))
         logging.info(f"Using {n_workers} parallel workers")
         
         process_func = partial(process_single_tsv, output_dir=args.output_folder, args=args, quiet=True)

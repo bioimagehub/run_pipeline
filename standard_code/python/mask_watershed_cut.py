@@ -471,6 +471,7 @@ def process_folder(
 	remove_z_edges: bool,
 	min_size: int,
 	max_size: float,
+	maxcores: int | None,
 	no_parallel: bool
 ) -> None:
 	"""Process multiple files matching the input pattern."""
@@ -515,7 +516,7 @@ def process_folder(
 
 		with tqdm(total=len(files), desc="Processing", unit="file") as pbar:
 			with _tqdm_joblib(pbar):
-				Parallel(n_jobs=-1)(delayed(process_one)(f) for f in files)
+				Parallel(n_jobs=rp.resolve_maxcores(maxcores, len(files)))(delayed(process_one)(f) for f in files)
 	else:
 		for file_path in files:
 			process_one(file_path)
@@ -643,6 +644,10 @@ Always enabled:
 		help="Disable parallel processing (parallel is enabled by default)"
 	)
 	parser.add_argument(
+		"--maxcores", type=int, default=None,
+		help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set."
+	)
+	parser.add_argument(
 		"--verbose", "-v", action="store_true",
 		help="Enable verbose logging output"
 	)
@@ -677,6 +682,7 @@ Always enabled:
 		remove_z_edges=args.remove_z_edges,
 		min_size=args.min_size,
 		max_size=max_size,
+		maxcores=args.maxcores,
 		no_parallel=args.no_parallel
 	)
 	

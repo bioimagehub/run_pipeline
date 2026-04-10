@@ -396,6 +396,7 @@ def process_folder(
     max_size: float,
     save_rois: bool,
     save_labeled: bool,
+    maxcores: int | None,
     no_parallel: bool
 ) -> None:
     """Process multiple files matching the input pattern."""
@@ -440,7 +441,7 @@ def process_folder(
 
         with tqdm(total=len(files), desc="Processing", unit="file") as pbar:
             with _tqdm_joblib(pbar):
-                Parallel(n_jobs=-1)(delayed(process_one)(f) for f in files)
+                Parallel(n_jobs=rp.resolve_maxcores(maxcores, len(files)))(delayed(process_one)(f) for f in files)
     else:
         for file_path in files:
             process_one(file_path)
@@ -566,6 +567,10 @@ run:
         help="Disable parallel processing (parallel is enabled by default)"
     )
     parser.add_argument(
+        "--maxcores", type=int, default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set."
+    )
+    parser.add_argument(
         "--save-rois", action="store_true",
         help="Save ImageJ ROIs as .zip files (disabled by default)"
     )
@@ -632,6 +637,7 @@ run:
         max_size=max_size,
         save_rois=args.save_rois,
         save_labeled=args.save_labeled,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel
     )
     

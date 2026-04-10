@@ -102,7 +102,7 @@ def process_folder(args, use_parallel=True):
 
         with tqdm(total=len(files), desc="Extracting features", unit="file") as pbar:
             with _tqdm_joblib(pbar):
-                all_results = list(Parallel(n_jobs=-1)(
+                all_results = list(Parallel(n_jobs=rp.resolve_maxcores(args.maxcores, len(files)))(
                     delayed(extract_timepoint_features)(f, args.nuclear_channel)
                     for f in files
                 ))
@@ -266,6 +266,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--no-parallel", action="store_true",
                         help="Disable parallel processing")
+    parser.add_argument("--maxcores", type=int, default=None,
+                        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         help="Logging level (default: WARNING)")

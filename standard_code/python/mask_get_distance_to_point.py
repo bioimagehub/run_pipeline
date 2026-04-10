@@ -229,13 +229,9 @@ def process_folder(args: argparse.Namespace, parallel: bool) -> None:
             return
         
         else:
-            cpu_count = os.cpu_count()
-            if not isinstance(cpu_count, int):
-                logging.error("Unable to determine CPU count, defaulting to 1 worker.")
-                cpu_count = 1
-            cpu_count = max(cpu_count - 1, 1)
-            
-            with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+            max_workers = rp.resolve_maxcores(args.maxcores, len(tasks))
+
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
                     executor.submit(process_file, y, m, args.output_folder, 
                                   args.distance_method, args.bin_size) 
@@ -269,6 +265,7 @@ if __name__ == "__main__":
     parser.add_argument("--bin-size", type=int, default=None, help="Bin size for distance values. E.g., bin_size=5 maps distances 1-5 to 1, 6-10 to 2, etc.")
     parser.add_argument("--output-folder", type=str, help="Destination folder for output distance maps.")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
+    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()

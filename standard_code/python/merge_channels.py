@@ -226,7 +226,7 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
 
         with tqdm(total=len(files_to_process), desc="Processing files", unit="file") as pbar:
             with _tqdm_joblib(pbar):
-                Parallel(n_jobs=-1)(
+                Parallel(n_jobs=rp.resolve_maxcores(args.maxcores, len(files_to_process)))(
                     delayed(process_file)(input_file_path,
                                           _output_path(input_file_path),
                                           args.merge_channels,
@@ -295,6 +295,7 @@ run:
     parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")
     parser.add_argument("--output-scale", type=float, default=1, help="Over or under-sampling factor for the output image. Default is 1 (no scaling).")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
+    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()

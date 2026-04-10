@@ -135,6 +135,7 @@ def process_files(
         percentile_max: float,
         output_mode: str,
         per_timepoint: bool,
+    maxcores: Optional[int],
         no_parallel: bool,
         output_extension: str,
         dry_run: bool
@@ -175,7 +176,7 @@ def process_files(
                 per_timepoint
             )
     else:
-        max_workers = min(os.cpu_count() or 4, len(file_pairs))
+        max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
         logger.info(f"Processing with {max_workers} workers")
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -256,6 +257,12 @@ run:
     )
 
     parser.add_argument("--no-parallel", action="store_true")
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set."
+    )
     parser.add_argument("--dry-run", action="store_true")
 
     parser.add_argument(
@@ -285,6 +292,7 @@ run:
         percentile_max=args.percentile_max,
         output_mode=args.output_mode,
         per_timepoint=args.per_timepoint,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel,
         output_extension=args.output_suffix,
         dry_run=args.dry_run

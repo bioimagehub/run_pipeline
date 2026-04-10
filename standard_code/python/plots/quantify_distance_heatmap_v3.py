@@ -1640,6 +1640,8 @@ run:
                        help='Alpha transparency for mask overlay (default: 0.5)')
     parser.add_argument('--region-grow-threshold', type=float, default=0.5,
                        help='Fraction of running maximum for region growing and artifact detection (default: 0.5)')
+    parser.add_argument('--maxcores', type=int, default=None,
+                       help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--split-char', type=str, default='__',
                        help='Character(s) to split filename for metadata (default: "__")')
     parser.add_argument('--metadata-columns', type=str, default='Group',
@@ -1687,7 +1689,7 @@ run:
     # Process files
     if not args.no_parallel and len(tsv_files) > 1:
         # Parallel processing with progress bar
-        n_workers = min(cpu_count(), len(tsv_files))
+        n_workers = rp.resolve_maxcores(args.maxcores, len(tsv_files))
         logging.info(f"Using {n_workers} parallel workers")
         
         process_func = partial(process_single_tsv, output_dir=args.output_folder, args=args, quiet=True)

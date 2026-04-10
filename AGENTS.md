@@ -362,6 +362,13 @@ Required argument names for batch file-processing CLIs:
    - Disable parallel processing.
    - If a CLI can process multiple files, it should expose this flag even if parallel execution is enabled by default.
 
+- `--maxcores`
+  - Maximum number of CPU cores to use for parallel processing.
+  - Use this exact name instead of alternatives such as `--n-jobs`, `--workers`, `--max-workers`, or `--cores`.
+  - Default behavior should be all available CPU cores minus 1.
+  - If a CLI can process multiple files, it should expose this flag even if parallel execution is enabled by default.
+  - `--maxcores` should be ignored when `--no-parallel` is set.
+
 - `--log-level`
   - Logging verbosity for the CLI.
   - Use this exact name for user-facing Python CLIs so pipeline runs can control verbosity consistently.
@@ -370,9 +377,9 @@ Required argument names for batch file-processing CLIs:
 
 Implementation rules:
 
-- Prefer these exact four names in both argparse definitions and YAML examples.
+- Prefer these exact five names in both argparse definitions and YAML examples.
 - New CLI modules should also define a module-level logger with `logger = logging.getLogger(__name__)` and configure logging in `main()` after parsing arguments with `logging.basicConfig(level=getattr(logging, args.log_level), format='%(asctime)s - %(levelname)s - %(message)s')`.
-- If a script currently uses legacy names such as `--suffix` or `--output-file-name-extension`, rename them to the standardized form.
+- If a script currently uses legacy names such as `--suffix`, `--output-file-name-extension`, `--n-jobs`, `--workers`, or `--max-workers`, rename them to the standardized form.
 - If a module is a true single-file utility and cannot reasonably support one or more of these arguments, document the reason clearly in the CLI help text and keep the deviation intentional rather than accidental.
 - New modules should be reviewed against this standard before they are added to `standard_code/python/`.
 

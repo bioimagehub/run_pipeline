@@ -603,6 +603,7 @@ def process_files(
     input_pattern: str,
     output_folder: Optional[str] = None,
     collapse_delimiter: str = "__",
+    maxcores: Optional[int] = None,
     no_parallel: bool = False,
     save_metadata: bool = True,
     dry_run: bool = False,
@@ -671,7 +672,7 @@ def process_files(
             logger.error(f"Failed processing {failures} file(s)")
         return
 
-    max_workers = min(os.cpu_count() or 4, len(file_pairs))
+    max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
     logger.info(f"Processing with {max_workers} workers")
 
     failures = 0
@@ -785,6 +786,12 @@ run:
         help="Disable parallel processing (process files sequentially)",
     )
     parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.",
+    )
+    parser.add_argument(
         "--no-metadata",
         action="store_true",
         help="Skip saving metadata YAML sidecars",
@@ -861,6 +868,7 @@ run:
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
         collapse_delimiter=args.collapse_delimiter,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel,
         save_metadata=not args.no_metadata,
         dry_run=args.dry_run,

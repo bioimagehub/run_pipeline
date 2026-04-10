@@ -524,7 +524,7 @@ run:
   - '%REPO%/standard_code/python/bfconvert_wrapper.py'
     - --input-search-pattern: '%YAML%/input/**/*.czi'
   - --output-folder: '%YAML%/output'
-  - --max-workers: 4
+    - --maxcores: 4
   - --flag=-padded
   - --flag=-overwrite
 
@@ -654,11 +654,11 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
     )
     
     parser.add_argument(
-        "--max-workers",
+        "--maxcores",
         type=int,
         default=None,
-        help="Number of parallel workers (default: CPU count - 1). "
-             "Set to 1 for sequential processing or use --no-parallel."
+           help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). "
+               "Set to 1 for sequential processing or use --no-parallel."
     )
     
     parser.add_argument(
@@ -713,7 +713,7 @@ https://docs.openmicroscopy.org/bio-formats/latest/users/comlinetools/conversion
         dry_run=args.dry_run,
         create_subfolders=args.create_subfolders,
         max_memory=args.max_memory,
-        max_workers=args.max_workers,
+        max_workers=args.maxcores,
         no_parallel=args.no_parallel
     )
 

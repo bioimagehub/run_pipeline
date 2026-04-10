@@ -130,6 +130,7 @@ run:
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_edge", help="Suffix appended to output filenames before the extension")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (currently unused; processing is sequential).")
+    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (currently unused; processing is sequential). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
     parsed_args = parser.parse_args()
 

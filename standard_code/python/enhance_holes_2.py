@@ -459,6 +459,12 @@ Notes:
         action="store_true",
         help="Process files sequentially instead of in parallel",
     )
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing. Ignored if --no-parallel is set.",
+    )
 
     parser.add_argument(
         "--log-level",

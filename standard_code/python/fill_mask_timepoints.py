@@ -220,6 +220,7 @@ def process_files(
     channels: list[int] | None,
     max_gap_size: int | None,
     blend_threshold: float,
+    maxcores: int | None,
     no_parallel: bool,
     dry_run: bool,
     force: bool,
@@ -277,8 +278,7 @@ def process_files(
 
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    cpu_count = os.cpu_count() or 1
-    max_workers = max(cpu_count - 1, 1)
+    max_workers = rp.resolve_maxcores(maxcores, len(tasks))
     logger.info(f"Processing files in parallel (workers={max_workers})")
 
     ok = 0
@@ -373,6 +373,12 @@ run:
         help="Disable parallel processing",
     )
     parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Reprocess even if outputs exist",
@@ -418,6 +424,7 @@ run:
         channels=args.channels,
         max_gap_size=args.max_gap_size,
         blend_threshold=args.blend_threshold,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel,
         dry_run=args.dry_run,
         force=args.force,

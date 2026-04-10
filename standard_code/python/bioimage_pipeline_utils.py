@@ -200,6 +200,22 @@ def _build_bioformats_error_message(path: str, original_error: Exception) -> str
     return "\n".join(lines)
 
 
+def get_default_maxcores() -> int:
+    """Return the standard default core count for parallel CLI work."""
+    detected_cores = os.cpu_count() or 1
+    return max(1, detected_cores - 1)
+
+
+def resolve_maxcores(maxcores: Optional[int], task_count: Optional[int] = None) -> int:
+    """Resolve a user-provided maxcores value against defaults and task count."""
+    resolved = get_default_maxcores() if maxcores is None else maxcores
+    if resolved < 1:
+        raise ValueError(f"--maxcores must be at least 1, got {resolved}")
+    if task_count is not None:
+        resolved = min(resolved, task_count)
+    return max(1, resolved)
+
+
 def load_tczyx_image(path: str) -> BioImage:
     """
     Load an image as a BioImage object, ensuring the data is always 5D (TCZYX).

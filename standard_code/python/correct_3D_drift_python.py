@@ -697,7 +697,7 @@ run:
   - --input-search-pattern: '%YAML%/input/**/*.nd2'
   - --output-folder: '%YAML%/output'
   - --channel: 0
-  - --max-workers: 2
+    - --maxcores: 2
   - --log-level: INFO
 
 - name: Correct 3D drift (sequential, disable lazy loading for debugging)
@@ -778,13 +778,13 @@ run:
     # Backward-compat alias: --use-lazy-loading is now the default, this flag is a no-op
     p.add_argument("--use-lazy-loading", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
-        "--max-workers",
+        "--maxcores",
         type=int,
         default=None,
         metavar="N",
         help=(
-            "Number of parallel worker processes for multi-file runs "
-            "(default: cpu_count - 1). Use 1 to process sequentially within the executor."
+            "Maximum CPU cores to use for parallel processing "
+            "(default: all available CPU cores minus 1). Ignored if --no-parallel is set."
         ),
     )
 
@@ -823,7 +823,7 @@ def main(argv: list[str] | None = None) -> int:
         only_compute=args.only_compute,
         shifts_file=args.use_shifts,
         use_lazy_loading=not args.no_lazy_loading,
-        max_workers=args.max_workers,
+        max_workers=args.maxcores,
         verbose=True,
     )
 

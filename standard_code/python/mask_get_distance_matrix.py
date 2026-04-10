@@ -95,10 +95,9 @@ def process_folder(args: argparse.Namespace):
             process_file(mask_path=input_file_path, output_folder_path=args.output_folder, output_suffix=args.output_suffix)
     else:
         # Parallel processing
-        cpu_count = os.cpu_count() or 1
-        cpu_count = max(cpu_count - 1, 1)
-        
-        with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+        max_workers = rp.resolve_maxcores(args.maxcores, len(files_to_process))
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for input_file_path in files_to_process:
                 future = executor.submit(
@@ -147,6 +146,7 @@ run:
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_distance_matrix", help="Suffix appended to output filenames before the extension")
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--maxcores', type=int, default=None, help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
 
     parsed_args = parser.parse_args()

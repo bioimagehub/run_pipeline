@@ -126,6 +126,7 @@ run:
     parser.add_argument('--output-suffix', required=False, default='_measurements', help='Suffix appended to output CSV filenames before the extension.')
     parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--maxcores', type=int, default=None, help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
     args = parser.parse_args()
 
@@ -209,7 +210,8 @@ run:
 
     if not args.no_parallel and is_batch:
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor() as executor:
+        max_workers = rp.resolve_maxcores(args.maxcores, len(jobs))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(process_job, job) for job in jobs]
             for f in tqdm(as_completed(futures), total=len(jobs), desc='Measuring'):
                 result = f.result()

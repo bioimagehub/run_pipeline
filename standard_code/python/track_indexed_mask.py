@@ -117,7 +117,7 @@ def process_folder_or_file(args: argparse.Namespace):
 
         with tqdm(total=len(input_files), desc="Tracking objects", unit="file") as pbar:
             with _tqdm_joblib(pbar):
-                Parallel(n_jobs=-1)(delayed(process_single_file)(file) for file in input_files)
+                Parallel(n_jobs=rp.resolve_maxcores(args.maxcores, len(input_files)))(delayed(process_single_file)(file) for file in input_files)
     else:
         for input_file_path in tqdm(input_files, desc="Tracking objects", unit="file"):
             process_single_file(input_file_path)
@@ -158,6 +158,7 @@ run:
     parser.add_argument("--output-folder", type=str, default=None, help="Output folder for tracked mask files (default: <input_root>_tracked).")
     parser.add_argument("--output-suffix", type=str, default="_tracked", help="Suffix to append to output file name (default: '_tracked').")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing.")
+    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
     args = parser.parse_args()

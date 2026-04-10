@@ -302,7 +302,7 @@ def process_folder(args: argparse.Namespace) -> None:
         print(f"\nCompleted processing {len(files_to_process)} files")
     else:
         # Split files among workers, respecting command line length
-        n_workers = args.workers if args.workers else multiprocessing.cpu_count()
+        n_workers = rp.resolve_maxcores(args.maxcores, len(safe_batches))
         
         # First split by command line length to get safe batches
         safe_batches = chunk_by_cmd_length(files_to_process)
@@ -365,7 +365,7 @@ run:
   - --input-search-pattern: '%YAML%/input_data/**/*.tif'
   - --output-folder: '%YAML%/output_data'
   - --project-path: '%YAML%/my_project.ilp'
-  - --workers: 4
+    - --maxcores: 4
 
 Note: Output H5 files are saved next to input files with '_Probabilities.h5' suffix.
       Post-processing (thresholding, TIF conversion) should be done in a separate step.
@@ -376,7 +376,7 @@ Note: Output H5 files are saved next to input files with '_Probabilities.h5' suf
     parser.add_argument("--output-folder", type=str, required=True, help="Path to save the output (currently unused, H5 files saved next to inputs)")
     parser.add_argument("--project-path", type=str, required=True, help="Path to trained Ilastik project file (.ilp)")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (process all files in one batch)")
-    parser.add_argument("--workers", type=int, default=None, help="Number of parallel workers (default: CPU count)")
+    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
 
 

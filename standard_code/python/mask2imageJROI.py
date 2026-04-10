@@ -79,6 +79,7 @@ run:
     parser.add_argument("--output-suffix", type=str, default="_rois", help="Suffix to append to output file name (default: '_rois').")
     parser.add_argument("--search-subfolders", action="store_true", help="Enable recursive search (only relevant if pattern does not already include '**')")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (default: parallel enabled)")
+    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
     args = parser.parse_args()
 
@@ -109,7 +110,8 @@ run:
             return (file_path, str(e))
 
     if not args.no_parallel and len(files) > 1:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        max_workers = rp.resolve_maxcores(args.maxcores, len(files))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(process_file, f) for f in files]
             for f in tqdm(concurrent.futures.as_completed(futures), total=len(files), desc='Converting masks to ROIs'):
                 file_path, error = f.result()

@@ -108,7 +108,7 @@ def process_pair(args):
     process_file(mask1_path, mask2_path, output_path, output_suffix, output_suffix2, enforce_one_to_one_overlap)
 
 
-def process_masks(mask1_pattern: str, mask2_pattern: str, output_path: str, output_suffix: str = "_subtracted.tif", parallel: bool = True, search_subfolders: bool = False, output_suffix2: str = "_filtered.tif", enforce_one_to_one_overlap: bool = False):
+def process_masks(mask1_pattern: str, mask2_pattern: str, output_path: str, output_suffix: str = "_subtracted.tif", parallel: bool = True, search_subfolders: bool = False, output_suffix2: str = "_filtered.tif", enforce_one_to_one_overlap: bool = False, maxcores: int | None = None):
     mask1_files = rp.get_files_to_process2(mask1_pattern, search_subfolders)
     mask2_files = rp.get_files_to_process2(mask2_pattern, search_subfolders)
     # Match by base name (without extension)
@@ -117,7 +117,8 @@ def process_masks(mask1_pattern: str, mask2_pattern: str, output_path: str, outp
     common_basenames = set(mask1_dict.keys()) & set(mask2_dict.keys())
     jobs = [(mask1_dict[bn], mask2_dict[bn], output_path, output_suffix, output_suffix2, enforce_one_to_one_overlap) for bn in common_basenames]
     if parallel:
-        with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+        max_workers = rp.resolve_maxcores(maxcores, len(jobs))
+        with multiprocessing.Pool(processes=max_workers) as pool:
             pool.map(process_pair, jobs)
     else:
         for job in jobs:
@@ -160,6 +161,7 @@ run:
     parser.add_argument('--enforce-one-to-one-overlap', action='store_true', help='Enforce strict one-to-one pairing between mask1 and mask2 objects (labels in mask2 will match paired mask1).')
     parser.add_argument('--search-subfolders', action='store_true', help='Enable recursive search (only relevant if pattern does not already include "**")')
     parser.add_argument('--no-parallel', action='store_true', help='Do not use parallel processing')
+    parser.add_argument('--maxcores', type=int, default=None, help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')
     args = parser.parse_args()
 
@@ -178,5 +180,6 @@ run:
         parallel=parallel,
         search_subfolders=args.search_subfolders,
         output_suffix2=args.output_suffix2,
-        enforce_one_to_one_overlap=args.enforce_one_to_one_overlap
+        enforce_one_to_one_overlap=args.enforce_one_to_one_overlap,
+        maxcores=args.maxcores
     )

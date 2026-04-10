@@ -264,6 +264,12 @@ run:
         help='Disable parallel processing (default: parallel enabled)'
     )
     parser.add_argument(
+        '--maxcores',
+        type=int,
+        default=None,
+        help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.'
+    )
+    parser.add_argument(
         '--channel',
         type=int,
         required=False,
@@ -365,7 +371,8 @@ run:
     if not args.no_parallel and is_batch:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         logger.info("Processing in parallel mode")
-        with ThreadPoolExecutor() as executor:
+        max_workers = rp.resolve_maxcores(args.maxcores, len(jobs))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(process_job, job) for job in jobs]
             for f in tqdm(as_completed(futures), total=len(jobs), desc='Measuring'):
                 result = f.result()

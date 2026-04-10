@@ -505,6 +505,8 @@ run:
                        help='Suffix to add to output filenames (default: "_filled")')
     parser.add_argument('--no-parallel', action='store_true',
                        help='Disable parallel processing')
+    parser.add_argument('--maxcores', type=int, default=None,
+                       help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--log-level', type=str, default='WARNING',
                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        help='Logging level (default: WARNING)')
@@ -544,7 +546,7 @@ run:
             output_path = os.path.join(output_folder, output_name)
             _process_one_task((mask_path, output_path, args.max_gap_size, False))
     else:
-        max_workers = min(os.cpu_count() or 4, len(mask_files))
+        max_workers = rp.resolve_maxcores(args.maxcores, len(mask_files))
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             tasks = []
             for path in mask_files:

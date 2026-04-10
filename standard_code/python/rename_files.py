@@ -76,6 +76,7 @@ def process_files(
     input_pattern: str,
     replace_term: str,
     output_folder: str = None,
+    maxcores: int | None = None,
     no_parallel: bool = False,
     dry_run: bool = False
 ) -> None:
@@ -95,6 +96,7 @@ def process_files(
         input_pattern: File search pattern with * as wildcard
         replace_term: Replacement term for everything after the *
         output_folder: Optional output folder to move renamed files to
+        maxcores: Maximum CPU cores to use for parallel processing
         no_parallel: Disable parallel processing
         dry_run: Only print planned actions without executing
     """
@@ -179,7 +181,7 @@ def process_files(
             rename_single_file(src, dst, copy_only=bool(output_folder), dry_run=False)
     else:
         # Parallel processing
-        max_workers = min(os.cpu_count() or 4, len(file_pairs))
+        max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
         logger.info(f"Processing with {max_workers} workers")
         
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -261,6 +263,12 @@ run:
         action="store_true",
         help="Disable parallel processing (process files sequentially)"
     )
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set."
+    )
     
     parser.add_argument(
         "--dry-run",
@@ -304,6 +312,7 @@ run:
         input_pattern=args.input_search_pattern,
         replace_term=args.replace_term,
         output_folder=args.output_folder,
+        maxcores=args.maxcores,
         no_parallel=args.no_parallel,
         dry_run=args.dry_run
     )

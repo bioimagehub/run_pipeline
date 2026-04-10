@@ -269,7 +269,7 @@ def process_files_parallel(
     delete_source: bool = False,
     dry_run: bool = False,
     timeout: int = 7200,
-    max_workers: int = 4
+    max_workers: int | None = None
 ) -> None:
     """
     Process multiple OME-TIFF files in parallel using multiple NIS-Elements instances.
@@ -280,7 +280,7 @@ def process_files_parallel(
         delete_source: Whether to delete source files after conversion
         dry_run: Print planned actions without executing
         timeout: Maximum time to wait for each conversion (seconds)
-        max_workers: Maximum number of parallel NIS-Elements instances
+        max_workers: Maximum CPU cores to use for parallel conversion
     """
     # Expand glob pattern
     input_files = sorted(glob(input_pattern, recursive=True))
@@ -288,6 +288,10 @@ def process_files_parallel(
     if not input_files:
         logger.warning(f"No files found matching pattern: {input_pattern}")
         return
+
+    if max_workers is None:
+        max_workers = max(1, (os.cpu_count() or 1) - 1)
+    max_workers = min(max_workers, len(input_files))
     
     logger.info(f"Found {len(input_files)} file(s) to process")
     logger.info(f"Processing with {max_workers} parallel workers")
@@ -389,34 +393,34 @@ run:
   - --flag=-overwrite
   # This automatically splits multi-series files into separate OME-TIFFs
 
-- name: Convert OME-TIFF to ND2 (PARALLEL - 4 workers)
+- name: Convert OME-TIFF to ND2 (parallel, 4 cores)
   environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/ometif_to_nd2_parallel.py'
     - --input-search-pattern: '%YAML%/output/**/*.ome.tif'
-  - --max-workers: 4
+    - --maxcores: 4
   - --delete-source
   # Converts all OME-TIFFs to ND2 using 4 parallel instances
 
-- name: Convert with custom output folder (8 parallel workers)
+- name: Convert with custom output folder (8 cores)
   environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/ometif_to_nd2_parallel.py'
     - --input-search-pattern: '%YAML%/ometif_files/**/*.ome.tif'
   - --output-folder: '%YAML%/nd2_files'
-  - --max-workers: 8
+    - --maxcores: 8
   - --timeout: 1200
   # Save ND2 files to different folder with 8 workers
 
-- name: Conservative parallel (2 workers)
+- name: Conservative parallel (2 cores)
   environment: uv@3.11:convert-to-tif
   commands:
   - python
   - '%REPO%/standard_code/python/ometif_to_nd2_parallel.py'
     - --input-search-pattern: '%YAML%/output/**/*.ome.tif'
-  - --max-workers: 2
+    - --maxcores: 2
   # Use only 2 parallel instances if license or resources are limited
 
 - name: Dry run (preview parallel conversion)
@@ -433,7 +437,7 @@ Example workflow (LIF -> OME-TIFF -> ND2):
   2. ometif_to_nd2_parallel.py: Converts OME-TIFFs to ND2 in parallel
 
 Performance notes:
-  - Start with --max-workers=2 to test if your license supports multiple instances
+    - Start with --maxcores=2 to test if your license supports multiple instances
   - Increase workers based on CPU cores and RAM (recommend 1-2 per CPU core)
   - Monitor system resources during processing
   - Each NIS-Elements instance may use significant RAM
@@ -477,11 +481,11 @@ Performance notes:
     )
     
     parser.add_argument(
-        "--max-workers",
+           "--maxcores",
         type=int,
-        default=4,
-        help="Maximum number of parallel NIS-Elements instances (default: 4). "
-             "Start with 2 to test license compatibility, increase based on CPU/RAM."
+           default=None,
+           help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). "
+               "Start with 2 to test license compatibility, increase based on CPU/RAM."
     )
 
     parser.add_argument(
@@ -527,13 +531,14 @@ Performance notes:
         print(f"ometif_to_nd2_parallel.py version: {version}")
         return
     
-    # Validate max_workers
-    if args.max_workers < 1:
-        logger.error("--max-workers must be at least 1")
+    resolved_maxcores = max(1, (os.cpu_count() or 1) - 1) if args.maxcores is None else args.maxcores
+
+    if resolved_maxcores < 1:
+        logger.error("--maxcores must be at least 1")
         return
     
-    if args.max_workers > 16:
-        logger.warning(f"--max-workers={args.max_workers} is very high. This may consume excessive resources.")
+    if resolved_maxcores > 16:
+        logger.warning(f"--maxcores={resolved_maxcores} is very high. This may consume excessive resources.")
         logger.warning("Consider starting with 2-4 workers and increasing if system can handle it.")
     
     # Process files in parallel
@@ -544,7 +549,7 @@ Performance notes:
         delete_source=args.delete_source,
         dry_run=args.dry_run,
         timeout=args.timeout,
-        max_workers=1 if args.no_parallel else args.max_workers
+        max_workers=1 if args.no_parallel else resolved_maxcores,
     )
 
 

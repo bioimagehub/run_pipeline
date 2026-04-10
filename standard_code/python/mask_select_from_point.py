@@ -304,8 +304,7 @@ def process_folder(args: argparse.Namespace) -> None:
             process_file(mask_path, yaml_path, args.output_folder, args.output_extension)
         return
 
-    cpu_count = os.cpu_count() or 1
-    max_workers = max(cpu_count - 1, 1)
+    max_workers = rp.resolve_maxcores(args.maxcores, len(selected_pairs))
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [
@@ -389,6 +388,12 @@ run:
         "--no-parallel",
         action="store_true",
         help="Disable parallel processing (default: parallel enabled).",
+    )
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.",
     )
     parser.add_argument(
         "--output-extension",

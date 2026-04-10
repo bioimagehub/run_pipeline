@@ -286,6 +286,8 @@ run:
                         help='Suffix for output files (default: "_n2v_denoised")')
     parser.add_argument('--no-parallel', action='store_true',
                         help='Disable parallel processing (currently unused; processing is sequential).')
+    parser.add_argument('--maxcores', type=int, default=None,
+                        help='Maximum CPU cores to use for parallel processing (currently unused; processing is sequential). Ignored if --no-parallel is set.')
     parser.add_argument('--no-normalize', action='store_true',
                         help='Disable input normalization')
     parser.add_argument('--log-level', type=str, default='WARNING',

@@ -132,6 +132,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument('--threshold', type=float, default=None, help='Manual intensity threshold')
     parser.add_argument('--cleanup-intermediates', action='store_true', help='Remove intermediate non-CSV files')
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
+    parser.add_argument('--maxcores', type=int, default=None, help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--quiet', action='store_true', help='Suppress normal progress/info output (sets log level WARNING)')
     parser.add_argument('--log-level', default=None, help='Explicit logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Overrides default if not quiet.')
     args = parser.parse_args(argv)
@@ -191,7 +192,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if not args.no_parallel and is_batch:
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor() as executor:
+        max_workers = rp.resolve_maxcores(args.maxcores, len(image_files))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(process_job, img) for img in image_files]
             for f in tqdm(as_completed(futures), total=len(image_files), desc='Segmenting'):
                 _, err = f.result()

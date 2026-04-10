@@ -304,6 +304,7 @@ def main() -> None:
     parser.add_argument("--multipoint-files", action="store_true", help="(not implemented) multiple scenes to separate files")
 
     parser.add_argument("--no-parallel", action="store_true", help="unused; kept for CLI compatibility")
+    parser.add_argument("--maxcores", type=int, default=None, help="Unused; kept for CLI compatibility with standardized parallel arguments.")
 
     parser.add_argument("--output-suffix", type=str, default="")
     parser.add_argument("--output-folder", type=str)
