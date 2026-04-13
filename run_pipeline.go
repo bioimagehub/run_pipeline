@@ -1162,7 +1162,7 @@ func makeWslUvCommand(segment Segment, mainProgramDir, yamlDir, distro string) (
 		"set -euo pipefail",
 		"cd " + shellQuote(wslRepoDir),
 		"export UV_LINK_MODE=copy",
-		"if ! command -v uv >/dev/null 2>&1; then echo " + shellQuote("UV not found inside the selected Linux distro. Install uv in WSL before using use-linux-distro.") + " >&2; exit 1; fi",
+		"if ! command -v uv >/dev/null 2>&1; then echo " + shellQuote("UV not found inside the selected Linux distro. Install uv in WSL with: wget -qO- https://astral.sh/uv/install.sh | sh. Then ensure uv is on PATH, e.g. add $HOME/.local/bin to PATH in ~/.bashrc and restart the shell.") + " >&2; exit 1; fi",
 		"mkdir -p " + shellQuote(path.Dir(venvPath)),
 	}
 	for _, envEntry := range resolveSegmentEnv(segment, mainProgramDir, yamlDir) {
