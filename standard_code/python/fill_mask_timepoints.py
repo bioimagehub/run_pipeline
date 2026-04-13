@@ -164,6 +164,7 @@ def _fill_channel_timepoints(
 def process_single_file(
     input_path: str,
     output_path: str,
+    output_format: str,
     channels: list[int] | None,
     max_gap_size: int | None,
     blend_threshold: float,
@@ -203,7 +204,7 @@ def process_single_file(
             )
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        rp.save_tczyx_image(data, output_path)
+        rp.save_with_output_format(data, output_path, output_format)
         logger.info(f"Saved: {output_path}")
         return True
 
@@ -217,6 +218,7 @@ def process_single_file(
 def process_files(
     input_pattern: str,
     output_folder: str | None,
+    output_format: str,
     channels: list[int] | None,
     max_gap_size: int | None,
     blend_threshold: float,
@@ -245,8 +247,9 @@ def process_files(
 
     tasks: list[tuple[str, str]] = []
     for input_path in input_files:
+        output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
         output_filename = os.path.basename(
-            rp.resolve_output_path(input_path, extension='.tif', suffix=suffix)
+            rp.resolve_output_path(input_path, extension=output_ext, suffix=suffix)
         )
         output_path = os.path.join(output_folder, output_filename)
         tasks.append((input_path, output_path))
@@ -271,7 +274,7 @@ def process_files(
         ok = 0
         for inp, out in tasks:
             if process_single_file(
-                inp, out, channels, max_gap_size, blend_threshold, force
+                inp, out, output_format, channels, max_gap_size, blend_threshold, force
             ):
                 ok += 1
         logger.info(f"Done: {ok} succeeded, {len(tasks) - ok} failed")
@@ -287,7 +290,7 @@ def process_files(
         futures = [
             ex.submit(
                 process_single_file,
-                inp, out, channels, max_gap_size, blend_threshold, force,
+                inp, out, output_format, channels, max_gap_size, blend_threshold, force,
             )
             for inp, out in tasks
         ]
@@ -369,6 +372,13 @@ run:
         help="Suffix to add to output filenames",
     )
     parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "npy", "ilastik-h5"],
+        default="tif",
+        help="Output format (default: tif)",
+    )
+    parser.add_argument(
         "--no-parallel",
         action="store_true",
         help="Disable parallel processing",
@@ -422,6 +432,7 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_format=args.output_format,
         channels=args.channels,
         max_gap_size=args.max_gap_size,
         blend_threshold=args.blend_threshold,

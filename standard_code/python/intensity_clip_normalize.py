@@ -75,6 +75,7 @@ def percentile_normalize(
 def normalize_single_file(
         input_path: str,
         output_path: str,
+    output_format: str,
         percentile_min: float,
         percentile_max: float,
         output_mode: str = "uint",
@@ -109,9 +110,10 @@ def normalize_single_file(
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        rp.save_tczyx_image(
+        rp.save_with_output_format(
             corrected,
             output_path,
+            output_format,
             physical_pixel_sizes=getattr(img, "physical_pixel_sizes", None),
             channel_names=getattr(img, "channel_names", None)
         )
@@ -131,6 +133,7 @@ def normalize_single_file(
 def process_files(
         input_pattern: str,
         output_folder: Optional[str],
+    output_format: str,
         percentile_min: float,
         percentile_max: float,
         output_mode: str,
@@ -157,8 +160,9 @@ def process_files(
 
     file_pairs = []
     for src in files:
+        output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
         name = os.path.basename(
-            rp.resolve_output_path(src, extension=".tif", suffix=output_extension)
+            rp.resolve_output_path(src, extension=output_ext, suffix=output_extension)
         )
         dst = os.path.join(output_folder, name)
         file_pairs.append((src, dst))
@@ -171,6 +175,7 @@ def process_files(
         for src, dst in file_pairs:
             normalize_single_file(
                 src, dst,
+                output_format,
                 percentile_min,
                 percentile_max,
                 output_mode,
@@ -185,6 +190,7 @@ def process_files(
                 executor.submit(
                     normalize_single_file,
                     src, dst,
+                    output_format,
                     percentile_min,
                     percentile_max,
                     output_mode,
@@ -240,6 +246,13 @@ run:
 
     parser.add_argument("--input-search-pattern", required=True)
     parser.add_argument("--output-folder", default=None)
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "npy", "ilastik-h5"],
+        default="tif",
+        help="Output format (default: tif)",
+    )
 
     parser.add_argument("--percentile-min", type=float, default=1.0)
     parser.add_argument("--percentile-max", type=float, default=99.0)
@@ -289,6 +302,7 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_format=args.output_format,
         percentile_min=args.percentile_min,
         percentile_max=args.percentile_max,
         output_mode=args.output_mode,

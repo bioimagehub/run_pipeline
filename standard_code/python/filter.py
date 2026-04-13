@@ -132,6 +132,7 @@ def apply_filter(
 def process_single_file(
     input_path: str,
     output_path: str,
+    output_format: str,
     method: Literal["mean", "min", "max", "median", "gaussian"],
     mode: Literal["2d", "3d"],
     channels: list[int] | None,
@@ -209,7 +210,7 @@ def process_single_file(
             filtered = filtered.astype(original_dtype, copy=False)
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        rp.save_tczyx_image(filtered, output_path)
+        rp.save_with_output_format(filtered, output_path, output_format)
         logger.info(f"Saved: {output_path}")
         return True
 
@@ -224,6 +225,7 @@ def process_files(
     input_pattern: str,
     output_folder: str | None,
     output_suffix: str | None,
+    output_format: str,
     method: Literal["mean", "min", "max", "median", "gaussian"],
     mode: Literal["2d", "3d"],
     channels: list[int] | None,
@@ -259,8 +261,9 @@ def process_files(
     tasks: list[tuple[str, str]] = []
     for input_path in input_files:
         effective_output_suffix = output_suffix or f"_{method}"
+        output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
         output_filename = os.path.basename(
-            rp.resolve_output_path(input_path, extension='.tif', suffix=effective_output_suffix)
+            rp.resolve_output_path(input_path, extension=output_ext, suffix=effective_output_suffix)
         )
         output_path = os.path.join(output_folder, output_filename)
         tasks.append((input_path, output_path))
@@ -286,7 +289,7 @@ def process_files(
         ok = 0
         for inp, out in tasks:
             if process_single_file(
-                inp, out, method, mode, channels, sigma_xy, sigma_z, truncate, size_y, size_x, size_z, force
+                inp, out, output_format, method, mode, channels, sigma_xy, sigma_z, truncate, size_y, size_x, size_z, force
             ):
                 ok += 1
         logger.info(f"Done: {ok} succeeded, {len(tasks)-ok} failed")
@@ -303,7 +306,7 @@ def process_files(
         futures = [
             ex.submit(
                 process_single_file,
-                inp, out, method, mode, channels, sigma_xy, sigma_z, truncate, size_y, size_x, size_z, force,
+                inp, out, output_format, method, mode, channels, sigma_xy, sigma_z, truncate, size_y, size_x, size_z, force,
             )
             for inp, out in tasks
         ]
@@ -461,6 +464,13 @@ run:
         help="Suffix to append before the output extension (default: _<method>)",
     )
     parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "npy", "ilastik-h5"],
+        default="tif",
+        help="Output format (default: tif)",
+    )
+    parser.add_argument(
         "--method",
         choices=["mean", "min", "max", "median", "gaussian"],
         default="gaussian",
@@ -568,6 +578,7 @@ run:
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
         output_suffix=args.output_suffix,
+        output_format=args.output_format,
         method=args.method,
         mode=args.mode,
         channels=args.channels,

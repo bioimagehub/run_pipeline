@@ -243,10 +243,7 @@ def process_single_image(
     output_data[:, channels_to_process, :, :, :] = scored_cast
 
     logging.info(f"Saving scored image to: {Path(output_path).name}")
-    if output_format == "npy":
-        np.save(output_path, output_data)
-    else:
-        rp.save_tczyx_image(output_data, output_path)
+    rp.save_with_output_format(output_data, output_path, output_format)
     logging.info("  Done!")
     return True
 
@@ -295,6 +292,15 @@ run:
     - --output-folder: '%YAML%/output_data'
     - --output-format: npy
 
+- name: Save output as Ilastik HDF5
+    environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/enhance_holes.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_data'
+    - --output-format: ilastik-h5
+
 - name: Speed up with XY downsampling
     environment: uv@3.11:default
     commands:
@@ -341,9 +347,9 @@ Notes:
     parser.add_argument(
         "--output-format",
         type=str,
-        choices=["ome.tif", "npy"],
+        choices=["ome.tif", "npy", "ilastik-h5"],
         default="ome.tif",
-        help='Output format. Choices: "ome.tif" (default) or "npy".',
+        help='Output format. Choices: "ome.tif" (default), "npy", or "ilastik-h5".',
     )
     parser.add_argument(
         "--downsample-factor",
@@ -414,7 +420,7 @@ Notes:
         logging.info(f"\n{'=' * 70}")
         logging.info(f"Processing file {i}/{len(input_files)}")
 
-        output_extension = ".ome.tif" if args.output_format == "ome.tif" else ".npy"
+        output_extension = rp.output_extension_for_format(args.output_format, tiff_extension=".ome.tif")
         output_name = os.path.basename(
             rp.resolve_output_path(input_path, extension=output_extension, suffix=args.output_suffix)
         )

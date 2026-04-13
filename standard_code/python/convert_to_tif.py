@@ -181,6 +181,7 @@ def group_scenes_by_timestamp(scenes: list[str]) -> list[tuple[str, list[str]]]:
 def convert_single_file(
     input_path: str,
     output_path: str,
+    output_format: str = "tif",
     projection_method: Optional[str] = None,
     save_metadata: bool = True,
     standard_tif: bool = False,
@@ -380,6 +381,8 @@ def convert_single_file(
             
             # Check if split mode is enabled
             if split:
+                if rp.normalize_output_format(output_format) != "tif":
+                    raise ValueError("--split requires --output-format tif")
                 # Save each T, C, Z slice as individual file
                 # Use same naming scheme as ij_bridge_bioformats.py: basename_Z#_C#.ome.tif
                 # This allows NIS-Elements to auto-detect and merge files properly
@@ -455,7 +458,7 @@ def convert_single_file(
                     logger.info("Saving as standard TIFF (NIS-Elements compatible)")
                 
                 # Save with metadata
-                rp.save_tczyx_image(merged_data, scene_output_path, **save_kwargs)
+                rp.save_with_output_format(merged_data, scene_output_path, output_format, **save_kwargs)
                 logger.info(f"Saved: {scene_output_path}")
             
             # Save metadata if requested
@@ -521,6 +524,7 @@ def convert_single_file(
 def process_files(
     input_pattern: str,
     output_folder: Optional[str] = None,
+    output_format: str = "tif",
     projection_method: Optional[str] = None,
     collapse_delimiter: str = "__",
     maxcores: Optional[int] = None,
@@ -581,11 +585,15 @@ def process_files(
     logger.info(f"Output folder: {output_folder}")
     
     # Prepare file pairs
+    if split and rp.normalize_output_format(output_format) != "tif":
+        raise ValueError("--split only supports --output-format tif")
+
+    output_ext = rp.output_extension_for_format(output_format, tiff_extension=".ome.tif")
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
         out_name = os.path.basename(
-            rp.resolve_output_path(collapsed, extension=".ome.tif", suffix=output_extension)
+            rp.resolve_output_path(collapsed, extension=output_ext, suffix=output_extension)
         )
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
@@ -607,7 +615,7 @@ def process_files(
         # Sequential processing
         for src, dst in file_pairs:
             convert_single_file(
-                src, dst, projection_method, save_metadata, standard_tif, split,
+                src, dst, output_format, projection_method, save_metadata, standard_tif, split,
                 scene_filter, scene_filter_strings, scene_merge_channel,
             )
     else:
@@ -618,7 +626,7 @@ def process_files(
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
-                    convert_single_file, src, dst, projection_method, save_metadata,
+                    convert_single_file, src, dst, output_format, projection_method, save_metadata,
                     standard_tif, split, scene_filter, scene_filter_strings,
                     scene_merge_channel,
                 ): (src, dst)
@@ -743,6 +751,13 @@ run:
         default="",
         help="Additional suffix to add before .ome.tif"
     )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "npy", "ilastik-h5"],
+        default="tif",
+        help="Output format (default: tif). Note: --split requires tif.",
+    )
     
     parser.add_argument(
         "--dry-run",
@@ -831,6 +846,7 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_format=args.output_format,
         projection_method=args.projection_method,
         collapse_delimiter=args.collapse_delimiter,
         maxcores=args.maxcores,

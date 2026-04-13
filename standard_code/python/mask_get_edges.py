@@ -11,9 +11,10 @@ import bioimage_pipeline_utils as rp
 
 logger = logging.getLogger(__name__)
 
-def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int, output_suffix: str) -> None:
+def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int, output_suffix: str, output_format: str) -> None:
+    output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
     output_filename = os.path.basename(
-        rp.resolve_output_path(mask_path, extension='.tif', suffix=output_suffix)
+        rp.resolve_output_path(mask_path, extension=output_ext, suffix=output_suffix)
     )
     
     mask = rp.load_tczyx_image(mask_path)  # Load the mask
@@ -89,14 +90,14 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
 
     # Save the indexed mask
     output_file_path = os.path.join(output_folder_path, output_filename)
-    rp.save_tczyx_image(indexed_mask, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
+    rp.save_with_output_format(indexed_mask, output_file_path, output_format, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
   
 def process_folder(args: argparse.Namespace):
     files_to_process = rp.get_files_to_process2(args.input_search_pattern, args.search_subfolders)
     os.makedirs(args.output_folder, exist_ok=True)
 
     for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-        process_file(mask_path = input_file_path, output_folder_path = args.output_folder, distance_inside=args.distance_inside, distance_outside=args.distance_outside, output_suffix=args.output_suffix)
+        process_file(mask_path = input_file_path, output_folder_path = args.output_folder, distance_inside=args.distance_inside, distance_outside=args.distance_outside, output_suffix=args.output_suffix, output_format=args.output_format)
 
 if __name__ == "__main__":
         parser = argparse.ArgumentParser(
@@ -131,6 +132,7 @@ run:
     parser.add_argument("--distance-outside", type=int, default= 3, help="How far outside the object should the mask be extended? (default: 3 pixels)")
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_edge", help="Suffix appended to output filenames before the extension")
+    parser.add_argument("--output-format", type=str, choices=["tif", "npy", "ilastik-h5"], default="tif", help="Output format (default: tif)")
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (currently unused; processing is sequential).")
     parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (currently unused; processing is sequential). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")

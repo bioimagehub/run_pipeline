@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 
-def process_file(mask_path: str, output_folder_path: str, output_suffix: str) -> None:
+def process_file(mask_path: str, output_folder_path: str, output_suffix: str, output_format: str) -> None:
+    output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
     output_filename = os.path.basename(
-        rp.resolve_output_path(mask_path, extension='.tif', suffix=output_suffix)
+        rp.resolve_output_path(mask_path, extension=output_ext, suffix=output_suffix)
     )
     
     mask = rp.load_tczyx_image(mask_path)  # TCZYX
@@ -79,9 +80,10 @@ def process_file(mask_path: str, output_folder_path: str, output_suffix: str) ->
     # Save the overall distance matrix
     output_file_path = os.path.join(output_folder_path, output_filename)
     # rp.save_mask(overall_distance_matrix, output_file_path, as_binary=False)
-    rp.save_tczyx_image(
+    rp.save_with_output_format(
         overall_distance_matrix,
         output_file_path,
+        output_format,
         physical_pixel_sizes=physical_pixel_sizes,
         ome_xml=None
     )
@@ -94,7 +96,7 @@ def process_folder(args: argparse.Namespace):
     if args.no_parallel:
         # Sequential processing
         for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-            process_file(mask_path=input_file_path, output_folder_path=args.output_folder, output_suffix=args.output_suffix)
+            process_file(mask_path=input_file_path, output_folder_path=args.output_folder, output_suffix=args.output_suffix, output_format=args.output_format)
     else:
         # Parallel processing
         max_workers = rp.resolve_maxcores(args.maxcores, len(files_to_process))
@@ -106,7 +108,8 @@ def process_folder(args: argparse.Namespace):
                     process_file,
                     mask_path=input_file_path,
                     output_folder_path=args.output_folder,
-                    output_suffix=args.output_suffix
+                    output_suffix=args.output_suffix,
+                    output_format=args.output_format
                 )
                 futures.append(future)
             
@@ -147,6 +150,7 @@ run:
     parser.add_argument("--input-search-pattern", type=str, required=True, help="Glob pattern for input masks, e.g. './output_masks/*_segmentation.tif'")
     parser.add_argument("--output-folder", type=str, help="Path to the output folder.")
     parser.add_argument("--output-suffix", type=str, default="_distance_matrix", help="Suffix appended to output filenames before the extension")
+    parser.add_argument("--output-format", type=str, choices=["tif", "npy", "ilastik-h5"], default="tif", help="Output format (default: tif)")
     parser.add_argument('--no-parallel', action='store_true', help='Disable parallel processing (default: parallel enabled)')
     parser.add_argument('--maxcores', type=int, default=None, help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
     parser.add_argument('--log-level', type=str, default='WARNING', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], help='Logging level (default: WARNING)')

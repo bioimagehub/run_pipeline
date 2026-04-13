@@ -257,6 +257,52 @@ def resolve_output_suggix(path: str, extension: Optional[str], suffix: str = "")
     return resolve_output_path(path, extension, suffix)
 
 
+def normalize_output_format(output_format: str) -> str:
+    """Normalize output-format aliases to canonical values."""
+    fmt = str(output_format).strip().lower()
+    aliases = {
+        "ome.tif": "ome.tif",
+        "tif": "tif",
+        "tiff": "tif",
+        "npy": "npy",
+        "ilastik-h5": "ilastik-h5",
+        "h5": "ilastik-h5",
+    }
+    if fmt not in aliases:
+        raise ValueError(f"Unsupported output format: {output_format}")
+    return aliases[fmt]
+
+
+def output_extension_for_format(output_format: str, tiff_extension: str = ".tif") -> str:
+    """Return file extension for a normalized output format."""
+    fmt = normalize_output_format(output_format)
+    if fmt in {"tif", "ome.tif"}:
+        ext = tiff_extension
+    elif fmt == "npy":
+        ext = ".npy"
+    else:  # ilastik-h5
+        ext = ".h5"
+    if ext and not ext.startswith("."):
+        ext = f".{ext}"
+    return ext
+
+
+def save_with_output_format(img: Union[BioImage, np.ndarray], path: str, output_format: str, **kwargs) -> None:
+    """Save output using a standardized output-format switch.
+
+    Supported formats: ``tif``/``ome.tif``, ``npy``, ``ilastik-h5``.
+    Extra kwargs are passed only to TIFF writer and ignored for npy/h5.
+    """
+    fmt = normalize_output_format(output_format)
+    if fmt in {"tif", "ome.tif"}:
+        save_tczyx_image(img, path, **kwargs)
+    elif fmt == "npy":
+        arr = getattr(img, 'data', img)
+        np.save(path, np.asarray(arr))
+    else:
+        save_ilastik_h5(img, path)
+
+
 def load_tczyx_image(path: str) -> BioImage:
     """
     Load an image as a BioImage object, ensuring the data is always 5D (TCZYX).
@@ -332,6 +378,10 @@ def load_tczyx_image(path: str) -> BioImage:
     elif lower_path.endswith(".dv"):
         import bioio_dv
         img = BioImage(path, reader=bioio_dv.Reader)
+        return img
+    elif lower_path.endswith((".h5", ".hdf5")):
+        import bioio_ilastik_h5
+        img = BioImage(path, reader=bioio_ilastik_h5.IlastikH5Reader)
         return img
     # The bioformats-based reader is now the universal fallback for any format, including .ims, to ensure maximum compatibility.
     # elif lower_path.endswith(".ims"):
@@ -426,6 +476,42 @@ def save_tczyx_image(img: Union[BioImage, np.ndarray], path: str, **kwargs) -> N
         OmeTiffWriter.save(arr, path, dim_order="TCZYX", ome_xml=ome_xml, **kwargs)
     else:
         OmeTiffWriter.save(arr, path, dim_order="TCZYX", **kwargs)
+
+
+def save_ilastik_h5(img: Union[BioImage, np.ndarray], path: str, dataset_name: str = "exported_data") -> None:
+    """Save image data as Ilastik-compatible HDF5 in TZYXC order.
+
+    Input is expected to be TCZYX (or lower dimensional data that can be expanded
+    to TCZYX). The HDF5 dataset is written as TZYXC with VIGRA-style ``axistags``.
+    """
+    try:
+        import h5py
+        import json
+    except Exception as exc:
+        raise ImportError("Saving ilastik-h5 requires h5py") from exc
+
+    arr = getattr(img, 'data', img)
+    arr = np.asarray(arr)
+    while arr.ndim < 5:
+        arr = arr[np.newaxis, ...]
+
+    # Ilastik expects channel-last tensors. Convert TCZYX -> TZYXC.
+    arr_tzyxc = np.transpose(arr, (0, 2, 3, 4, 1))
+
+    axis_configs = [
+        {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},
+        {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+        {'key': 'y', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+        {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},
+        {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''}
+    ]
+
+    if os.path.exists(path):
+        os.remove(path)
+
+    with h5py.File(path, 'w') as f:
+        dset = f.create_dataset(dataset_name, data=arr_tzyxc)
+        dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
 
 # Deprecated alias for backward compatibility
 def save_bioio(img, path, **kwargs):

@@ -12,7 +12,7 @@ import logging
 import bioimage_pipeline_utils as rp
 
 
-def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_path=None):
+def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_path=None, output_format="tif"):
     T, C, Z, Y, X = indexed_masks.shape
     assert 0 <= channel_zero_base < C, "channel_zero_base out of bounds"
 
@@ -57,14 +57,14 @@ def track_labels_with_trackpy(indexed_masks, channel_zero_base=0, output_mask_pa
         new_indexed_masks[t, channel_zero_base, z][slice_mask == original_label] = row.particle + 1
 
     if output_mask_path:
-        rp.save_tczyx_image(new_indexed_masks, output_mask_path, dim_order="TCZYX")
+        rp.save_with_output_format(new_indexed_masks, output_mask_path, output_format, dim_order="TCZYX")
 
     return df_tracked, new_indexed_masks
 
 
-def process_file(input_file_path: str, output_file_path: str, tracking_channel: int):
+def process_file(input_file_path: str, output_file_path: str, tracking_channel: int, output_format: str):
     masks = rp.load_tczyx_image(input_file_path).data
-    df, new_mask = track_labels_with_trackpy(masks, channel_zero_base=tracking_channel, output_mask_path=output_file_path)
+    df, new_mask = track_labels_with_trackpy(masks, channel_zero_base=tracking_channel, output_mask_path=output_file_path, output_format=output_format)
     # print(f"Tracked {len(df['particle'].unique())} objects in file: {os.path.basename(input_file_path)}")
     return df
 
@@ -92,11 +92,12 @@ def process_folder_or_file(args: argparse.Namespace):
 
     def process_single_file(input_file_path):
         output_file_name = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)
+        output_ext = rp.output_extension_for_format(args.output_format, tiff_extension=".tif")
         output_file_name = os.path.basename(
-            rp.resolve_output_path(output_file_name, extension=".tif", suffix=args.output_suffix)
+            rp.resolve_output_path(output_file_name, extension=output_ext, suffix=args.output_suffix)
         )
         output_file_path = os.path.join(destination_folder, output_file_name)
-        process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel)
+        process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel, output_format=args.output_format)
 
     if not args.no_parallel:
         from contextlib import contextmanager
@@ -159,6 +160,7 @@ run:
     parser.add_argument("--tracking-channel", type=int, default=0, help="Channel to use for tracking (default: 0).")
     parser.add_argument("--output-folder", type=str, default=None, help="Output folder for tracked mask files (default: <input_root>_tracked).")
     parser.add_argument("--output-suffix", type=str, default="_tracked", help="Suffix to append to output file name (default: '_tracked').")
+    parser.add_argument("--output-format", type=str, choices=["tif", "npy", "ilastik-h5"], default="tif", help="Output format (default: tif)")
     parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing.")
     parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")

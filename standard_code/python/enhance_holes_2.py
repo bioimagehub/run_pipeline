@@ -308,10 +308,7 @@ def process_single_image(
             output_data[:, ci, zi, :, :] = scored
 
     logging.info(f"  Saving -> {Path(output_path).name}")
-    if output_format == "npy":
-        np.save(output_path, output_data)
-    else:
-        rp.save_tczyx_image(output_data, output_path)
+    rp.save_with_output_format(output_data, output_path, output_format)
     logging.info("  Done!")
     return True
 
@@ -369,6 +366,15 @@ run:
   - --output-format: npy
   - --no-parallel
 
+- name: Save as Ilastik HDF5
+        environment: uv@3.11:default
+    commands:
+    - python
+    - '%REPO%/standard_code/python/enhance_holes_2.py'
+    - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+    - --output-folder: '%YAML%/output_data'
+    - --output-format: ilastik-h5
+
 Description:
   Scores dark holes inside bright objects using:
     1. Local variance map computed over the full T-stack
@@ -411,9 +417,9 @@ Notes:
     parser.add_argument(
         "--output-format",
         type=str,
-        choices=["ome.tif", "npy"],
+        choices=["ome.tif", "npy", "ilastik-h5"],
         default="ome.tif",
-        help='Output format: "ome.tif" (default) or "npy"',
+        help='Output format: "ome.tif" (default), "npy", or "ilastik-h5"',
     )
     parser.add_argument(
         "--channels",
@@ -494,7 +500,7 @@ Notes:
     logging.info(f"File-level parallelism: {use_parallel}")
 
     def _make_output_path(input_path: str) -> str:
-        ext = ".ome.tif" if args.output_format == "ome.tif" else ".npy"
+        ext = rp.output_extension_for_format(args.output_format, tiff_extension=".ome.tif")
         return os.path.join(
             args.output_folder,
             os.path.basename(rp.resolve_output_path(input_path, extension=ext, suffix=args.output_suffix)),

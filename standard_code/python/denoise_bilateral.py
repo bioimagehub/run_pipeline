@@ -58,6 +58,7 @@ def denoise_image(image_data: np.ndarray,
 
 def denoise_stack(image_path: str,
                   output_path: str,
+                  output_format: str = "tif",
                   filter_size: int = 9,
                   sigma_color: int = 75,
                   sigma_space: int = 75,
@@ -109,7 +110,7 @@ def denoise_stack(image_path: str,
     
     # Save result
     logger.info(f"Saving denoised image: {output_path}")
-    rp.save_tczyx_image(denoised_stack, output_path)
+    rp.save_with_output_format(denoised_stack, output_path, output_format)
     logger.info("Done!")
 
 
@@ -158,6 +159,9 @@ run:
                         help='Coordinate space sigma (default: 75)')
     parser.add_argument('--output-suffix', type=str, default='_denoised',
                         help='Suffix for output files (default: "_denoised")')
+    parser.add_argument('--output-format', type=str, default='tif',
+                        choices=['tif', 'npy', 'ilastik-h5'],
+                        help='Output format (default: tif)')
     parser.add_argument('--no-parallel', action='store_true',
                         help='Disable parallel processing (currently unused; processing is sequential).')
     parser.add_argument('--maxcores', type=int, default=None,
@@ -191,8 +195,9 @@ run:
         logger.info(f"\n[{idx}/{len(input_files)}] Processing: {input_file.name}")
         
         # Generate output path
+        output_extension = rp.output_extension_for_format(args.output_format, tiff_extension=input_file.suffix)
         output_filename = os.path.basename(
-            rp.resolve_output_path(str(input_file), extension=input_file.suffix, suffix=args.output_suffix)
+            rp.resolve_output_path(str(input_file), extension=output_extension, suffix=args.output_suffix)
         )
         output_path = output_folder / output_filename
         
@@ -200,6 +205,7 @@ run:
             denoise_stack(
                 str(input_file),
                 str(output_path),
+                output_format=args.output_format,
                 filter_size=args.filter_size,
                 sigma_color=args.sigma_color,
                 sigma_space=args.sigma_space

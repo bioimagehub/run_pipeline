@@ -157,6 +157,7 @@ def denoise_image_n2v(
 def denoise_stack_n2v(
     image_path: str,
     output_path: str,
+    output_format: str,
     model_path: str,
     model_name: str = "n2v_model",
     normalize: bool = True
@@ -211,7 +212,7 @@ def denoise_stack_n2v(
     
     # Save result
     logger.info(f"Saving denoised image: {output_path}")
-    rp.save_tczyx_image(denoised_stack, output_path)
+    rp.save_with_output_format(denoised_stack, output_path, output_format)
     logger.info("Done!")
 
 
@@ -284,6 +285,9 @@ run:
                         help='Percentage of pixels to mask (default: 0.198)')
     parser.add_argument('--output-suffix', type=str, default='_n2v_denoised',
                         help='Suffix for output files (default: "_n2v_denoised")')
+    parser.add_argument('--output-format', type=str, default='tif',
+                        choices=['tif', 'npy', 'ilastik-h5'],
+                        help='Output format (default: tif)')
     parser.add_argument('--no-parallel', action='store_true',
                         help='Disable parallel processing (currently unused; processing is sequential).')
     parser.add_argument('--maxcores', type=int, default=None,
@@ -379,8 +383,9 @@ run:
             logger.info(f"\n[{idx}/{len(input_files)}] Processing: {input_file.name}")
             
             # Generate output path
+            output_extension = rp.output_extension_for_format(args.output_format, tiff_extension=input_file.suffix)
             output_filename = os.path.basename(
-                rp.resolve_output_path(str(input_file), extension=input_file.suffix, suffix=args.output_suffix)
+                rp.resolve_output_path(str(input_file), extension=output_extension, suffix=args.output_suffix)
             )
             output_path = output_folder / output_filename
             
@@ -388,6 +393,7 @@ run:
                 denoise_stack_n2v(
                     str(input_file),
                     str(output_path),
+                    output_format=args.output_format,
                     model_path=args.model_dir,
                     model_name=args.model_name,
                     normalize=not args.no_normalize

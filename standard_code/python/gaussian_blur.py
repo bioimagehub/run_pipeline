@@ -71,6 +71,7 @@ def gaussian_blur_stack(
 def process_single_file(
     input_path: str,
     output_path: str,
+    output_format: str,
     mode: Literal["2d", "3d"],
     channels: list[int] | None,
     sigma_xy: float,
@@ -136,7 +137,7 @@ def process_single_file(
             blurred = blurred.astype(original_dtype, copy=False)
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        rp.save_tczyx_image(blurred, output_path)
+        rp.save_with_output_format(blurred, output_path, output_format)
         logger.info(f"Saved: {output_path}")
         return True
 
@@ -150,6 +151,7 @@ def process_single_file(
 def process_files(
     input_pattern: str,
     output_folder: str | None,
+    output_format: str,
     mode: Literal["2d", "3d"],
     channels: list[int] | None,
     sigma_xy: float,
@@ -180,8 +182,10 @@ def process_files(
 
     tasks: list[tuple[str, str]] = []
     for input_path in input_files:
-        basename = os.path.splitext(os.path.basename(input_path))[0]
-        output_filename = f"{basename}_gauss.tif"
+        output_extension = rp.output_extension_for_format(output_format, tiff_extension=".tif")
+        output_filename = os.path.basename(
+            rp.resolve_output_path(input_path, extension=output_extension, suffix="_gauss")
+        )
         output_path = os.path.join(output_folder, output_filename)
         tasks.append((input_path, output_path))
 
@@ -203,7 +207,7 @@ def process_files(
         logger.info("Processing files sequentially")
         ok = 0
         for inp, out in tasks:
-            if process_single_file(inp, out, mode, channels, sigma_xy, sigma_z, truncate, force):
+            if process_single_file(inp, out, output_format, mode, channels, sigma_xy, sigma_z, truncate, force):
                 ok += 1
         logger.info(f"Done: {ok} succeeded, {len(tasks)-ok} failed")
         return
@@ -219,7 +223,7 @@ def process_files(
         futures = [
             ex.submit(
                 process_single_file,
-                inp, out, mode, channels, sigma_xy, sigma_z, truncate, force,
+                inp, out, output_format, mode, channels, sigma_xy, sigma_z, truncate, force,
             )
             for inp, out in tasks
         ]
@@ -300,6 +304,13 @@ run:
     parser.add_argument(
         "--output-folder",
         help="Output folder (default: <input_root>_gaussian)",
+    )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "npy", "ilastik-h5"],
+        default="tif",
+        help="Output format (default: tif)",
     )
     parser.add_argument(
         "--mode",
@@ -388,6 +399,7 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_format=args.output_format,
         mode=args.mode,
         channels=args.channels,
         sigma_xy=args.sigma,

@@ -325,7 +325,8 @@ def generate_tracking_error_report(
         return
     
     # Generate error report
-    error_report_path = output_path.replace('.tif', '_tracking_errors.txt').replace('.tiff', '_tracking_errors.txt')
+    output_base = rp.split_compound_extension(output_path)[0]
+    error_report_path = output_base + '_tracking_errors.txt'
     total_remaining_gaps = sum(len(gap_list) for gap_list in remaining_gaps.values())
     
     with open(error_report_path, 'w') as f:
@@ -360,6 +361,7 @@ def generate_tracking_error_report(
 def process_file(
     mask_path: str,
     output_path: str,
+    output_format: str,
     max_gap_size: int = 2,
     z_slice: int = None,
     quiet: bool = False
@@ -397,7 +399,7 @@ def process_file(
     
     if not gaps:
         logging.info("No gaps found! Mask is complete.")
-        rp.save_tczyx_image(mask_data, output_path)
+        rp.save_with_output_format(mask_data, output_path, output_format)
         return
     
     total_gaps = sum(len(gap_list) for gap_list in gaps.values())
@@ -420,17 +422,18 @@ def process_file(
     
     # Step 6: Save result
     logging.info(f"Saving filled mask to: {output_path}")
-    rp.save_tczyx_image(mask_data, output_path)
+    rp.save_with_output_format(mask_data, output_path, output_format)
     logging.info("Done!")
 
 
-def _process_one_task(task: tuple[str, str, int, bool]) -> bool:
+def _process_one_task(task: tuple[str, str, str, int, bool]) -> bool:
     """Worker entry point for parallel processing."""
-    mask_path, output_path, max_gap_size, quiet = task
+    mask_path, output_path, output_format, max_gap_size, quiet = task
     try:
         process_file(
             mask_path,
             output_path,
+            output_format=output_format,
             max_gap_size=max_gap_size,
             quiet=quiet
         )
@@ -446,6 +449,7 @@ def _process_one_task(task: tuple[str, str, int, bool]) -> bool:
 def fill_segmentation_gaps(
     mask_path: str,
     output_path: str,
+    output_format: str = "tif",
     max_gap_size: int = 2,
     z_slice: int = None
 ) -> None:
@@ -461,7 +465,7 @@ def fill_segmentation_gaps(
         z_slice: If specified, only process this Z slice. Otherwise processes all.
     """
     logging.warning("fill_segmentation_gaps() is deprecated. Use process_file() instead.")
-    process_file(mask_path, output_path, max_gap_size, z_slice)
+    process_file(mask_path, output_path, output_format, max_gap_size, z_slice)
 
 
 def main():
@@ -503,6 +507,8 @@ run:
                        help='Enable recursive search for files')
     parser.add_argument('--output-suffix', type=str, default='_filled',
                        help='Suffix to add to output filenames (default: "_filled")')
+    parser.add_argument('--output-format', type=str, choices=['tif', 'npy', 'ilastik-h5'], default='tif',
+                       help='Output format (default: tif)')
     parser.add_argument('--no-parallel', action='store_true',
                        help='Disable parallel processing')
     parser.add_argument('--maxcores', type=int, default=None,
@@ -542,21 +548,23 @@ run:
         for mask_path in mask_files:
             logging.info(f"\n{'='*60}")
             logging.info(f"Processing: {Path(mask_path).name}")
+            output_ext = rp.output_extension_for_format(args.output_format, tiff_extension=".tif")
             output_name = os.path.basename(
-                rp.resolve_output_path(mask_path, extension=Path(mask_path).suffix, suffix=args.output_suffix)
+                rp.resolve_output_path(mask_path, extension=output_ext, suffix=args.output_suffix)
             )
             output_path = os.path.join(output_folder, output_name)
-            _process_one_task((mask_path, output_path, args.max_gap_size, False))
+            _process_one_task((mask_path, output_path, args.output_format, args.max_gap_size, False))
     else:
         max_workers = rp.resolve_maxcores(args.maxcores, len(mask_files))
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             tasks = []
             for path in mask_files:
+                output_ext = rp.output_extension_for_format(args.output_format, tiff_extension=".tif")
                 output_name = os.path.basename(
-                    rp.resolve_output_path(path, extension=Path(path).suffix, suffix=args.output_suffix)
+                    rp.resolve_output_path(path, extension=output_ext, suffix=args.output_suffix)
                 )
                 output_path = os.path.join(output_folder, output_name)
-                tasks.append((path, output_path, args.max_gap_size, True))
+                tasks.append((path, output_path, args.output_format, args.max_gap_size, True))
             futures = {executor.submit(_process_one_task, task): task[0] for task in tasks}
             with tqdm(total=len(mask_files), desc="Filling gaps", unit="file") as pbar:
                 for future in as_completed(futures):

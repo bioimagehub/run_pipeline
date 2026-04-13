@@ -92,6 +92,7 @@ def histogram_correct(
 def correct_single_file(
     input_path: str,
     output_path: str,
+    output_format: str,
     contrast_limits: Tuple[int, int],
     match_method: str = "first"
 ) -> bool:
@@ -163,7 +164,7 @@ def correct_single_file(
         if channel_names is not None:
             save_kwargs['channel_names'] = channel_names
         
-        rp.save_tczyx_image(corrected_data, output_path, **save_kwargs)
+        rp.save_with_output_format(corrected_data, output_path, output_format, **save_kwargs)
         logger.info(f"Saved: {output_path}")
         
         return True
@@ -176,6 +177,7 @@ def correct_single_file(
 def process_files(
     input_pattern: str,
     output_folder: Optional[str] = None,
+    output_format: str = "tif",
     contrast_limits: Tuple[int, int] = (0, 65535),
     match_method: str = "first",
     collapse_delimiter: str = "__",
@@ -227,7 +229,8 @@ def process_files(
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_name = rp.resolve_output_path(collapsed, extension=".tif", suffix=output_extension)
+        output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
+        out_name = rp.resolve_output_path(collapsed, extension=output_ext, suffix=output_extension)
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
     
@@ -245,7 +248,7 @@ def process_files(
     if no_parallel or len(file_pairs) == 1:
         # Sequential processing
         for src, dst in file_pairs:
-            correct_single_file(src, dst, contrast_limits, match_method)
+            correct_single_file(src, dst, output_format, contrast_limits, match_method)
     else:
         # Parallel processing
         max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
@@ -253,7 +256,7 @@ def process_files(
         
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(correct_single_file, src, dst, contrast_limits, match_method): (src, dst)
+                executor.submit(correct_single_file, src, dst, output_format, contrast_limits, match_method): (src, dst)
                 for src, dst in file_pairs
             }
             
@@ -367,6 +370,13 @@ run:
         default="_bleach_corrected",
         help="Suffix to add before .tif (default: '_bleach_corrected')"
     )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "npy", "ilastik-h5"],
+        default="tif",
+        help="Output format (default: tif)"
+    )
     
     parser.add_argument(
         "--dry-run",
@@ -412,6 +422,7 @@ run:
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
+        output_format=args.output_format,
         contrast_limits=contrast_limits,
         match_method=args.match_method,
         collapse_delimiter=args.collapse_delimiter,
