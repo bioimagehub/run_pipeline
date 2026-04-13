@@ -22,6 +22,8 @@ from glob import glob
 import tempfile
 import time
 
+import bioimage_pipeline_utils as rp
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -196,20 +198,15 @@ def process_file(
         # Determine output path
         if output_folder:
             # Use specified output folder
-            base_name = os.path.splitext(os.path.basename(ometif_file))[0]
-            # Remove .ome if present in basename
-            if base_name.endswith('.ome'):
-                base_name = base_name[:-4]
-            output_nd2_path = os.path.join(output_folder, f"{base_name}{output_suffix}")
+            output_filename = os.path.basename(
+                rp.resolve_output_path(ometif_file, extension=output_suffix, suffix="")
+            )
+            output_nd2_path = os.path.join(output_folder, output_filename)
             # Create output folder if needed
             os.makedirs(output_folder, exist_ok=True)
         else:
             # Same directory as source file
-            output_nd2_path = os.path.splitext(ometif_file)[0]
-            # Remove .ome if present
-            if output_nd2_path.endswith('.ome'):
-                output_nd2_path = output_nd2_path[:-4]
-            output_nd2_path += output_suffix
+            output_nd2_path = rp.resolve_output_path(ometif_file, extension=output_suffix, suffix="")
         
         # Run NIS-Elements conversion
         success = convert_to_nd2(ometif_file, output_nd2_path, nis_exe_path, timeout=timeout)
@@ -277,15 +274,12 @@ def process_files(
         
         if dry_run:
             if output_folder:
-                base_name = os.path.splitext(os.path.basename(ometif_file))[0]
-                if base_name.endswith('.ome'):
-                    base_name = base_name[:-4]
-                output_nd2_path = os.path.join(output_folder, f"{base_name}{output_suffix}")
+                output_filename = os.path.basename(
+                    rp.resolve_output_path(ometif_file, extension=output_suffix, suffix="")
+                )
+                output_nd2_path = os.path.join(output_folder, output_filename)
             else:
-                output_nd2_path = os.path.splitext(ometif_file)[0]
-                if output_nd2_path.endswith('.ome'):
-                    output_nd2_path = output_nd2_path[:-4]
-                output_nd2_path += output_suffix
+                output_nd2_path = rp.resolve_output_path(ometif_file, extension=output_suffix, suffix="")
             
             logger.info(f"[DRY RUN] Would convert to: {output_nd2_path}")
             if delete_source:

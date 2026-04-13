@@ -172,16 +172,10 @@ def _normalize_scene_channel_label(scene_name: str) -> str:
 
 def _split_tiff_extension(output_path: str) -> tuple[str, str]:
     """Split output path into base and TIFF extension (supports .ome.tif/.ome.tiff)."""
-    lower = output_path.lower()
-    if lower.endswith(".ome.tif"):
-        return output_path[:-8], output_path[-8:]
-    if lower.endswith(".ome.tiff"):
-        return output_path[:-9], output_path[-9:]
-    if lower.endswith(".tiff"):
-        return output_path[:-5], output_path[-5:]
-    if lower.endswith(".tif"):
-        return output_path[:-4], output_path[-4:]
-    return output_path, ".ome.tif"
+    base, ext = rp.split_compound_extension(output_path)
+    if not ext:
+        return output_path, ".ome.tif"
+    return base, ext
 
 def _build_group_output_path(output_path: str, group_key: str, group_index: int) -> str:
     """Build one output path per group with sequential numeric suffixes."""
@@ -191,8 +185,7 @@ def _build_group_output_path(output_path: str, group_key: str, group_index: int)
 
 def _build_metadata_output_path(output_path: str) -> str:
     """Build metadata sidecar path for a TIFF output path."""
-    base, _ = _split_tiff_extension(output_path)
-    return f"{base}_metadata.yaml"
+    return rp.resolve_output_path(output_path, extension=".yaml", suffix="_metadata")
 
 def get_core_metadata(img: Union[BioImage, str]) -> dict:
 
@@ -638,7 +631,9 @@ def process_files(
     file_pairs: list[tuple[str, str]] = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_name = os.path.splitext(collapsed)[0] + "_ome.tif"
+        out_name = os.path.basename(
+            rp.resolve_output_path(collapsed, extension=".ome.tif", suffix="")
+        )
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
 

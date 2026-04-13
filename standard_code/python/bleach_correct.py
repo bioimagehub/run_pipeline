@@ -227,7 +227,7 @@ def process_files(
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_name = os.path.splitext(collapsed)[0] + output_extension + ".tif"
+        out_name = rp.resolve_output_path(collapsed, extension=".tif", suffix=output_extension)
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
     

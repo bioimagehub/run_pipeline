@@ -246,7 +246,7 @@ def process_image(
     logger.info(f"Processing: {input_path}")
     
     # Prepare output paths early (needed for early exits)
-    input_name = Path(input_path).stem
+    input_name = os.path.basename(rp.resolve_output_path(input_path, extension='', suffix=''))
     output_stem = f"{input_name}{output_suffix}"
     mask_path = os.path.join(output_folder, f"{output_stem}.tif")
     labeled_mask_path = os.path.join(output_folder, f"{output_stem}_labeled.tif")

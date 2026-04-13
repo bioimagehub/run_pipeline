@@ -595,7 +595,9 @@ run:
         metadata_dict['Base_Filename'] = basename
         
         # Create output path
-        output_filename = f"{basename}{args.output_suffix}.tsv"
+        output_filename = os.path.basename(
+            rp.resolve_output_path(img_path, extension='.tsv', suffix=args.output_suffix)
+        )
         output_path = os.path.join(args.output_folder, output_filename)
         
         # Prepare args tuple for this file

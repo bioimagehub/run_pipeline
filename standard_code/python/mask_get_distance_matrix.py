@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 def process_file(mask_path: str, output_folder_path: str, output_suffix: str) -> None:
-    output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
+    output_filename = os.path.basename(
+        rp.resolve_output_path(mask_path, extension='.tif', suffix=output_suffix)
+    )
     
     mask = rp.load_tczyx_image(mask_path)  # TCZYX
     # Check if mask is correctly loaded and has valid data
@@ -75,7 +77,7 @@ def process_file(mask_path: str, output_folder_path: str, output_suffix: str) ->
                 overall_distance_matrix[mask_frame, mask_channel, mask_zslice, :, :] = distance_matrix_for_frame
 
     # Save the overall distance matrix
-    output_file_path = f"{output_file_basename}{output_suffix}.tif"
+    output_file_path = os.path.join(output_folder_path, output_filename)
     # rp.save_mask(overall_distance_matrix, output_file_path, as_binary=False)
     rp.save_tczyx_image(
         overall_distance_matrix,

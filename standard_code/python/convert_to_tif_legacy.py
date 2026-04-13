@@ -257,7 +257,7 @@ def process_pattern(args: argparse.Namespace) -> None:
 
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, args.collapse_delimiter)
-        out_path = os.path.splitext(collapsed)[0] + args.output_suffix + ".tif"
+        out_path = rp.resolve_output_path(collapsed, extension=".tif", suffix=args.output_suffix)
         out_path = os.path.join(dest, out_path)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
@@ -358,7 +358,7 @@ def main() -> None:
         print(f"[DRY RUN] Would process {len(files)} files. Output folder: {dest}")
         for src in files:
             collapsed = rp.collapse_filename(src, base_folder, args.collapse_delimiter)
-            out_path = os.path.splitext(collapsed)[0] + args.output_suffix + ".tif"
+            out_path = rp.resolve_output_path(collapsed, extension=".tif", suffix=args.output_suffix)
             out_path = os.path.join(dest, out_path)
             print(f"[DRY RUN] Would convert: {src} -> {out_path}")
         return

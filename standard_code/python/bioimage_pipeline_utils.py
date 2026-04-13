@@ -216,6 +216,47 @@ def resolve_maxcores(maxcores: Optional[int], task_count: Optional[int] = None) 
     return max(1, resolved)
 
 
+def split_compound_extension(path: str) -> tuple[str, str]:
+    """Split path into stem and extension, preserving compound OME-TIFF suffixes."""
+    lower = path.lower()
+    for compound_ext in (".ome.tiff", ".ome.tif"):
+        if lower.endswith(compound_ext):
+            return path[:-len(compound_ext)], path[-len(compound_ext):]
+    return os.path.splitext(path)
+
+
+def strip_tiff_suffix(path: str) -> str:
+    """Return path without a trailing TIFF suffix (.ome.tif/.ome.tiff/.tif/.tiff)."""
+    base, ext = split_compound_extension(path)
+    if ext.lower() in {".ome.tif", ".ome.tiff", ".tif", ".tiff"}:
+        return base
+    return os.path.splitext(path)[0]
+
+
+def resolve_output_path(path: str, extension: Optional[str], suffix: str = "") -> str:
+    """Resolve output path by replacing extension and inserting suffix before extension.
+
+    OME-TIFF compound suffixes are treated as a single extension, so:
+    - ``file.ome.tif`` + ``suffix='_x'`` + ``extension='.h5'`` -> ``file_x.h5``
+    - ``file.ome.tif`` + ``suffix='_x'`` + ``extension='.ome.tif'`` -> ``file_x.ome.tif``
+    """
+    base, detected_extension = split_compound_extension(path)
+
+    if extension is None:
+        target_extension = detected_extension
+    else:
+        target_extension = extension
+        if target_extension and not target_extension.startswith("."):
+            target_extension = f".{target_extension}"
+
+    return f"{base}{suffix}{target_extension}"
+
+
+def resolve_output_suggix(path: str, extension: Optional[str], suffix: str = "") -> str:
+    """Backward-compatible alias for resolve_output_path (keeps historical typo)."""
+    return resolve_output_path(path, extension, suffix)
+
+
 def load_tczyx_image(path: str) -> BioImage:
     """
     Load an image as a BioImage object, ensuring the data is always 5D (TCZYX).
@@ -624,7 +665,6 @@ def get_grouped_files_to_process(
     grouped = dict(sorted(grouped.items()))
     
     return grouped
-
 
 
 

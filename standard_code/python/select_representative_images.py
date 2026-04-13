@@ -177,12 +177,11 @@ def process_folder(args, use_parallel=True):
         img = rp.load_tczyx_image(path)
         img_np = img.data  # TCZYX
         single_tp = img_np[t:t+1]  # keep T dimension
-        base = os.path.basename(path)
-        name, ext = os.path.splitext(base)
+        base_name = os.path.basename(rp.resolve_output_path(path, extension='', suffix=''))
 
         for output_format in args.output_format:
             if output_format == "tif":
-                output_name = f"{name}{args.output_suffix}_T{t:03d}.tif"
+                output_name = f"{base_name}{args.output_suffix}_T{t:03d}.tif"
                 output_path = os.path.join(args.output_folder, output_name)
                 rp.save_tczyx_image(
                     single_tp,
@@ -191,12 +190,12 @@ def process_folder(args, use_parallel=True):
                     physical_pixel_sizes=img.physical_pixel_sizes
                 )
             elif output_format == "npy":
-                output_name = f"{name}{args.output_suffix}_T{t:03d}.npy"
+                output_name = f"{base_name}{args.output_suffix}_T{t:03d}.npy"
                 output_path = os.path.join(args.output_folder, output_name)
                 np.save(output_path, single_tp)
             elif output_format == "ilastik-h5":
                 # Export in TZYXC format (channel LAST) to match Ilastik's ImageJ plugin format
-                output_name = f"{name}{args.output_suffix}_T{t:03d}.h5"
+                output_name = f"{base_name}{args.output_suffix}_T{t:03d}.h5"
                 output_path = os.path.join(args.output_folder, output_name)
                 # Convert TCZYX -> TZYXC
                 t_, c, z, y, x = single_tp.shape

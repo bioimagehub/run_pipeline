@@ -414,16 +414,10 @@ Notes:
         logging.info(f"\n{'=' * 70}")
         logging.info(f"Processing file {i}/{len(input_files)}")
 
-        input_filename = Path(input_path).name
-        input_filename_lower = input_filename.lower()
-        if input_filename_lower.endswith(".ome.tif"):
-            input_name = input_filename[:-8]
-        elif input_filename_lower.endswith(".ome.tiff"):
-            input_name = input_filename[:-9]
-        else:
-            input_name = Path(input_path).stem
         output_extension = ".ome.tif" if args.output_format == "ome.tif" else ".npy"
-        output_name = f"{input_name}{args.output_suffix}{output_extension}"
+        output_name = os.path.basename(
+            rp.resolve_output_path(input_path, extension=output_extension, suffix=args.output_suffix)
+        )
         output_path = os.path.join(args.output_folder, output_name)
 
         try:

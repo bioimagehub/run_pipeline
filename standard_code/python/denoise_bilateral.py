@@ -9,6 +9,7 @@ Date: 2025-01-06
 import cv2
 import numpy as np
 import bioimage_pipeline_utils as rp
+import os
 from pathlib import Path
 import argparse
 import logging
@@ -190,7 +191,10 @@ run:
         logger.info(f"\n[{idx}/{len(input_files)}] Processing: {input_file.name}")
         
         # Generate output path
-        output_path = output_folder / f"{input_file.stem}{args.output_suffix}{input_file.suffix}"
+        output_filename = os.path.basename(
+            rp.resolve_output_path(str(input_file), extension=input_file.suffix, suffix=args.output_suffix)
+        )
+        output_path = output_folder / output_filename
         
         try:
             denoise_stack(

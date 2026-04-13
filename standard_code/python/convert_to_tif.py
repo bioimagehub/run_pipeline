@@ -26,20 +26,6 @@ import extract_metadata
 logger = logging.getLogger(__name__)
 
 
-def strip_tiff_suffix(path: str) -> str:
-    """Return path without a trailing TIFF suffix (.ome.tif/.ome.tiff/.tif/.tiff)."""
-    lower = path.lower()
-    if lower.endswith(".ome.tif"):
-        return path[:-8]
-    if lower.endswith(".ome.tiff"):
-        return path[:-9]
-    if lower.endswith(".tif"):
-        return path[:-4]
-    if lower.endswith(".tiff"):
-        return path[:-5]
-    return os.path.splitext(path)[0]
-
-
 
 def project_z(data: np.ndarray, method: str) -> np.ndarray:
     """
@@ -349,16 +335,9 @@ def convert_single_file(
 
             # Determine output path for this scene/group
             if len(scene_groups) > 1:
-                lower_out = output_path.lower()
-                if lower_out.endswith(".ome.tif"):
-                    ext = ".ome.tif"
-                elif lower_out.endswith(".ome.tiff"):
-                    ext = ".ome.tiff"
-                elif lower_out.endswith(".tiff"):
-                    ext = ".tiff"
-                else:
+                base, ext = rp.split_compound_extension(output_path)
+                if not ext:
                     ext = ".tif"
-                base = strip_tiff_suffix(output_path)
                 scene_output_path = f"{base}_{scene_idx + 1}{ext}"
             else:
                 scene_output_path = output_path
@@ -404,11 +383,11 @@ def convert_single_file(
                 # Save each T, C, Z slice as individual file
                 # Use same naming scheme as ij_bridge_bioformats.py: basename_Z#_C#.ome.tif
                 # This allows NIS-Elements to auto-detect and merge files properly
-                split_folder = strip_tiff_suffix(scene_output_path)
+                split_folder = rp.strip_tiff_suffix(scene_output_path)
                 os.makedirs(split_folder, exist_ok=True)
                 
                 # Get basename for files (without path and extension)
-                basename = os.path.basename(strip_tiff_suffix(scene_output_path))
+                basename = os.path.basename(rp.strip_tiff_suffix(scene_output_path))
                 
                 logger.info(f"Split mode: Saving individual slices to {split_folder}")
                 logger.info(f"Using basename: {basename}")
@@ -481,7 +460,7 @@ def convert_single_file(
             
             # Save metadata if requested
             if save_metadata:
-                metadata_path = strip_tiff_suffix(scene_output_path) + "_metadata.yaml"
+                metadata_path = rp.resolve_output_path(scene_output_path, extension=".yaml", suffix="_metadata")
                 try:
                     metadata = extract_metadata.get_all_metadata(input_path, output_file=None)
 
@@ -518,7 +497,7 @@ def convert_single_file(
                     if split:
                         try:
                             import generate_nis_reassembly_macro
-                            split_folder = strip_tiff_suffix(scene_output_path)
+                            split_folder = rp.strip_tiff_suffix(scene_output_path)
                             output_nd2 = split_folder + ".nd2"
                             macro_path = generate_nis_reassembly_macro.generate_macro(
                                 split_folder=split_folder,
@@ -605,7 +584,9 @@ def process_files(
     file_pairs = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        out_name = os.path.splitext(collapsed)[0] + output_extension + ".ome.tif"
+        out_name = os.path.basename(
+            rp.resolve_output_path(collapsed, extension=".ome.tif", suffix=output_extension)
+        )
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
     

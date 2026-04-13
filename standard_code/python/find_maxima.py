@@ -194,11 +194,13 @@ run:
 
     jobs = []
     for image_path in image_files:
-        base_name = os.path.splitext(os.path.basename(image_path))[0]
         if not is_batch and output_folder and output_folder.lower().endswith('.csv'):
             out_csv = output_folder
         else:
-            out_csv = os.path.join(output_folder, f'{base_name}{args.output_suffix}.csv')
+            out_csv = os.path.join(
+                output_folder,
+                os.path.basename(rp.resolve_output_path(image_path, extension='.csv', suffix=args.output_suffix)),
+            )
         jobs.append((image_path, out_csv))
 
     def process_job(job):

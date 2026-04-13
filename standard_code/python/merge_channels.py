@@ -195,7 +195,6 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
 
     def _output_path(input_file_path: str) -> str:
         """Build output path, replacing input extension with the correct output extension."""
-        stem = os.path.splitext(os.path.basename(input_file_path))[0]
         if args.output_format == "tif":
             ext = ".ome.tif"
         elif args.output_format == "npy":
@@ -204,7 +203,10 @@ def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
             ext = ".h5"
         else:
             ext = ".ome.tif"
-        return os.path.join(args.output_folder, stem + args.output_suffix + ext)
+        return os.path.join(
+            args.output_folder,
+            os.path.basename(rp.resolve_output_path(input_file_path, extension=ext, suffix=args.output_suffix)),
+        )
 
     if use_parallel: # Process each file in parallel
         from contextlib import contextmanager

@@ -12,7 +12,9 @@ import bioimage_pipeline_utils as rp
 logger = logging.getLogger(__name__)
 
 def process_file(mask_path: str, output_folder_path: str, distance_inside: int, distance_outside: int, output_suffix: str) -> None:
-    output_file_basename = os.path.join(output_folder_path, os.path.splitext(os.path.basename(mask_path))[0])
+    output_filename = os.path.basename(
+        rp.resolve_output_path(mask_path, extension='.tif', suffix=output_suffix)
+    )
     
     mask = rp.load_tczyx_image(mask_path)  # Load the mask
     
@@ -86,7 +88,7 @@ def process_file(mask_path: str, output_folder_path: str, distance_inside: int, 
                     indexed_mask[mask_frame, mask_channel, mask_zslice, :, :] = global_distance_mask
 
     # Save the indexed mask
-    output_file_path = f"{output_file_basename}{output_suffix}.tif"
+    output_file_path = os.path.join(output_folder_path, output_filename)
     rp.save_tczyx_image(indexed_mask, output_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
   
 def process_folder(args: argparse.Namespace):

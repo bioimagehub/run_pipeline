@@ -92,7 +92,9 @@ def process_folder_or_file(args: argparse.Namespace):
 
     def process_single_file(input_file_path):
         output_file_name = rp.collapse_filename(input_file_path, base_folder, args.collapse_delimiter)
-        output_file_name = os.path.splitext(output_file_name)[0] + args.output_suffix + ".tif"
+        output_file_name = os.path.basename(
+            rp.resolve_output_path(output_file_name, extension=".tif", suffix=args.output_suffix)
+        )
         output_file_path = os.path.join(destination_folder, output_file_name)
         process_file(input_file_path, output_file_path, tracking_channel=args.tracking_channel)
 

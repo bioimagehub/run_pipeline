@@ -157,8 +157,9 @@ def process_files(
 
     file_pairs = []
     for src in files:
-        name = os.path.basename(src)
-        name = os.path.splitext(name)[0] + output_extension + ".tif"
+        name = os.path.basename(
+            rp.resolve_output_path(src, extension=".tif", suffix=output_extension)
+        )
         dst = os.path.join(output_folder, name)
         file_pairs.append((src, dst))
 

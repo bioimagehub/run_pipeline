@@ -166,9 +166,7 @@ def process_files(args):
         """Custom output path with user-specified suffix and collapsed folder structure."""
         # Use collapse_filename to flatten the folder structure
         collapsed = rp.collapse_filename(input_path, base_folder, collapse_delimiter)
-        # Remove original extension and add suffix + .tif
-        base_name = os.path.splitext(collapsed)[0]
-        filename = base_name + args.output_suffix + '.tif'
+        filename = rp.resolve_output_path(collapsed, extension=".tif", suffix=args.output_suffix)
         return os.path.join(output_folder, filename)
     
     # Use progress_manager for unified parallel/sequential processing

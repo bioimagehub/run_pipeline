@@ -36,12 +36,20 @@ def process_file(mask1_path: str, mask2_path: str, output_path: str, output_suff
     result_mask1 = np.where(filtered_mask2 > 0, 0, filtered_mask1)
 
     # Save outputs
-    base_name = os.path.splitext(os.path.basename(mask1_path))[0]
-    output_tif_file_path = os.path.join(output_path, f"{base_name}{output_suffix}")
+    suffix_stem, suffix_ext = rp.split_compound_extension(output_suffix)
+    resolved_ext = suffix_ext or '.tif'
+    output_tif_file_path = os.path.join(
+        output_path,
+        os.path.basename(rp.resolve_output_path(mask1_path, extension=resolved_ext, suffix=suffix_stem)),
+    )
     rp.save_tczyx_image(result_mask1, output_tif_file_path, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
     if enforce_one_to_one_overlap:
-        base_name2 = os.path.splitext(os.path.basename(mask2_path))[0]
-        output_tif_file_path2 = os.path.join(output_path, f"{base_name2}{output_suffix2}")
+        suffix2_stem, suffix2_ext = rp.split_compound_extension(output_suffix2)
+        resolved_ext2 = suffix2_ext or '.tif'
+        output_tif_file_path2 = os.path.join(
+            output_path,
+            os.path.basename(rp.resolve_output_path(mask2_path, extension=resolved_ext2, suffix=suffix2_stem)),
+        )
     rp.save_tczyx_image(filtered_mask2, output_tif_file_path2, dim_order="ZYX", physical_pixel_sizes=physical_pixel_sizes)
 
 

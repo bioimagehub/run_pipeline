@@ -445,15 +445,11 @@ def run_single_file(
         if path_in.name.lower().endswith(".shifts.txt"):
             trailing_extension = ".shifts.txt"
             stem = path_in.name[:-len(trailing_extension)]
-        elif path_in.name.lower().endswith(".ome.tiff"):
-            trailing_extension = ".ome.tiff"
-            stem = path_in.name[:-len(trailing_extension)]
-        elif path_in.name.lower().endswith(".ome.tif"):
-            trailing_extension = ".ome.tif"
-            stem = path_in.name[:-len(trailing_extension)]
         else:
-            trailing_extension = path_in.suffix
-            stem = path_in.stem
+            stem, trailing_extension = rp.split_compound_extension(path_in.name)
+            if not trailing_extension:
+                trailing_extension = path_in.suffix
+                stem = path_in.stem
 
         output_suffix = "_corrected" if output_path is None else options.output_suffix
         if output_suffix and stem.endswith(output_suffix):
@@ -622,11 +618,14 @@ def process_files(
     file_pairs: list[tuple[str, str]] = []
     for src in files:
         collapsed = rp.collapse_filename(src, base_folder, collapse_delimiter)
-        src_stem = Path(collapsed).stem
         if options.only_compute:
-            out_name = src_stem + output_extension + ".shifts.txt"
+            out_name = os.path.basename(
+                rp.resolve_output_path(collapsed, extension=".shifts.txt", suffix=output_extension)
+            )
         else:
-            out_name = src_stem + output_extension + ".ome.tif"
+            out_name = os.path.basename(
+                rp.resolve_output_path(collapsed, extension=".ome.tif", suffix=output_extension)
+            )
         out_path = os.path.join(output_folder, out_name)
         file_pairs.append((src, out_path))
 

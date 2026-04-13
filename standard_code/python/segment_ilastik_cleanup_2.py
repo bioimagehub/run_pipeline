@@ -434,10 +434,10 @@ def process_single_file(
     basename = os.path.splitext(os.path.basename(h5_path))[0]
     
     # Build output paths
-    if output_suffix:
-        output_path = os.path.join(output_dir, f"{basename}{output_suffix}.tif")
-    else:
-        output_path = os.path.join(output_dir, f"{basename}.tif")
+    output_path = os.path.join(
+        output_dir,
+        os.path.basename(rp.resolve_output_path(h5_path, extension='.tif', suffix=output_suffix or '')),
+    )
     
     if basename.endswith("_Probabilities"):
         base_without_prob = basename[:-len("_Probabilities")]

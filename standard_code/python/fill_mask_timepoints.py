@@ -245,8 +245,9 @@ def process_files(
 
     tasks: list[tuple[str, str]] = []
     for input_path in input_files:
-        basename = os.path.splitext(os.path.basename(input_path))[0]
-        output_filename = f"{basename}{suffix}.tif"
+        output_filename = os.path.basename(
+            rp.resolve_output_path(input_path, extension='.tif', suffix=suffix)
+        )
         output_path = os.path.join(output_folder, output_filename)
         tasks.append((input_path, output_path))
 

@@ -494,16 +494,11 @@ Notes:
     logging.info(f"File-level parallelism: {use_parallel}")
 
     def _make_output_path(input_path: str) -> str:
-        fname = Path(input_path).name
-        fname_lower = fname.lower()
-        if fname_lower.endswith(".ome.tif"):
-            stem = fname[:-8]
-        elif fname_lower.endswith(".ome.tiff"):
-            stem = fname[:-9]
-        else:
-            stem = Path(input_path).stem
         ext = ".ome.tif" if args.output_format == "ome.tif" else ".npy"
-        return os.path.join(args.output_folder, f"{stem}{args.output_suffix}{ext}")
+        return os.path.join(
+            args.output_folder,
+            os.path.basename(rp.resolve_output_path(input_path, extension=ext, suffix=args.output_suffix)),
+        )
 
     def _process(input_path: str) -> bool:
         try:

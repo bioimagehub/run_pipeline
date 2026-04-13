@@ -542,7 +542,9 @@ run:
         for mask_path in mask_files:
             logging.info(f"\n{'='*60}")
             logging.info(f"Processing: {Path(mask_path).name}")
-            output_name = Path(mask_path).stem + args.output_suffix + Path(mask_path).suffix
+            output_name = os.path.basename(
+                rp.resolve_output_path(mask_path, extension=Path(mask_path).suffix, suffix=args.output_suffix)
+            )
             output_path = os.path.join(output_folder, output_name)
             _process_one_task((mask_path, output_path, args.max_gap_size, False))
     else:
@@ -550,7 +552,9 @@ run:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             tasks = []
             for path in mask_files:
-                output_name = Path(path).stem + args.output_suffix + Path(path).suffix
+                output_name = os.path.basename(
+                    rp.resolve_output_path(path, extension=Path(path).suffix, suffix=args.output_suffix)
+                )
                 output_path = os.path.join(output_folder, output_name)
                 tasks.append((path, output_path, args.max_gap_size, True))
             futures = {executor.submit(_process_one_task, task): task[0] for task in tasks}

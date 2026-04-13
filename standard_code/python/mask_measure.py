@@ -177,7 +177,7 @@ run:
             logger.warning(f"Multiple masks found for {image_path} using pattern {mask_pattern}, skipping.")
             continue
         mask_path = mask_files[0]
-        base_name = os.path.splitext(os.path.basename(mask_path))[0]
+        base_name = rp.strip_tiff_suffix(os.path.basename(mask_path))
         # mask_name: part after * in mask pattern, no extension, strip leading _ or .
         if mask_pattern_after_star_noext:
             mask_name = mask_pattern_after_star_noext.lstrip('_').lstrip('.')
@@ -186,7 +186,10 @@ run:
         if not is_batch and output_folder and output_folder.lower().endswith('.csv'):
             out_csv = output_folder
         else:
-            out_csv = os.path.join(output_folder, f'{base_name}{args.output_suffix}.csv')
+            out_csv = os.path.join(
+                output_folder,
+                os.path.basename(rp.resolve_output_path(mask_path, extension='.csv', suffix=args.output_suffix)),
+            )
         jobs.append((image_path, mask_path, out_csv, base_name, mask_name))
 
 

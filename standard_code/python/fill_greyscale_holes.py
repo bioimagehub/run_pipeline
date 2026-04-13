@@ -1330,8 +1330,10 @@ Notes:
     def process_file_wrapper(input_path):
         """Wrapper function for processing a single file (used for parallel processing)."""
         # Generate output stem (without extension)
-        input_name = Path(input_path).stem
-        output_stem = os.path.join(args.output_folder, f"{input_name}{args.output_suffix}")
+        output_name = os.path.basename(
+            rp.resolve_output_path(input_path, extension="", suffix=args.output_suffix)
+        )
+        output_stem = os.path.join(args.output_folder, output_name)
         
         try:
             return process_single_image(

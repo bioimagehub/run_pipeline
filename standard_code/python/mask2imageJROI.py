@@ -102,8 +102,10 @@ run:
             img = rp.load_tczyx_image(file_path)
             mask = img.data if hasattr(img, 'data') else np.array(img)
             rois = mask_to_rois(mask)
-            base = os.path.splitext(os.path.basename(file_path))[0]
-            roi_zip_path = os.path.join(output_folder, f"{base}{args.output_suffix}.zip")
+            roi_zip_path = os.path.join(
+                output_folder,
+                os.path.basename(rp.resolve_output_path(file_path, extension='.zip', suffix=args.output_suffix)),
+            )
             roiwrite(roi_zip_path, rois)
             return (file_path, None)
         except Exception as e:
