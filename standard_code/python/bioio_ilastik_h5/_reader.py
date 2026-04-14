@@ -19,6 +19,7 @@ class IlastikH5Reader(BaseReader):
     _cached_data: Optional[np.ndarray] = None
     _cached_axes: Optional[list] = None
     _h5_path: Optional[str] = None
+    _dataset_key: Optional[str] = None
 
     def __init__(self, image: Any, **kwargs: Any):
         """Initialize the reader with the image path."""
@@ -33,10 +34,39 @@ class IlastikH5Reader(BaseReader):
         try:
             if isinstance(image, (str, bytes)):
                 with h5py.File(image, 'r') as f:
-                    return 'exported_data' in f
+                    if 'exported_data' in f or 'data' in f:
+                        return True
+                    dataset_count = sum(1 for obj in f.values() if isinstance(obj, h5py.Dataset))
+                    return dataset_count == 1
             return False
         except Exception:
             return False
+
+    def _resolve_dataset_key(self, f: h5py.File) -> str:
+        """Resolve H5 dataset key for image data.
+
+        Preferred keys are ``exported_data`` (Ilastik export) and ``data``.
+        As a fallback, accept files containing exactly one top-level dataset.
+        """
+        if self._dataset_key is not None and self._dataset_key in f:
+            return self._dataset_key
+
+        if 'exported_data' in f:
+            self._dataset_key = 'exported_data'
+            return self._dataset_key
+        if 'data' in f:
+            self._dataset_key = 'data'
+            return self._dataset_key
+
+        dataset_keys = [k for k, v in f.items() if isinstance(v, h5py.Dataset)]
+        if len(dataset_keys) == 1:
+            self._dataset_key = dataset_keys[0]
+            return self._dataset_key
+
+        raise ValueError(
+            "No supported image dataset found in H5 file. "
+            "Expected 'exported_data' or 'data', or exactly one top-level dataset."
+        )
 
     @property
     def scenes(self) -> Tuple[str, ...]:
@@ -53,8 +83,9 @@ class IlastikH5Reader(BaseReader):
         
         img_path = getattr(self, '_image', None) or self._h5_path
         with h5py.File(img_path, 'r') as f:
-            data = f['exported_data'][:]
-            axes = self._get_axes(f)
+            dataset_key = self._resolve_dataset_key(f)
+            data = f[dataset_key][:]
+            axes = self._get_axes(f, dataset_key)
             
         # Convert TZYXC to TCZYX for BioImage
         axis_map = {ax: i for i, ax in enumerate(axes)}
@@ -85,11 +116,11 @@ class IlastikH5Reader(BaseReader):
         """Load data immediately (same as delayed for H5)."""
         return self._read_delayed()
 
-    def _get_axes(self, f: h5py.File) -> list[str]:
+    def _get_axes(self, f: h5py.File, dataset_key: str) -> list[str]:
         """Extract axis order from HDF5 file attributes."""
-        if 'axistags' in f['exported_data'].attrs:
+        if 'axistags' in f[dataset_key].attrs:
             import json
-            axistags = f['exported_data'].attrs['axistags']
+            axistags = f[dataset_key].attrs['axistags']
             if isinstance(axistags, bytes):
                 axistags = axistags.decode('utf-8')
             axes_json = json.loads(axistags)
@@ -104,8 +135,9 @@ class IlastikH5Reader(BaseReader):
         # Read temporarily to get shape
         img_path = getattr(self, '_image', None) or self._h5_path
         with h5py.File(img_path, 'r') as f:
-            data_shape = f['exported_data'].shape
-            axes = self._get_axes(f)
+            dataset_key = self._resolve_dataset_key(f)
+            data_shape = f[dataset_key].shape
+            axes = self._get_axes(f, dataset_key)
         
         # Convert to TCZYX order
         axis_map = {ax: i for i, ax in enumerate(axes)}
@@ -115,7 +147,8 @@ class IlastikH5Reader(BaseReader):
         """Return data type."""
         img_path = getattr(self, '_image', None) or self._h5_path
         with h5py.File(img_path, 'r') as f:
-            return np.dtype(f['exported_data'].dtype)
+            dataset_key = self._resolve_dataset_key(f)
+            return np.dtype(f[dataset_key].dtype)
 
     def _get_dims(self) -> str:
         """Return dimension order string."""

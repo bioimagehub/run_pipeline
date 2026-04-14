@@ -330,6 +330,7 @@ class Options:
     max_shift_z: float = 10.0
     only_compute: bool = False
     shifts_file: str | None = None
+    output_suffix: str = ""
     use_lazy_loading: bool = True
     max_workers: int | None = None
     verbose: bool = True
@@ -821,6 +822,7 @@ def main(argv: list[str] | None = None) -> int:
         max_shift_z=args.max_shift_z,
         only_compute=args.only_compute,
         shifts_file=args.use_shifts,
+        output_suffix=args.output_suffix,
         use_lazy_loading=not args.no_lazy_loading,
         max_workers=args.maxcores,
         verbose=True,

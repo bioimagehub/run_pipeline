@@ -284,6 +284,13 @@ def process_files(
             print(f"[DRY RUN]   ... and {len(tasks) - 5} more files")
         return
 
+    # Large H5 volumes can exceed RAM when processed across many workers.
+    # Force file-level sequential execution for H5/HDF5 inputs unless user
+    # already requested sequential mode explicitly.
+    if not no_parallel and any(inp.lower().endswith((".h5", ".hdf5")) for inp, _ in tasks):
+        logger.warning("H5 input detected; forcing sequential processing to reduce peak memory usage")
+        no_parallel = True
+
     if no_parallel or len(tasks) == 1:
         logger.info("Processing files sequentially")
         ok = 0

@@ -670,7 +670,7 @@ run:
   - --output-folder: '%YAML%/output'
   - --scene-filter: includes
   - --scene-filter-strings: /MLE
-    - --scene-merge-channel
+  - --scene-merge-channel
   - --log-level: INFO
 
 - name: Convert CZI files, exclude overview scenes

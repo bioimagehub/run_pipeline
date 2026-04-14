@@ -6,6 +6,7 @@ import tempfile
 import numpy as np
 import warnings
 import sys
+import logging
 
 import tifffile
 
@@ -330,7 +331,8 @@ def load_tczyx_image(path: str) -> BioImage:
     
     lower_path = path.lower()
 
-    if lower_path.endswith((".tif", ".tiff", "ome.tif")):
+    if lower_path.endswith((".tif", ".tiff", ".ome.tif", ".ome.tiff")):
+        has_ome_suffix = lower_path.endswith((".ome.tif", ".ome.tiff"))
         is_ome_tiff = False
         try:
             with tifffile.TiffFile(path) as tif:
@@ -339,9 +341,21 @@ def load_tczyx_image(path: str) -> BioImage:
             # If detection fails, continue with generic reader fallback below.
             pass
 
+        # If filename uses explicit OME suffix, prefer the OME reader first,
+        # but only when TIFF metadata confirms it is actually OME.
+        # This avoids noisy "Exclusive reader attempt failed" logs when files
+        # are named *.ome.tif but contain non-OME ImageJ-style payloads.
+        if has_ome_suffix and is_ome_tiff:
+            try:
+                import bioio_ome_tiff
+                img = BioImage(path, reader=bioio_ome_tiff.Reader)
+                return img
+            except Exception:
+                pass
+
         # Only try the OME reader when the TIFF is actually OME-TIFF.
         # This avoids noisy "Failed to parse XML" errors for ImageJ-style TIFFs.
-        if is_ome_tiff:
+        if is_ome_tiff and not has_ome_suffix:
             try:
                 import bioio_ome_tiff
                 img = BioImage(path, reader=bioio_ome_tiff.Reader)
@@ -350,12 +364,22 @@ def load_tczyx_image(path: str) -> BioImage:
                 pass
 
         # Prefer tifffile reader for non-OME TIFFs (e.g., ImageJ save_mask output).
+        # For files named *.ome.tif(f) that are not valid OME XML internally,
+        # bioio_tifffile emits a repetitive install hint even when plugin exists.
+        # We already attempted bioio-ome-tiff above, so mute only that specific warning path.
+        tifffile_logger = logging.getLogger("bioio_tifffile.reader")
+        previous_tifffile_level = tifffile_logger.level
+        if has_ome_suffix:
+            tifffile_logger.setLevel(logging.ERROR)
         try:
             import bioio_tifffile
             img = BioImage(path, reader=bioio_tifffile.Reader)
             return img
         except Exception:
             pass
+        finally:
+            if has_ome_suffix:
+                tifffile_logger.setLevel(previous_tifffile_level)
 
         # Final generic fallback
         try:

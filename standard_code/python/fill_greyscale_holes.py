@@ -1360,16 +1360,33 @@ Notes:
         from joblib import Parallel, delayed
         n_jobs = rp.resolve_maxcores(args.maxcores, len(input_files))
         logging.info(f"Processing {len(input_files)} files in parallel (n_jobs={n_jobs})...")
-        with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
-            with _tqdm_joblib(pbar):
-                results = list(
-                    Parallel(n_jobs=n_jobs)(
-                        delayed(process_file_wrapper)(file)
-                        for file in input_files
+        try:
+            with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
+                with _tqdm_joblib(pbar):
+                    results = list(
+                        Parallel(n_jobs=n_jobs)(
+                            delayed(process_file_wrapper)(file)
+                            for file in input_files
+                        )
                     )
-                )
-        successful = sum(1 for r in results if r)
-        failed = len(results) - successful
+            successful = sum(1 for r in results if r)
+            failed = len(results) - successful
+        except Exception as exc:
+            # In constrained environments (WSL/GPU), workers may be terminated by OOM.
+            # Fall back to sequential processing to complete the run robustly.
+            logging.warning(
+                "Parallel processing failed (%s). Falling back to sequential processing.",
+                exc,
+            )
+            successful = 0
+            failed = 0
+            for i, input_path in enumerate(input_files, 1):
+                logging.info(f"\n{'='*70}")
+                logging.info(f"Sequential fallback file {i}/{len(input_files)}")
+                if process_file_wrapper(input_path):
+                    successful += 1
+                else:
+                    failed += 1
     else:
         logging.info(f"Processing {len(input_files)} files sequentially...")
         successful = 0
