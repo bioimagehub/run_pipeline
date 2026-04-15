@@ -18,12 +18,40 @@ from typing import Literal
 
 import numpy as np
 from scipy import ndimage
+import tifffile
 
 import bioimage_pipeline_utils as rp
 
 
 # Module-level logger
 logger = logging.getLogger(__name__)
+
+
+def _estimate_nbytes(shape: tuple[int, ...], dtype: np.dtype) -> int:
+    """Estimate array size in bytes for a given shape/dtype."""
+    return int(np.prod(shape, dtype=np.int64)) * np.dtype(dtype).itemsize
+
+
+def _is_valid_tiff_for_read(path: str) -> bool:
+    """Return True when a TIFF looks readable enough for BioIO loading."""
+    lower = path.lower()
+    if not (lower.endswith(".tif") or lower.endswith(".tiff")):
+        return True
+
+    try:
+        if os.path.getsize(path) < 1024:
+            return False
+    except OSError:
+        return False
+
+    try:
+        with tifffile.TiffFile(path) as tif:
+            if len(tif.series) == 0 or len(tif.pages) == 0:
+                return False
+    except Exception:
+        return False
+
+    return True
 
 
 def _dtype_limits(dtype: np.dtype) -> tuple[float, float] | None:
@@ -152,6 +180,13 @@ def process_single_file(
             logger.info(f"Output exists, skipping: {output_path}")
             return True
 
+        if not _is_valid_tiff_for_read(input_path):
+            logger.warning(
+                "Skipping unreadable TIFF input (likely incomplete/corrupt): %s",
+                input_path,
+            )
+            return True
+
         img = rp.load_tczyx_image(input_path)
         original_dtype = img.data.dtype
         T, C, Z, Y, X = img.shape
@@ -210,7 +245,20 @@ def process_single_file(
             filtered = filtered.astype(original_dtype, copy=False)
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        rp.save_with_output_format(filtered, output_path, output_format)
+
+        # Classic TIFF has a ~4 GiB limit; use BigTIFF automatically for large outputs.
+        save_kwargs: dict[str, object] = {}
+        if rp.normalize_output_format(output_format) in {"tif", "ome.tif"}:
+            estimated_bytes = _estimate_nbytes(filtered.shape, filtered.dtype)
+            save_kwargs["bigtiff"] = estimated_bytes >= (4 * 1024**3 - 32 * 1024**2)
+            logger.info(
+                "Saving TIFF with shape=%s, dtype=%s, bigtiff=%s",
+                filtered.shape,
+                filtered.dtype,
+                save_kwargs["bigtiff"],
+            )
+
+        rp.save_with_output_format(filtered, output_path, output_format, **save_kwargs)
         logger.info(f"Saved: {output_path}")
         return True
 
@@ -261,7 +309,7 @@ def process_files(
     tasks: list[tuple[str, str]] = []
     for input_path in input_files:
         effective_output_suffix = output_suffix or f"_{method}"
-        output_ext = rp.output_extension_for_format(output_format, tiff_extension=".tif")
+        output_ext = rp.output_extension_for_format(output_format, tiff_extension=".ome.tif")
         output_filename = os.path.basename(
             rp.resolve_output_path(input_path, extension=output_ext, suffix=effective_output_suffix)
         )

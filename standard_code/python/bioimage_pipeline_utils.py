@@ -274,7 +274,7 @@ def normalize_output_format(output_format: str) -> str:
     return aliases[fmt]
 
 
-def output_extension_for_format(output_format: str, tiff_extension: str = ".tif") -> str:
+def output_extension_for_format(output_format: str, tiff_extension: str = ".ome.tif") -> str:
     """Return file extension for a normalized output format."""
     fmt = normalize_output_format(output_format)
     if fmt in {"tif", "ome.tif"}:

@@ -121,6 +121,20 @@ def _estimate_nbytes(shape: tuple[int, ...], dtype: np.dtype) -> int:
     return int(np.prod(shape, dtype=np.int64)) * np.dtype(dtype).itemsize
 
 
+def _is_memory_error(exc: Exception) -> bool:
+    if isinstance(exc, MemoryError):
+        return True
+    message = str(exc).lower()
+    memory_markers = (
+        "unable to allocate",
+        "out of memory",
+        "cannot allocate memory",
+        "bad_alloc",
+        "_arraymemoryerror",
+    )
+    return any(marker in message for marker in memory_markers)
+
+
 def _kernel_window_starts(length: int, kernel_size: int, stride: int) -> list[int]:
     last_start = max(0, length - kernel_size)
     starts = list(range(0, last_start + 1, stride))
@@ -879,7 +893,7 @@ def process_single_image(
 
     total_operations = T * len(channels_to_process)
     write_tif = 'tif' in output_formats
-    tif_output_path = f"{output_stem}.tif"
+    tif_output_path = f"{output_stem}.ome.tif"
 
     saved_h5_paths: list[str] = []
     with ExitStack() as exit_stack:
@@ -911,10 +925,29 @@ def process_single_image(
 
         def _processed_planes():
             with tqdm(total=total_operations, desc="Filling holes", disable=not show_progress) as pbar:
-                timepoint_step = gpu_kernel_frame_group_size if gpu_kernel_frame_group_size > 1 else 1
-                for t_start in range(0, T, timepoint_step):
-                    t_stop = min(T, t_start + timepoint_step)
-                    czyx_group = [_load_czyx_timepoint(img, t) for t in range(t_start, t_stop)]
+                can_group_timepoints = (
+                    kernel_size is not None
+                    and use_gpu
+                    and gpu_kernel_frame_group_size > 1
+                    and _GPU_DISABLED_REASON is None
+                )
+                current_timepoint_step = gpu_kernel_frame_group_size if can_group_timepoints else 1
+                t_start = 0
+
+                while t_start < T:
+                    t_stop = min(T, t_start + current_timepoint_step)
+                    try:
+                        czyx_group = [_load_czyx_timepoint(img, t) for t in range(t_start, t_stop)]
+                    except Exception as exc:
+                        if current_timepoint_step > 1 and _is_memory_error(exc):
+                            logging.warning(
+                                "Out of memory while loading %s timepoints at once. "
+                                "Falling back to single-timepoint streaming.",
+                                current_timepoint_step,
+                            )
+                            current_timepoint_step = 1
+                            continue
+                        raise
 
                     if include_input:
                         out_group = [np.empty((n_out, Z, Y, X), dtype=img_dtype) for _ in czyx_group]
@@ -927,6 +960,7 @@ def process_single_image(
 
                         for z in range(Z):
                             used_grouped_gpu = False
+                            filled_stack: Optional[np.ndarray] = None
                             if (
                                 kernel_size is not None
                                 and use_gpu
@@ -951,7 +985,7 @@ def process_single_image(
 
                             for local_index, czyx in enumerate(czyx_group):
                                 slice_2d = czyx[c, z]
-                                if used_grouped_gpu:
+                                if used_grouped_gpu and filled_stack is not None:
                                     filled_slice = filled_stack[local_index]
                                 else:
                                     filled_slice = (
@@ -989,6 +1023,8 @@ def process_single_image(
                             for c in range(n_out):
                                 for z in range(Z):
                                     yield out_czyx[c, z]
+
+                    t_start = t_stop
 
         if write_tif:
             logging.info(f"Preparing OME-TIFF (streaming): {Path(tif_output_path).name}")
@@ -1327,7 +1363,7 @@ Notes:
     logging.info(f"Output folder: {args.output_folder}")
     
     # Define processing function for a single file
-    def process_file_wrapper(input_path):
+    def process_file_wrapper(input_path: str) -> tuple[bool, bool]:
         """Wrapper function for processing a single file (used for parallel processing)."""
         # Generate output stem (without extension)
         output_name = os.path.basename(
@@ -1336,7 +1372,7 @@ Notes:
         output_stem = os.path.join(args.output_folder, output_name)
         
         try:
-            return process_single_image(
+            success = process_single_image(
                 input_path=input_path,
                 output_stem=output_stem,
                 output_formats=args.output_format,
@@ -1349,11 +1385,19 @@ Notes:
                 include_input=args.include_input,
                 use_gpu=not args.no_gpu,
             )
+            return success, False
         except Exception as e:
             logging.error(f"Error processing {Path(input_path).name}: {e}")
             import traceback
             logging.error(traceback.format_exc())
-            return False
+            is_oom = _is_memory_error(e)
+            if is_oom:
+                logging.warning(
+                    "Detected memory pressure while processing %s. "
+                    "Try --no-parallel or lower --maxcores.",
+                    Path(input_path).name,
+                )
+            return False, is_oom
     
     # Process files (with or without parallel processing)
     if not args.no_parallel:
@@ -1361,16 +1405,59 @@ Notes:
         n_jobs = rp.resolve_maxcores(args.maxcores, len(input_files))
         logging.info(f"Processing {len(input_files)} files in parallel (n_jobs={n_jobs})...")
         try:
+            results_raw: list[tuple[bool, bool] | None] = []
             with tqdm(total=len(input_files), desc="Processing files", unit="file") as pbar:
                 with _tqdm_joblib(pbar):
-                    results = list(
+                    results_raw = list(
                         Parallel(n_jobs=n_jobs)(
                             delayed(process_file_wrapper)(file)
                             for file in input_files
                         )
                     )
-            successful = sum(1 for r in results if r)
-            failed = len(results) - successful
+            results: list[tuple[bool, bool]] = []
+            for result in results_raw:
+                if isinstance(result, tuple) and len(result) == 2:
+                    results.append((bool(result[0]), bool(result[1])))
+                else:
+                    results.append((False, False))
+            successful = sum(1 for success, _is_oom in results if success)
+            failed_paths = [
+                path for path, (success, _is_oom) in zip(input_files, results) if not success
+            ]
+            oom_failed_paths = [
+                path for path, (success, is_oom) in zip(input_files, results) if (not success and is_oom)
+            ]
+
+            if oom_failed_paths:
+                logging.warning(
+                    "Retrying %s OOM-failed file(s) sequentially to reduce memory pressure.",
+                    len(oom_failed_paths),
+                )
+                retry_successes = 0
+                for i, input_path in enumerate(oom_failed_paths, 1):
+                    logging.info(f"\n{'='*70}")
+                    logging.info(
+                        "Sequential OOM retry file %s/%s: %s",
+                        i,
+                        len(oom_failed_paths),
+                        Path(input_path).name,
+                    )
+                    success, _ = process_file_wrapper(input_path)
+                    if success:
+                        retry_successes += 1
+
+                successful += retry_successes
+                failed = len(input_files) - successful
+                if retry_successes:
+                    logging.info(
+                        "Sequential OOM retry recovered %s/%s file(s).",
+                        retry_successes,
+                        len(oom_failed_paths),
+                    )
+                else:
+                    logging.warning("Sequential OOM retry did not recover failed files.")
+            else:
+                failed = len(failed_paths)
         except Exception as exc:
             # In constrained environments (WSL/GPU), workers may be terminated by OOM.
             # Fall back to sequential processing to complete the run robustly.
@@ -1383,7 +1470,8 @@ Notes:
             for i, input_path in enumerate(input_files, 1):
                 logging.info(f"\n{'='*70}")
                 logging.info(f"Sequential fallback file {i}/{len(input_files)}")
-                if process_file_wrapper(input_path):
+                success, _ = process_file_wrapper(input_path)
+                if success:
                     successful += 1
                 else:
                     failed += 1
@@ -1394,7 +1482,8 @@ Notes:
         for i, input_path in enumerate(input_files, 1):
             logging.info(f"\n{'='*70}")
             logging.info(f"Processing file {i}/{len(input_files)}")
-            if process_file_wrapper(input_path):
+            success, _ = process_file_wrapper(input_path)
+            if success:
                 successful += 1
             else:
                 failed += 1
