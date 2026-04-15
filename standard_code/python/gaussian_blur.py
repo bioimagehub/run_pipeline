@@ -13,8 +13,9 @@ from __future__ import annotations
 import os
 import argparse
 import logging
+import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from scipy import ndimage
@@ -35,6 +36,45 @@ def _dtype_limits(dtype: np.dtype) -> tuple[float, float] | None:
         return None
     # Default: treat like float (no clipping)
     return None
+
+
+def _get_image_dtype(img: Any) -> np.dtype:
+    """Return the image dtype without forcing eager full-array loading when possible."""
+    if hasattr(img, "dask_data") and img.dask_data is not None and hasattr(img.dask_data, "dtype"):
+        return np.dtype(img.dask_data.dtype)
+    return np.dtype(img.data.dtype)
+
+
+def _load_tczyx_block(img: Any, t_index: int, c_index: int) -> np.ndarray:
+    """Load a single TCZYX block for one timepoint/channel, using lazy loading when available."""
+    if hasattr(img, "dask_data") and img.dask_data is not None:
+        return np.asarray(img.dask_data[t_index:t_index + 1, c_index:c_index + 1, :, :, :].compute())
+    return np.asarray(img.data[t_index:t_index + 1, c_index:c_index + 1, :, :, :])
+
+
+def _should_force_sequential(input_paths: list[str]) -> tuple[bool, str | None]:
+    """Return whether per-file sequential processing should be forced for memory safety."""
+    if any(path.lower().endswith((".h5", ".hdf5")) for path in input_paths):
+        return True, "H5 input detected; forcing sequential processing to reduce peak memory usage"
+
+    large_input_threshold = 512 * 1024**2
+    total_size = 0
+    has_large_input = False
+
+    for path in input_paths:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        total_size += size
+        if size >= large_input_threshold:
+            has_large_input = True
+
+    if has_large_input:
+        return True, "Large input file detected; forcing sequential processing to reduce peak memory usage"
+    if len(input_paths) > 1 and total_size >= 2 * 1024**3:
+        return True, "Large total batch size detected; forcing sequential processing to reduce peak memory usage"
+    return False, None
 
 
 def gaussian_blur_stack(
@@ -80,6 +120,9 @@ def process_single_file(
     force: bool,
 ) -> bool:
     """Load one image, blur, and save."""
+    temp_memmap_path: str | None = None
+    blurred: np.ndarray | np.memmap | None = None
+
     try:
         logger.info(f"Processing: {os.path.basename(input_path)}")
 
@@ -88,12 +131,13 @@ def process_single_file(
             return True
 
         img = rp.load_tczyx_image(input_path)
-        original_dtype = img.data.dtype
-        T, C, Z, Y, X = img.shape
+        original_dtype = _get_image_dtype(img)
+        T, C, Z, Y, X = (int(v) for v in img.shape)
         logger.info(f"Dimensions: T={T}, C={C}, Z={Z}, Y={Y}, X={X}, dtype={original_dtype}")
+        logger.info("Using block-wise Gaussian blur to reduce peak memory usage")
 
         # Determine channels to process
-        C_total = img.shape[1]
+        C_total = C
         if channels is None:
             channels_to_process = list(range(C_total))
         else:
@@ -103,38 +147,39 @@ def process_single_file(
                     f"No valid channels found. Image has {C_total} channels, requested {channels}"
                 )
 
+        selected_channels = set(channels_to_process)
         logger.info(f"Channels to process: {channels_to_process}")
 
-        if len(channels_to_process) == C_total:
-            # Process entire stack
-            blurred = gaussian_blur_stack(
-                img.data,
-                mode=mode,
-                sigma_xy=sigma_xy,
-                sigma_z=sigma_z,
-                truncate=truncate,
-            )
-        else:
-            # Preserve non-selected channels, blur only selected ones
-            output = img.data.astype(np.float32, copy=True)
-            for c in channels_to_process:
-                slice5d = img.data[:, c:c+1, :, :, :]
-                blurred_c = gaussian_blur_stack(
-                    slice5d,
-                    mode=mode,
-                    sigma_xy=sigma_xy,
-                    sigma_z=sigma_z,
-                    truncate=truncate,
-                )
-                output[:, c:c+1, :, :, :] = blurred_c
-            blurred = output
+        fd, temp_memmap_path = tempfile.mkstemp(prefix="gaussian_blur_", suffix=".dat")
+        os.close(fd)
+        blurred = np.memmap(
+            temp_memmap_path,
+            dtype=original_dtype,
+            mode="w+",
+            shape=(T, C, Z, Y, X),
+        )
 
-        # Safe cast back to original dtype
         limits = _dtype_limits(original_dtype)
-        if limits is not None:
-            lo, hi = limits
-            blurred = np.clip(blurred, lo, hi)
-            blurred = blurred.astype(original_dtype, copy=False)
+
+        for t in range(T):
+            for c in range(C_total):
+                block = _load_tczyx_block(img, t, c)
+                if c in selected_channels:
+                    block = gaussian_blur_stack(
+                        block,
+                        mode=mode,
+                        sigma_xy=sigma_xy,
+                        sigma_z=sigma_z,
+                        truncate=truncate,
+                    )
+
+                if limits is not None:
+                    lo, hi = limits
+                    block = np.clip(block, lo, hi)
+
+                blurred[t:t+1, c:c+1, :, :, :] = np.asarray(block, dtype=original_dtype)
+
+        blurred.flush()
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         rp.save_with_output_format(blurred, output_path, output_format)
@@ -146,6 +191,14 @@ def process_single_file(
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        if blurred is not None:
+            del blurred
+        if temp_memmap_path is not None and os.path.exists(temp_memmap_path):
+            try:
+                os.remove(temp_memmap_path)
+            except OSError:
+                logger.debug("Could not remove temporary memmap file: %s", temp_memmap_path)
 
 
 def process_files(
@@ -202,6 +255,12 @@ def process_files(
         if len(tasks) > 5:
             print(f"[DRY RUN]   ... and {len(tasks) - 5} more files")
         return
+
+    if not no_parallel:
+        should_force_sequential, reason = _should_force_sequential([inp for inp, _ in tasks])
+        if should_force_sequential:
+            logger.warning("%s", reason)
+            no_parallel = True
 
     if no_parallel or len(tasks) == 1:
         logger.info("Processing files sequentially")

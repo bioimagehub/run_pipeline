@@ -27,11 +27,66 @@ from skimage.filters import (
 )
 from skimage.measure import label
 
+try:
+    import mahotas as mh
+except ImportError:
+    mh = None
+
 # Local imports
 import bioimage_pipeline_utils as rp
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def _max_entropy_threshold_from_histogram(hist: np.ndarray) -> int:
+    """Return the Kapur maximum-entropy threshold index from a histogram."""
+    hist = np.asarray(hist, dtype=np.float64)
+    if hist.size == 0 or np.sum(hist) <= 0:
+        return 0
+
+    prob = hist / np.sum(hist)
+    cumulative = np.cumsum(prob)
+    cumulative_complement = 1.0 - cumulative
+    eps = np.finfo(np.float64).eps
+
+    plogp = np.where(prob > 0, prob * np.log(prob), 0.0)
+    cumulative_plogp = np.cumsum(plogp)
+    total_plogp = cumulative_plogp[-1]
+
+    background_entropy = np.log(cumulative + eps) - (cumulative_plogp / (cumulative + eps))
+    foreground_entropy = np.log(cumulative_complement + eps) - (
+        (total_plogp - cumulative_plogp) / (cumulative_complement + eps)
+    )
+
+    objective = background_entropy + foreground_entropy
+    objective[(cumulative <= 0) | (cumulative_complement <= 0)] = -np.inf
+    return int(np.argmax(objective))
+
+
+def threshold_max_entropy(image: np.ndarray) -> float:
+    """Compute a maximum-entropy threshold with mahotas-compatible behavior."""
+    plane = np.asarray(image)
+    if plane.size == 0:
+        return 0.0
+
+    if np.issubdtype(plane.dtype, np.floating):
+        finite = plane[np.isfinite(plane)]
+        if finite.size == 0:
+            return 0.0
+        min_val = float(finite.min())
+        max_val = float(finite.max())
+        if max_val <= min_val:
+            return min_val
+
+        scaled = ((plane - min_val) / (max_val - min_val) * 65535).astype(np.uint16)
+        hist = mh.thresholding.fullhistogram(scaled) if mh is not None else np.bincount(scaled.ravel())
+        scaled_threshold = float(_max_entropy_threshold_from_histogram(hist))
+        return min_val + (scaled_threshold / 65535.0) * (max_val - min_val)
+
+    plane_uint = plane.astype(np.uint16, copy=False)
+    hist = mh.thresholding.fullhistogram(plane_uint) if mh is not None else np.bincount(plane_uint.ravel())
+    return float(_max_entropy_threshold_from_histogram(hist))
 
 
 # Available threshold methods
@@ -43,6 +98,7 @@ THRESHOLD_METHODS = {
     "mean": threshold_mean,
     "minimum": threshold_minimum,
     "isodata": threshold_isodata,
+    "max_entropy": threshold_max_entropy,
     "niblack": lambda img: threshold_niblack(img, window_size=25),
     "sauvola": lambda img: threshold_sauvola(img, window_size=25)
 }

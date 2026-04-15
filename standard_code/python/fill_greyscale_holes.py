@@ -474,7 +474,6 @@ def _greyscale_fill_holes_kernel_2d_gpu(
     merged = cp.asnumpy(merged_gpu)
     return _cast_to_dtype(merged, image.dtype)
 
-
 def _greyscale_fill_holes_kernel_multiframe_2d_gpu(
     stack: np.ndarray,
     kernel_size: int,
