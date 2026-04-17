@@ -1,0 +1,9 @@
+run:
+- name: Annotate patches and generate training set
+  environment: uv@3.11:deep-learning
+  commands:
+  - python
+  - '%REPO%/standard_code/python/deep_learning_01_make_training_set.py'
+  - --input-search-pattern: '%YAML%/input_drift_corrected/**/*.ome.tif'
+  - --output-folder: '%YAML%/deep_learning_output'
+  - --log-level: INFO

@@ -19,12 +19,18 @@ from typing import Any, Literal
 
 import numpy as np
 from scipy import ndimage
+from tqdm import tqdm
 
 import bioimage_pipeline_utils as rp
 
 
 # Module-level logger
 logger = logging.getLogger(__name__)
+
+
+def _estimate_nbytes(shape: tuple[int, ...], dtype: np.dtype) -> int:
+    """Estimate array size in bytes for a given shape and dtype."""
+    return int(np.prod(shape, dtype=np.int64)) * np.dtype(dtype).itemsize
 
 
 def _dtype_limits(dtype: np.dtype) -> tuple[float, float] | None:
@@ -50,6 +56,13 @@ def _load_tczyx_block(img: Any, t_index: int, c_index: int) -> np.ndarray:
     if hasattr(img, "dask_data") and img.dask_data is not None:
         return np.asarray(img.dask_data[t_index:t_index + 1, c_index:c_index + 1, :, :, :].compute())
     return np.asarray(img.data[t_index:t_index + 1, c_index:c_index + 1, :, :, :])
+
+
+def _load_tczyx_plane(img: Any, t_index: int, c_index: int, z_index: int) -> np.ndarray:
+    """Load a single TCZYX plane for one timepoint/channel/Z, using lazy loading when available."""
+    if hasattr(img, "dask_data") and img.dask_data is not None:
+        return np.asarray(img.dask_data[t_index:t_index + 1, c_index:c_index + 1, z_index:z_index + 1, :, :].compute())
+    return np.asarray(img.data[t_index:t_index + 1, c_index:c_index + 1, z_index:z_index + 1, :, :])
 
 
 def _should_force_sequential(input_paths: list[str]) -> tuple[bool, str | None]:
@@ -160,24 +173,58 @@ def process_single_file(
         )
 
         limits = _dtype_limits(original_dtype)
+        plane_streaming = mode == "2d" and _estimate_nbytes((1, 1, Z, Y, X), original_dtype) >= 256 * 1024**2
+        progress_total = T * C_total * Z if plane_streaming else T * C_total
+        progress_unit = "plane" if plane_streaming else "block"
 
-        for t in range(T):
-            for c in range(C_total):
-                block = _load_tczyx_block(img, t, c)
-                if c in selected_channels:
-                    block = gaussian_blur_stack(
-                        block,
-                        mode=mode,
-                        sigma_xy=sigma_xy,
-                        sigma_z=sigma_z,
-                        truncate=truncate,
-                    )
+        if plane_streaming:
+            logger.info("Large 2D stack detected; switching to plane-wise Gaussian processing for better responsiveness")
 
-                if limits is not None:
-                    lo, hi = limits
-                    block = np.clip(block, lo, hi)
+        with tqdm(
+            total=progress_total,
+            desc=f"{os.path.basename(input_path)} [gaussian]",
+            unit=progress_unit,
+            leave=True,
+            dynamic_ncols=True,
+            mininterval=0.2,
+        ) as progress:
+            for t in range(T):
+                for c in range(C_total):
+                    if plane_streaming:
+                        for z in range(Z):
+                            block = _load_tczyx_plane(img, t, c, z)
+                            if c in selected_channels:
+                                block = gaussian_blur_stack(
+                                    block,
+                                    mode=mode,
+                                    sigma_xy=sigma_xy,
+                                    sigma_z=sigma_z,
+                                    truncate=truncate,
+                                )
 
-                blurred[t:t+1, c:c+1, :, :, :] = np.asarray(block, dtype=original_dtype)
+                            if limits is not None:
+                                lo, hi = limits
+                                block = np.clip(block, lo, hi)
+
+                            blurred[t:t+1, c:c+1, z:z+1, :, :] = np.asarray(block, dtype=original_dtype)
+                            progress.update(1)
+                    else:
+                        block = _load_tczyx_block(img, t, c)
+                        if c in selected_channels:
+                            block = gaussian_blur_stack(
+                                block,
+                                mode=mode,
+                                sigma_xy=sigma_xy,
+                                sigma_z=sigma_z,
+                                truncate=truncate,
+                            )
+
+                        if limits is not None:
+                            lo, hi = limits
+                            block = np.clip(block, lo, hi)
+
+                        blurred[t:t+1, c:c+1, :, :, :] = np.asarray(block, dtype=original_dtype)
+                        progress.update(1)
 
         blurred.flush()
 
@@ -265,7 +312,7 @@ def process_files(
     if no_parallel or len(tasks) == 1:
         logger.info("Processing files sequentially")
         ok = 0
-        for inp, out in tasks:
+        for inp, out in tqdm(tasks, desc="Files", unit="file", dynamic_ncols=True, leave=True):
             if process_single_file(inp, out, output_format, mode, channels, sigma_xy, sigma_z, truncate, force):
                 ok += 1
         logger.info(f"Done: {ok} succeeded, {len(tasks)-ok} failed")

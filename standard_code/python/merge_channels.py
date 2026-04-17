@@ -1,317 +1,651 @@
+from __future__ import annotations
+
 import argparse
-from tqdm import tqdm
 import json
-import numpy as np
-from bioio.writers import OmeTiffWriter
-import os
-from joblib import Parallel, delayed
-import yaml
-import h5py
 import logging
+import os
+import tempfile
+from contextlib import contextmanager
+from typing import Any, Optional
 
-from skimage import io
-from skimage.measure import block_reduce
+import h5py
 import numpy as np
+import yaml
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
+import bioimage_pipeline_utils as rp
+
+logger = logging.getLogger(__name__)
 
 
-# local imports
-import bioimage_pipeline_utils as rp  
-from extract_metadata import get_all_metadata
+def _ensure_5d(array: np.ndarray) -> np.ndarray:
+    """Ensure an array is in TCZYX-compatible 5D form."""
+    data = np.asarray(array)
+    while data.ndim < 5:
+        data = data[np.newaxis, ...]
+    return data
 
-from skimage.transform import resize
 
+def _parse_input_patterns(input_search_pattern: str) -> dict[str, str]:
+    """Parse input patterns into an ordered name -> glob mapping.
 
-def process_file(input_file_path: str, output_tif_file_path: str, merge_channels: str, output_format: str = "tif", output_dim_order: str = "TCZYX", scale:float = 1) -> None:
+    Accepts either a plain glob string or JSON content such as:
+    - '{"image1":"folder_a/*_a.tif","image2":"folder_b/*_b.tif"}'
+    - '["folder_a/*.tif", "folder_b/*.tif"]'
+    """
+    stripped = input_search_pattern.strip()
+
     try:
-        # Load image first
-        img = rp.load_tczyx_image(input_file_path)
-        physical_pixel_sizes = img.physical_pixel_sizes if img.physical_pixel_sizes is not None else (None, None, None)
-        
-        # Define output file names
-        input_metadata_file_path:str = os.path.splitext(input_file_path)[0] + "_metadata.yaml"
-        output_metadata_file_path:str = os.path.splitext(output_tif_file_path)[0] + "_metadata.yaml"  
-        
-        # Check if metadata file exists and open/make
-        if os.path.exists(input_metadata_file_path):
-            with open(input_metadata_file_path, 'r') as f:
-                metadata = yaml.safe_load(f)
-        else:
-            metadata = get_all_metadata(input_file_path, output_file=None)
-            #TODO Prompt the user to fill in the channel names etc
-            # This is the core metadata without drift correction info
-            with open(input_metadata_file_path, 'w') as f:
-                yaml.dump(metadata, f)
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = stripped
 
-        img_np = img.data  # TCZYX
-        
-        # Parse merge_channels string to list of channel groups
-        channel_groups = json.loads(merge_channels)  # e.g. [[0,1], [2], [3,4]]
-        channel_groups = [g if isinstance(g, list) else [g] for g in channel_groups] # Ensure all groups are lists
-        #print(channel_groups)
+    if isinstance(parsed, str):
+        return {"image1": parsed}
 
-        output_channels = []
+    if isinstance(parsed, list):
+        if not parsed:
+            raise ValueError("--input-search-pattern list cannot be empty")
+        return {f"image{i + 1}": str(pattern) for i, pattern in enumerate(parsed)}
 
-        for group in channel_groups:
-            group = list(group)  # ensure it's a list in case it's a tuple
-            if len(group) == 1:
-                # Keep as-is
-                output = img_np[:, group[0]:group[0]+1, :, :, :]
+    if isinstance(parsed, dict):
+        if not parsed:
+            raise ValueError("--input-search-pattern mapping cannot be empty")
+        return {str(name): str(pattern) for name, pattern in parsed.items()}
+
+    raise ValueError("--input-search-pattern must be a glob string, JSON list, or JSON object")
+
+
+def _parse_channels_argument(channels: Optional[str]) -> Optional[dict[str, Any]]:
+    """Parse optional channel selection JSON.
+
+    Supported values:
+    - omitted / null / all -> use all channels from each image
+    - '0,1,2' -> keep those channels from every image
+    - '[0, 2]' -> same as above
+    - '[[0,1], 2]' -> sum channels 0+1, then keep channel 2, for every image
+    - '{"image1": [0, 1], "image2": "all"}' -> per-image selection
+    """
+    if channels is None:
+        return None
+
+    stripped = channels.strip()
+    if not stripped or stripped.lower() in {"all", "none", "null"}:
+        return None
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = [int(part.strip()) for part in stripped.split(",") if part.strip()]
+
+    if isinstance(parsed, dict):
+        return {str(key): value for key, value in parsed.items()}
+
+    return {"__all__": parsed}
+
+
+def _normalize_channel_groups(spec: Any, channel_count: int, image_name: str) -> list[list[int]]:
+    """Convert a channel selection spec into validated channel groups."""
+    if spec is None or (isinstance(spec, str) and spec.lower() == "all"):
+        return [[channel_index] for channel_index in range(channel_count)]
+
+    if isinstance(spec, int):
+        groups = [[spec]]
+    elif isinstance(spec, (list, tuple)):
+        groups: list[list[int]] = []
+        for item in spec:
+            if isinstance(item, int):
+                groups.append([item])
+            elif isinstance(item, (list, tuple)):
+                if not item:
+                    raise ValueError(f"Empty channel group is not allowed for {image_name}")
+                if not all(isinstance(idx, int) for idx in item):
+                    raise ValueError(f"All channel indices must be integers for {image_name}")
+                groups.append(list(item))
             else:
-                # Sum-project along channel axis
-                output = img_np[:, group, :, :, :].sum(axis=1, keepdims=True, dtype=img_np.dtype)
-            output_channels.append(output)
-
-        # Concatenate all processed channel groups
-        out_img = np.concatenate(output_channels, axis=1)  # TCZYX
-        
-        # Validate that we have at least one channel
-        if out_img.shape[1] == 0:
-            num_channels = img_np.shape[1]
-            valid_indices = f"0-{num_channels-1}"
-            logging.error(f"Channel merge failed: No valid channels after merging.")
-            logging.error(f"Input image has {num_channels} channels with valid indices: {valid_indices}")
-            logging.error(f"Requested merge_channels: {merge_channels}")
-            raise ValueError(f"Invalid channel indices. Image has {num_channels} channels (indices {valid_indices}), but merge_channels specified non-existent channels.")
-
-        # Only remove existing output file if it's a TIF (don't delete input when output is H5)
-        if output_format == "tif" and os.path.exists(output_tif_file_path):
-            os.remove(output_tif_file_path)
-
-
-
-        # Apply output scaling if specified
-        if scale < 1:
-            logging.info(f"Downsampling image by a factor of {1/scale}")
-            logging.info(f"Original shape: {out_img.shape}")
-            out_img = block_reduce(out_img, block_size=(1, 1, 1, int(1/scale), int(1/scale)), func=np.max)
-            logging.info(f"New shape after downsampling: {out_img.shape}")
-
-            # Scale physical_pixel_sizes
-            physical_pixel_sizes = tuple(p * scale for p in physical_pixel_sizes)
-
-        elif scale > 1:
-            logging.info(f"Upsampling image by a factor of {scale}")
-            logging.info(f"Original shape: {out_img.shape}")
-            t, c, z, y, x = out_img.shape
-            new_y = int(y * scale)
-            new_x = int(x * scale)
-            up_img = np.zeros((t, c, z, new_y, new_x), dtype=out_img.dtype)
-            
-            # Add progress bar for upsampling
-            total_slices = t * c * z
-            with tqdm(total=total_slices, desc="Upsampling slices", unit="slice", leave=False) as pbar:
-                for ti in range(t):
-                    for ci in range(c):
-                        for zi in range(z):
-                            up_img[ti, ci, zi] = resize(
-                                out_img[ti, ci, zi],
-                                (new_y, new_x),
-                                order=0,  # nearest-neighbor
-                                preserve_range=True,
-                                anti_aliasing=False
-                            ).astype(out_img.dtype)
-                            pbar.update(1)
-            out_img = up_img
-            logging.info(f"New shape after upsampling: {out_img.shape}")
-
-            # Scale physical_pixel_sizes
-            physical_pixel_sizes = tuple(p * scale for p in physical_pixel_sizes)
-
-        
-
-        # Save output
-        if output_format == "tif":
-            rp.save_tczyx_image(out_img, output_tif_file_path, dim_order="TCZYX", physical_pixel_sizes=physical_pixel_sizes)
-        elif output_format == "npy":
-            # Rearrange dimensions if needed
-            if output_dim_order == "TZYXC":
-                # out_img is TCZYX, convert to TZYXC
-                out_img = np.transpose(out_img, (0,2,3,4,1))
-            np.save(os.path.splitext(output_tif_file_path)[0] + ".npy", out_img)
-        elif output_format == "ilastik-h5":
-            # Export in TZYXC format (channel LAST) to match Ilastik's ImageJ plugin format
-            # This is what actually works in Ilastik, despite VIGRA documentation suggesting CTZYX
-            
-            # Change file extension to .h5
-            h5_file_path = os.path.splitext(output_tif_file_path)[0] + ".h5"
-            
-            # Check number of channels and time frames
-            t, c, z, y, x = out_img.shape
-            
-            # Convert TCZYX -> TZYXC (channel axis LAST, matching del.h5 format)
-            out_img_ilastik = np.transpose(out_img, (0, 2, 3, 4, 1))  # TCZYX -> TZYXC
-            
-            # Build axis configuration with channel LAST (matching ImageJ exporter)
-            axis_keys = ['t', 'z', 'y', 'x', 'c']
-            axis_configs = [
-                {'key': 't', 'typeFlags': 8, 'resolution': 0, 'description': ''},     # Time (typeFlags=8 not 16!)
-                {'key': 'z', 'typeFlags': 2, 'resolution': 0, 'description': ''},     # Space
-                {'key': 'y', 'typeFlags': 2, 'resolution': 0, 'description': ''},     # Space
-                {'key': 'x', 'typeFlags': 2, 'resolution': 0, 'description': ''},     # Space
-                {'key': 'c', 'typeFlags': 1, 'resolution': 0, 'description': ''},     # Channels LAST
-            ]
-            
-            # Write HDF5 file with Ilastik-compatible structure (matching del.h5)
-            with h5py.File(h5_file_path, 'w') as f:
-                # Create the main dataset at '/data' as required by Ilastik
-                dset = f.create_dataset('data', data=out_img_ilastik, compression='gzip', compression_opts=4)
-                
-                # Add axistags metadata for Ilastik (VIGRA format, matching ImageJ exporter)
-                dset.attrs['axistags'] = json.dumps({'axes': axis_configs})
-                
-                # Note: No physical pixel size metadata - del.h5 doesn't have it either
-            
-            logging.info(f"Saved Ilastik H5 file with shape {out_img_ilastik.shape} (TZYXC) and axes {''.join(axis_keys)}")
-        else:
-            raise ValueError(f"Unsupported output format: {output_format}")
-
-        # Save metadata to YAML file
-        metadata["Merge channels"] = {
-            "Method": "Sum projection",
-            "Merge_channels": merge_channels,
-            "Output_format": output_format,
-            "Output_dim_order": output_dim_order,
-        }
-        with open(output_metadata_file_path, 'w') as f:
-            yaml.dump(metadata, f)
-
-    except Exception as e:
-        logging.error(f"Error processing {input_file_path}: {e}")
-        return
-
-def process_folder(args: argparse.Namespace, use_parallel = True) -> None:
-        
-    # Find files to process using glob pattern (prefer --input-search-pattern, fallback to --input-folder)
-    if hasattr(args, 'input_search_pattern') and args.input_search_pattern:
-        pattern = args.input_search_pattern
+                raise ValueError(f"Unsupported channel selection item for {image_name}: {item!r}")
     else:
-        pattern = os.path.join(args.input_folder, '*.tif')
-    files_to_process = rp.get_files_to_process2(pattern, False)
-    # files_to_process = [files_to_process[0]] # For debugging
-    
-    # Make output folder
-    os.makedirs(args.output_folder, exist_ok=True)  # Create the output folder if it doesn't exist
+        raise ValueError(f"Unsupported channel selection for {image_name}: {spec!r}")
+
+    for group in groups:
+        for channel_index in group:
+            if channel_index < 0 or channel_index >= channel_count:
+                raise ValueError(
+                    f"Invalid channel index {channel_index} for {image_name}; valid range is 0-{channel_count - 1}"
+                )
+
+    return groups
 
 
-    def _output_path(input_file_path: str) -> str:
-        """Build output path, replacing input extension with the correct output extension."""
-        if args.output_format == "tif":
-            ext = ".ome.tif"
-        elif args.output_format == "npy":
-            ext = ".npy"
-        elif args.output_format == "ilastik-h5":
-            ext = ".h5"
-        else:
-            ext = ".ome.tif"
-        return os.path.join(
-            args.output_folder,
-            os.path.basename(rp.resolve_output_path(input_file_path, extension=ext, suffix=args.output_suffix)),
+def _build_output_path(group_name: str, output_folder: str, output_suffix: str, output_format: str) -> str:
+    """Create the output path for a grouped merge result."""
+    normalized_format = rp.normalize_output_format(output_format)
+    extension = rp.output_extension_for_format(normalized_format)
+    safe_name = group_name if group_name else "merged_group"
+    return os.path.join(output_folder, f"{safe_name}{output_suffix}{extension}")
+
+
+def _save_output(data: np.ndarray, output_path: str, output_format: str, physical_pixel_sizes: Any) -> None:
+    """Save a TCZYX array-like object using project-standard output helpers."""
+    normalized_format = rp.normalize_output_format(output_format)
+    save_kwargs: dict[str, Any] = {}
+    if physical_pixel_sizes is not None and normalized_format in {"tif", "ome.tif"}:
+        save_kwargs["physical_pixel_sizes"] = physical_pixel_sizes
+        save_kwargs["dim_order"] = "TCZYX"
+    rp.save_with_output_format(data, output_path, normalized_format, **save_kwargs)
+
+
+def _get_lazy_data(img: Any) -> Any:
+    """Return a lazily readable TCZYX-compatible array when available."""
+    lazy_data = getattr(img, "dask_data", None)
+    if lazy_data is not None:
+        data = lazy_data
+        while len(data.shape) < 5:
+            data = data[None, ...]
+        return data
+    return _ensure_5d(np.asarray(getattr(img, "data", img)))
+
+
+def _create_output_sink(
+    output_path: str,
+    output_format: str,
+    output_dim_order: str,
+    output_shape: tuple[int, int, int, int, int],
+    output_dtype: np.dtype,
+) -> tuple[Any, Any]:
+    """Create a low-memory sink that writes merged output incrementally."""
+    normalized_format = rp.normalize_output_format(output_format)
+    t, c, z, y, x = output_shape
+
+    if normalized_format == "npy":
+        if output_dim_order == "TZYXC":
+            array_sink = np.lib.format.open_memmap(
+                output_path,
+                mode="w+",
+                dtype=output_dtype,
+                shape=(t, z, y, x, c),
+            )
+
+            def write_channel(
+                channel_index: int,
+                t_start: int,
+                t_end: int,
+                z_start: int,
+                z_end: int,
+                block: np.ndarray,
+            ) -> None:
+                array_sink[t_start:t_end, z_start:z_end, :, :, channel_index:channel_index + 1] = np.transpose(
+                    block.astype(output_dtype, copy=False),
+                    (0, 2, 3, 4, 1),
+                )
+
+            def finalize(physical_pixel_sizes: Any) -> None:
+                array_sink.flush()
+
+            return write_channel, finalize
+
+        array_sink = np.lib.format.open_memmap(
+            output_path,
+            mode="w+",
+            dtype=output_dtype,
+            shape=output_shape,
         )
 
-    if use_parallel: # Process each file in parallel
-        from contextlib import contextmanager
+        def write_channel(
+            channel_index: int,
+            t_start: int,
+            t_end: int,
+            z_start: int,
+            z_end: int,
+            block: np.ndarray,
+        ) -> None:
+            array_sink[t_start:t_end, channel_index:channel_index + 1, z_start:z_end, :, :] = block.astype(output_dtype, copy=False)
 
-        @contextmanager
-        def _tqdm_joblib(tqdm_object):
-            import joblib
-            class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
-                def __call__(self, *args, **kwargs):
-                    tqdm_object.update(n=self.batch_size)
-                    return super().__call__(*args, **kwargs)
-            old_batch_callback = joblib.parallel.BatchCompletionCallBack
-            joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+        def finalize(physical_pixel_sizes: Any) -> None:
+            array_sink.flush()
+
+        return write_channel, finalize
+
+    if normalized_format == "ilastik-h5":
+        h5_file = h5py.File(output_path, "w")
+        dataset = h5_file.create_dataset(
+            "exported_data",
+            shape=(t, z, y, x, c),
+            dtype=output_dtype,
+            compression="gzip",
+            compression_opts=4,
+        )
+        axis_configs = [
+            {"key": "t", "typeFlags": 8, "resolution": 0, "description": ""},
+            {"key": "z", "typeFlags": 2, "resolution": 0, "description": ""},
+            {"key": "y", "typeFlags": 2, "resolution": 0, "description": ""},
+            {"key": "x", "typeFlags": 2, "resolution": 0, "description": ""},
+            {"key": "c", "typeFlags": 1, "resolution": 0, "description": ""},
+        ]
+        dataset.attrs["axistags"] = json.dumps({"axes": axis_configs})
+
+        def write_channel(
+            channel_index: int,
+            t_start: int,
+            t_end: int,
+            z_start: int,
+            z_end: int,
+            block: np.ndarray,
+        ) -> None:
+            dataset[t_start:t_end, z_start:z_end, :, :, channel_index:channel_index + 1] = np.transpose(
+                block.astype(output_dtype, copy=False),
+                (0, 2, 3, 4, 1),
+            )
+
+        def finalize(physical_pixel_sizes: Any) -> None:
+            h5_file.close()
+
+        return write_channel, finalize
+
+    temp_handle, temp_path = tempfile.mkstemp(prefix="merge_channels_", suffix=".npy")
+    os.close(temp_handle)
+    array_sink = np.lib.format.open_memmap(
+        temp_path,
+        mode="w+",
+        dtype=output_dtype,
+        shape=output_shape,
+    )
+
+    def write_channel(
+        channel_index: int,
+        t_start: int,
+        t_end: int,
+        z_start: int,
+        z_end: int,
+        block: np.ndarray,
+    ) -> None:
+        array_sink[t_start:t_end, channel_index:channel_index + 1, z_start:z_end, :, :] = block.astype(output_dtype, copy=False)
+
+    def finalize(physical_pixel_sizes: Any) -> None:
+        try:
+            array_sink.flush()
+            _save_output(array_sink, output_path, normalized_format, physical_pixel_sizes)
+        finally:
             try:
-                yield tqdm_object
-            finally:
-                joblib.parallel.BatchCompletionCallBack = old_batch_callback
-                tqdm_object.close()
+                os.remove(temp_path)
+            except OSError:
+                pass
 
-        with tqdm(total=len(files_to_process), desc="Processing files", unit="file") as pbar:
-            with _tqdm_joblib(pbar):
-                Parallel(n_jobs=rp.resolve_maxcores(args.maxcores, len(files_to_process)))(
-                    delayed(process_file)(input_file_path,
-                                          _output_path(input_file_path),
-                                          args.merge_channels,
-                                          args.output_format,
-                                          args.output_dim_order,
-                                          args.output_scale)
-                    for input_file_path in files_to_process
+    return write_channel, finalize
+
+
+def merge_grouped_images(
+    group_name: str,
+    grouped_files: dict[str, str],
+    pattern_order: list[str],
+    channel_selection: Optional[dict[str, Any]],
+    output_folder: str,
+    output_suffix: str,
+    output_format: str,
+    output_dim_order: str,
+    z_chunk_size: int,
+) -> str:
+    """Merge channels from one grouped file set into a single output stack.
+
+    Output channel order is always:
+    image1 selected channels, then image2 selected channels, and so on.
+    """
+    reference_shape: Optional[tuple[int, int, int, int]] = None
+    physical_pixel_sizes: Any = None
+    metadata_inputs: list[dict[str, Any]] = []
+    prepared_sources: list[dict[str, Any]] = []
+    total_output_channels = 0
+    output_dtype: Optional[np.dtype] = None
+
+    for image_name in pattern_order:
+        if image_name not in grouped_files:
+            logger.warning("Group '%s' is missing input '%s'; skipping it.", group_name, image_name)
+            continue
+
+        input_path = grouped_files[image_name]
+        img = rp.load_tczyx_image(input_path)
+        data = _get_lazy_data(img)
+        shape = tuple(int(value) for value in data.shape)
+
+        current_shape = (shape[0], shape[2], shape[3], shape[4])
+        if reference_shape is None:
+            reference_shape = current_shape
+            physical_pixel_sizes = getattr(img, "physical_pixel_sizes", None)
+        elif current_shape != reference_shape:
+            raise ValueError(
+                f"Grouped images must have matching TZYX dimensions. "
+                f"Group '{group_name}', input '{image_name}' had {current_shape}, expected {reference_shape}."
+            )
+
+        raw_spec = None if channel_selection is None else channel_selection.get(image_name, channel_selection.get("__all__"))
+        channel_groups = _normalize_channel_groups(raw_spec, shape[1], image_name)
+        total_output_channels += len(channel_groups)
+
+        current_dtype = np.dtype(data.dtype)
+        output_dtype = current_dtype if output_dtype is None else np.result_type(output_dtype, current_dtype)
+        if any(len(group) > 1 for group in channel_groups) and np.issubdtype(current_dtype, np.integer):
+            output_dtype = np.result_type(output_dtype, np.uint32)
+
+        prepared_sources.append(
+            {
+                "input_name": image_name,
+                "source_path": input_path.replace("\\", "/"),
+                "data": data,
+                "channel_groups": channel_groups,
+            }
+        )
+
+    if not prepared_sources or reference_shape is None or output_dtype is None:
+        raise ValueError(f"No input channels were available for group '{group_name}'")
+
+    output_shape = (
+        int(reference_shape[0]),
+        int(total_output_channels),
+        int(reference_shape[1]),
+        int(reference_shape[2]),
+        int(reference_shape[3]),
+    )
+    output_path = _build_output_path(group_name, output_folder, output_suffix, output_format)
+    write_channel, finalize_output = _create_output_sink(
+        output_path=output_path,
+        output_format=output_format,
+        output_dim_order=output_dim_order,
+        output_shape=output_shape,
+        output_dtype=np.dtype(output_dtype),
+    )
+
+    output_channel_index = 0
+    z_chunk_size = max(1, int(z_chunk_size))
+    total_chunks = output_shape[0] * total_output_channels * ((output_shape[2] + z_chunk_size - 1) // z_chunk_size)
+    with tqdm(
+        total=total_chunks,
+        desc=f"Merging {group_name}",
+        unit="chunk",
+        leave=False,
+    ) as progress:
+        for source in prepared_sources:
+            data = source["data"]
+            for channel_group in source["channel_groups"]:
+                metadata_inputs.append(
+                    {
+                        "input_name": source["input_name"],
+                        "source_path": source["source_path"],
+                        "source_channels": list(channel_group),
+                    }
                 )
-    else: # Process each file sequentially        
-        for input_file_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-            # Define output file name
-            output_tif_file_path:str = _output_path(input_file_path)
-            # process file
-            
-            process_file(input_file_path, output_tif_file_path, args.merge_channels, args.output_format, args.output_dim_order, args.output_scale)  # Process each file
-            
+                for time_index in range(output_shape[0]):
+                    for z_start in range(0, output_shape[2], z_chunk_size):
+                        z_end = min(output_shape[2], z_start + z_chunk_size)
+                        block = data[time_index:time_index + 1, :, z_start:z_end, :, :]
+                        if hasattr(block, "compute"):
+                            block = block.compute()
+                        block_np = _ensure_5d(np.asarray(block))
+                        if len(channel_group) == 1:
+                            channel_index = channel_group[0]
+                            block_np = block_np[:, channel_index:channel_index + 1, :, :, :]
+                        else:
+                            block_np = np.take(block_np, channel_group, axis=1).sum(
+                                axis=1,
+                                keepdims=True,
+                                dtype=np.dtype(output_dtype),
+                            )
+                        write_channel(output_channel_index, time_index, time_index + 1, z_start, z_end, block_np)
+                        progress.update(1)
+                output_channel_index += 1
+
+    finalize_output(physical_pixel_sizes)
+
+    metadata_path = f"{rp.strip_tiff_suffix(output_path)}_metadata.yaml"
+    metadata = {
+        "Merge channels": {
+            "group_name": group_name,
+            "output_channel_order": metadata_inputs,
+            "output_format": rp.normalize_output_format(output_format),
+            "output_dim_order": output_dim_order,
+            "output_shape_tczyx": [int(value) for value in output_shape],
+            "memory_strategy": "lazy dask-backed chunked processing",
+        }
+    }
+    with open(metadata_path, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(metadata, handle, sort_keys=False)
+
+    logger.info("Saved merged group '%s' to %s", group_name, output_path)
+    return output_path
 
 
-if __name__ == "__main__":
-    import argparse
-    import os
+@contextmanager
+def _tqdm_joblib(tqdm_object: tqdm):
+    """Patch joblib so tqdm updates during parallel processing."""
+    import joblib
 
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
+
+
+def _collect_search_patterns_from_args(args: argparse.Namespace) -> dict[str, str]:
+    """Collect input search patterns from the CLI arguments.
+
+    Preferred usage is --input-search-pattern1, --input-search-pattern2, etc.
+    The legacy --input-search-pattern argument is still accepted for compatibility.
+    """
+    search_patterns: dict[str, str] = {}
+
+    legacy_pattern = getattr(args, "input_search_pattern", None)
+    if legacy_pattern:
+        search_patterns.update(_parse_input_patterns(legacy_pattern))
+
+    for index in range(1, 10):
+        value = getattr(args, f"input_search_pattern{index}", None)
+        if value:
+            search_patterns[f"image{index}"] = value
+
+    if not search_patterns:
+        raise ValueError(
+            "Provide at least one input pattern using --input-search-pattern1 "
+            "(and optionally --input-search-pattern2, --input-search-pattern3, ...)."
+        )
+
+    return search_patterns
+
+
+def process_folder(args: argparse.Namespace) -> None:
+    """Process all grouped inputs matched by the provided patterns."""
+    search_patterns = _collect_search_patterns_from_args(args)
+    grouped = rp.get_grouped_files_to_process(search_patterns, args.search_subfolders)
+
+    if not grouped:
+        raise FileNotFoundError(f"No files matched the provided input search patterns: {search_patterns}")
+
+    os.makedirs(args.output_folder, exist_ok=True)
+    channel_selection = _parse_channels_argument(args.channels)
+    pattern_order = list(search_patterns.keys())
+    items = list(grouped.items())
+
+    logger.info("Found %d grouped item(s) using inputs: %s", len(items), ", ".join(pattern_order))
+
+    if args.no_parallel or len(items) <= 1:
+        for group_name, grouped_files in tqdm(items, desc="Merging groups", unit="group"):
+            merge_grouped_images(
+                group_name=group_name,
+                grouped_files=grouped_files,
+                pattern_order=pattern_order,
+                channel_selection=channel_selection,
+                output_folder=args.output_folder,
+                output_suffix=args.output_suffix,
+                output_format=args.output_format,
+                output_dim_order=args.output_dim_order,
+                z_chunk_size=args.z_chunk_size,
+            )
+        return
+
+    with tqdm(total=len(items), desc="Merging groups", unit="group") as progress:
+        with _tqdm_joblib(progress):
+            Parallel(n_jobs=rp.resolve_maxcores(args.maxcores, len(items)))(
+                delayed(merge_grouped_images)(
+                    group_name=group_name,
+                    grouped_files=grouped_files,
+                    pattern_order=pattern_order,
+                    channel_selection=channel_selection,
+                    output_folder=args.output_folder,
+                    output_suffix=args.output_suffix,
+                    output_format=args.output_format,
+                    output_dim_order=args.output_dim_order,
+                    z_chunk_size=args.z_chunk_size,
+                )
+                for group_name, grouped_files in items
+            )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the project-standard CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Process BioImage files.",
+        description=(
+            "Merge channels from grouped images into one output stack. "
+            "If --channels is omitted, all channels from all grouped images are kept."
+        ),
         epilog="""
 Example YAML config for run_pipeline.exe:
 ---
 run:
-- name: Merge channels (sum projection)
-    environment: uv@3.11:default
+- name: Merge all channels from grouped inputs
+  environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/merge_channels.py'
-  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --input-search-pattern1: '%YAML%/input_a/*_a.ome.tif'
+  - --input-search-pattern2: '%YAML%/input_b/*_b.ome.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1], 2, 3]'
 
-- name: Merge channels (with upsampling)
-    environment: uv@3.11:default
+- name: Merge selected channels per image
+  environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/merge_channels.py'
-  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --input-search-pattern1: '%YAML%/input_a/*_a.ome.tif'
+  - --input-search-pattern2: '%YAML%/input_b/*_b.ome.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1,2], 3]'
-  - --output-scale: '2.0'
+  - --channels: '{"image1":[0,1],"image2":[2]}'
+  - --output-format: ome.tif
 
-- name: Merge channels (export as Ilastik H5)
-    environment: uv@3.11:default
+- name: Merge grouped inputs and export Ilastik H5
+  environment: uv@3.11:default
   commands:
   - python
   - '%REPO%/standard_code/python/merge_channels.py'
-  - --input-search-pattern: '%YAML%/input_data/**/*.tif'
+  - --input-search-pattern1: '%YAML%/input_a/*_a.ome.tif'
+  - --input-search-pattern2: '%YAML%/input_b/*_b.ome.tif'
   - --output-folder: '%YAML%/output_data'
-  - --merge-channels: '[[0,1], [2], [3,4]]'
+  - --channels: '{"image1":[[0,1],2],"image2":"all"}'
   - --output-format: ilastik-h5
 """,
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--input-search-pattern", type=str, required=False, help="Glob pattern for input images, e.g. 'folder/*.tif'")
-    parser.add_argument("--input-folder", type=str, required=False, help="Deprecated: input folder (use --input-search-pattern)")
-    parser.add_argument("--output-folder", type=str, required=False, help="Path to save the processed files")
-    parser.add_argument("--output-suffix", type=str, default="_merged", help="Suffix appended to output filenames before the extension")
-    parser.add_argument("--merge-channels", type=str, required=True, help="E.g. '[[0,1,2,3], 4]' to merge channels 0,1,2,3 and keep channel 4 and remove  >4")
-    parser.add_argument("--output-format", type=str, choices=["tif", "npy", "ilastik-h5"], default="tif", help="Output format: 'tif' (OME-TIFF), 'npy' (NumPy array), or 'ilastik-h5' (HDF5 for Ilastik)")
-    parser.add_argument("--output-dim-order", type=str, choices=["TCZYX", "TZYXC"], default="TCZYX", help="Output dimension order for npy: 'TCZYX' (default) or 'TZYXC'")
-    parser.add_argument("--output-scale", type=float, default=1, help="Over or under-sampling factor for the output image. Default is 1 (no scaling).")
-    parser.add_argument("--no-parallel", action="store_true", help="Do not use parallel processing")
-    parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.")
-    parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
+    parser.add_argument(
+        "--input-search-pattern",
+        type=str,
+        required=False,
+        help="Legacy single pattern or JSON mapping. Prefer --input-search-pattern1, --input-search-pattern2, etc.",
+    )
+    for index in range(1, 10):
+        parser.add_argument(
+            f"--input-search-pattern{index}",
+            type=str,
+            required=False,
+            help=f"Input glob pattern for image {index}.",
+        )
+    parser.add_argument(
+        "--output-folder",
+        type=str,
+        required=True,
+        help="Destination folder for merged outputs.",
+    )
+    parser.add_argument(
+        "--output-suffix",
+        type=str,
+        default="_merged",
+        help="Suffix appended to the grouped basename before the extension.",
+    )
+    parser.add_argument(
+        "--channels",
+        "--merge-channels",
+        dest="channels",
+        type=str,
+        default=None,
+        help=(
+            "Optional JSON channel selection. Omit to use all channels from every input image. "
+            "Examples: '[0,1]', '[[0,1],2]', or '{\"image1\":[0],\"image2\":\"all\"}'."
+        ),
+    )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["tif", "ome.tif", "npy", "ilastik-h5"],
+        default="ome.tif",
+        help="Output format (default: ome.tif)",
+    )
+    parser.add_argument(
+        "--output-dim-order",
+        type=str,
+        choices=["TCZYX", "TZYXC"],
+        default="TCZYX",
+        help="Output dimension order for NumPy exports (default: TCZYX)",
+    )
+    parser.add_argument(
+        "--search-subfolders",
+        action="store_true",
+        help="Search recursively if your patterns do not already include **.",
+    )
+    parser.add_argument(
+        "--z-chunk-size",
+        type=int,
+        default=1,
+        help="Number of Z slices to compute at once during lazy merging (default: 1).",
+    )
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable parallel processing.",
+    )
+    parser.add_argument(
+        "--maxcores",
+        type=int,
+        default=None,
+        help="Maximum number of CPU cores to use for parallel processing.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: WARNING)",
+    )
+    return parser
 
+
+def main() -> None:
+    """CLI entry point."""
+    parser = build_parser()
     args = parser.parse_args()
 
     logging.basicConfig(
         level=getattr(logging, args.log_level),
-        format='%(asctime)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    # Check if output folder path is provided, if not set default
-    if args.output_folder is None:
-        base = os.path.dirname(args.input_search_pattern) if args.input_search_pattern else args.input_folder
-        args.output_folder = os.path.join(base, "_merged")
+    process_folder(args)
 
-    # Process the folder
-    process_folder(args, use_parallel = not args.no_parallel)
+
+if __name__ == "__main__":
+    main()
 

@@ -20,6 +20,7 @@ from typing import Any, Literal
 import numpy as np
 from scipy import ndimage
 import tifffile
+from tqdm import tqdm
 
 import bioimage_pipeline_utils as rp
 
@@ -78,6 +79,13 @@ def _load_tczyx_block(img: Any, t_index: int, c_index: int) -> np.ndarray:
     if hasattr(img, "dask_data") and img.dask_data is not None:
         return np.asarray(img.dask_data[t_index:t_index + 1, c_index:c_index + 1, :, :, :].compute())
     return np.asarray(img.data[t_index:t_index + 1, c_index:c_index + 1, :, :, :])
+
+
+def _load_tczyx_plane(img: Any, t_index: int, c_index: int, z_index: int) -> np.ndarray:
+    """Load a single TCZYX plane for one timepoint/channel/Z, using lazy loading when available."""
+    if hasattr(img, "dask_data") and img.dask_data is not None:
+        return np.asarray(img.dask_data[t_index:t_index + 1, c_index:c_index + 1, z_index:z_index + 1, :, :].compute())
+    return np.asarray(img.data[t_index:t_index + 1, c_index:c_index + 1, z_index:z_index + 1, :, :])
 
 
 def _should_force_sequential(input_paths: list[str]) -> tuple[bool, str | None]:
@@ -161,7 +169,7 @@ def apply_filter(
     elif method == "median":
         if mode == "2d":
             # Apply median per Z slice
-            output = np.zeros_like(data, dtype=np.float32)
+            output = np.empty_like(data)
             T, C, Z, Y, X = data.shape
             for t in range(T):
                 for c in range(C):
@@ -260,28 +268,66 @@ def process_single_file(
         )
 
         limits = _dtype_limits(original_dtype)
+        plane_streaming = mode == "2d" and _estimate_nbytes((1, 1, Z, Y, X), original_dtype) >= 256 * 1024**2
+        progress_total = T * C_total * Z if plane_streaming else T * C_total
+        progress_unit = "plane" if plane_streaming else "block"
 
-        for t in range(T):
-            for c in range(C_total):
-                block = _load_tczyx_block(img, t, c)
-                if c in selected_channels:
-                    block = apply_filter(
-                        block,
-                        method=method,
-                        mode=mode,
-                        sigma_xy=sigma_xy,
-                        sigma_z=sigma_z,
-                        truncate=truncate,
-                        size_y=size_y,
-                        size_x=size_x,
-                        size_z=size_z,
-                    )
+        if plane_streaming:
+            logger.info("Large 2D stack detected; switching to plane-wise streaming for better responsiveness")
 
-                if limits is not None:
-                    lo, hi = limits
-                    block = np.clip(block, lo, hi)
+        with tqdm(
+            total=progress_total,
+            desc=f"{os.path.basename(input_path)} [{method}]",
+            unit=progress_unit,
+            leave=True,
+            dynamic_ncols=True,
+            mininterval=0.2,
+        ) as progress:
+            for t in range(T):
+                for c in range(C_total):
+                    if plane_streaming:
+                        for z in range(Z):
+                            block = _load_tczyx_plane(img, t, c, z)
+                            if c in selected_channels:
+                                block = apply_filter(
+                                    block,
+                                    method=method,
+                                    mode=mode,
+                                    sigma_xy=sigma_xy,
+                                    sigma_z=sigma_z,
+                                    truncate=truncate,
+                                    size_y=size_y,
+                                    size_x=size_x,
+                                    size_z=size_z,
+                                )
 
-                filtered[t:t+1, c:c+1, :, :, :] = np.asarray(block, dtype=original_dtype)
+                            if limits is not None:
+                                lo, hi = limits
+                                block = np.clip(block, lo, hi)
+
+                            filtered[t:t+1, c:c+1, z:z+1, :, :] = np.asarray(block, dtype=original_dtype)
+                            progress.update(1)
+                    else:
+                        block = _load_tczyx_block(img, t, c)
+                        if c in selected_channels:
+                            block = apply_filter(
+                                block,
+                                method=method,
+                                mode=mode,
+                                sigma_xy=sigma_xy,
+                                sigma_z=sigma_z,
+                                truncate=truncate,
+                                size_y=size_y,
+                                size_x=size_x,
+                                size_z=size_z,
+                            )
+
+                        if limits is not None:
+                            lo, hi = limits
+                            block = np.clip(block, lo, hi)
+
+                        filtered[t:t+1, c:c+1, :, :, :] = np.asarray(block, dtype=original_dtype)
+                        progress.update(1)
 
         filtered.flush()
 
@@ -390,7 +436,7 @@ def process_files(
     if no_parallel or len(tasks) == 1:
         logger.info("Processing files sequentially")
         ok = 0
-        for inp, out in tasks:
+        for inp, out in tqdm(tasks, desc="Files", unit="file", dynamic_ncols=True, leave=True):
             if process_single_file(
                 inp, out, output_format, method, mode, channels, sigma_xy, sigma_z, truncate, size_y, size_x, size_z, force
             ):

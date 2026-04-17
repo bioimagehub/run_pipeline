@@ -88,8 +88,8 @@ func condaBasePythonPath(anacondaPath string) string {
 func condaExecutable(anacondaPath string) string {
 	if isWindowsRuntime() {
 		candidates := []string{
-			filepath.Join(anacondaPath, "condabin", "conda.bat"),
 			filepath.Join(anacondaPath, "Scripts", "conda.exe"),
+			filepath.Join(anacondaPath, "condabin", "conda.bat"),
 		}
 		for _, p := range candidates {
 			if isFile(p) {
@@ -113,6 +113,41 @@ func condaExecutable(anacondaPath string) string {
 	}
 
 	return ""
+}
+
+func resolveEnvExecutable(envPath, command string) string {
+	if command == "" {
+		return command
+	}
+	if strings.ContainsAny(command, `\\/`) {
+		return command
+	}
+
+	if isWindowsRuntime() {
+		candidates := []string{
+			filepath.Join(envPath, "Scripts", command+".exe"),
+			filepath.Join(envPath, "Scripts", command+".bat"),
+			filepath.Join(envPath, "Scripts", command+".cmd"),
+			filepath.Join(envPath, command+".exe"),
+		}
+		for _, p := range candidates {
+			if isFile(p) {
+				return p
+			}
+		}
+		return command
+	}
+
+	candidates := []string{
+		filepath.Join(envPath, "bin", command),
+		filepath.Join(envPath, command),
+	}
+	for _, p := range candidates {
+		if isFile(p) {
+			return p
+		}
+	}
+	return command
 }
 
 func shellCommandPrefix() []string {
@@ -773,87 +808,53 @@ func updateSegmentStatus(status *Status, statusPath string, segment Segment, con
 	}
 }
 
-// Function to prepare command arguments for Python execution
+// Function to prepare command arguments for Conda-managed execution
 func makePythonCommand(segment Segment, anacondaPath, mainProgramDir, yamlDir string) []string {
-	if !isWindowsRuntime() {
-		condaExe := condaExecutable(anacondaPath)
-		if condaExe == "" {
-			log.Fatal("Conda executable not found. Please install conda or set CONDA_PATH correctly.")
-		}
-
-		cmdArgs := []string{condaExe, "run", "--no-capture-output"}
-		if strings.EqualFold(segment.Environment, "base") {
-			cmdArgs = append(cmdArgs, "-p", anacondaPath)
-		} else {
-			envPath := filepath.Join(anacondaPath, "envs", segment.Environment)
-			if isDirectory(envPath) {
-				cmdArgs = append(cmdArgs, "-p", envPath)
-			} else {
-				cmdArgs = append(cmdArgs, "-n", segment.Environment)
-			}
-		}
-
-		for _, cmd := range segment.Commands {
-			switch v := cmd.(type) {
-			case string:
-				resolved := resolvePath(v, mainProgramDir, yamlDir)
-				cmdArgs = append(cmdArgs, resolved)
-			case map[interface{}]interface{}:
-				for flag, value := range v {
-					cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
-					if value != nil && value != "null" {
-						valStr := fmt.Sprintf("%v", value)
-						resolved := resolvePath(valStr, mainProgramDir, yamlDir)
-						cmdArgs = append(cmdArgs, resolved)
-					}
-				}
-			default:
-				log.Fatalf("unexpected type %v", reflect.TypeOf(v))
-			}
-		}
-
-		return cmdArgs
+	condaExe := condaExecutable(anacondaPath)
+	if condaExe == "" {
+		log.Fatal("Conda executable not found. Please install conda or set CONDA_PATH correctly.")
 	}
 
-	cmdArgs := []string{"cmd", "/C"} // Windows command line execution prefix
-
-	// Determine which environment to activate for Python
-	if strings.ToLower(segment.Environment) == "base" {
-		// If the environment is base, activate it directly
-		cmdArgs = append(cmdArgs,
-			anacondaPath+"\\Scripts\\activate.bat", // Script to activate Anaconda
-			anacondaPath,
-			"&&", // Use '&&' to chain commands together
-		)
+	var cmdArgs []string
+	if isWindowsRuntime() && strings.HasSuffix(strings.ToLower(condaExe), ".bat") {
+		cmdArgs = []string{"cmd", "/C", "call", condaExe, "run", "--no-capture-output"}
 	} else {
-		// For named environments, activate that environment
-		cmdArgs = append(cmdArgs,
-			anacondaPath+"\\Scripts\\activate.bat", // Script to activate Anaconda
-			anacondaPath,
-			"&&",
-			"conda", "activate", segment.Environment, // Activate the specified conda environment
-			"&&",
-		)
+		cmdArgs = []string{condaExe, "run", "--no-capture-output"}
 	}
 
-	// Loop through each command in the segment's command list
+	resolvedEnvPath := ""
+	if strings.EqualFold(segment.Environment, "base") {
+		resolvedEnvPath = anacondaPath
+		cmdArgs = append(cmdArgs, "-p", anacondaPath)
+	} else {
+		envPath := filepath.Join(anacondaPath, "envs", segment.Environment)
+		if isDirectory(envPath) {
+			resolvedEnvPath = envPath
+			cmdArgs = append(cmdArgs, "-p", envPath)
+		} else {
+			cmdArgs = append(cmdArgs, "-n", segment.Environment)
+		}
+	}
+
+	isFirstCommand := true
 	for _, cmd := range segment.Commands {
 		switch v := cmd.(type) {
 		case string:
 			resolved := resolvePath(v, mainProgramDir, yamlDir)
+			if isFirstCommand && resolvedEnvPath != "" {
+				resolved = resolveEnvExecutable(resolvedEnvPath, resolved)
+			}
 			cmdArgs = append(cmdArgs, resolved)
-
+			isFirstCommand = false
 		case map[interface{}]interface{}:
 			for flag, value := range v {
 				cmdArgs = append(cmdArgs, fmt.Sprintf("%v", flag))
-
 				if value != nil && value != "null" {
 					valStr := fmt.Sprintf("%v", value)
 					resolved := resolvePath(valStr, mainProgramDir, yamlDir)
 					cmdArgs = append(cmdArgs, resolved)
 				}
 			}
-
 		default:
 			log.Fatalf("unexpected type %v", reflect.TypeOf(v))
 		}

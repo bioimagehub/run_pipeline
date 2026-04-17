@@ -1,0 +1,11 @@
+run:
+- name: Image calculator mask image1 by image2
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/image_calculator.py'
+  - --input-search-pattern1: '%YAML%/input_a/*_a.ome.tif'
+  - --input-search-pattern2: '%YAML%/input_b/*_b.ome.tif'
+  - --output-folder: '%YAML%/output_data'
+  - --expression: 'image1 * (image2 > 0)'
+  - --output-format: ome.tif
