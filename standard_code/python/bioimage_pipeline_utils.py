@@ -1,4 +1,6 @@
-from typing import Union, Optional
+from typing import Union, Optional, Callable, Iterator, Any
+from dataclasses import dataclass
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from bioio import BioImage
 import os
 import tempfile
@@ -215,6 +217,33 @@ def resolve_maxcores(maxcores: Optional[int], task_count: Optional[int] = None) 
     if task_count is not None:
         resolved = min(resolved, task_count)
     return max(1, resolved)
+
+
+@dataclass(frozen=True)
+class BatchTask:
+    """Single input/output batch task."""
+    input_path: str
+    output_path: str
+
+
+@dataclass(frozen=True)
+class BatchPlan:
+    """Resolved batch plan for a CLI run."""
+    input_pattern: str
+    input_files: list[str]
+    tasks: list[BatchTask]
+    base_folder: str
+    output_folder: str
+
+
+@dataclass(frozen=True)
+class BatchTaskResult:
+    """Result for a single batch task execution."""
+    input_path: str
+    output_path: str
+    success: bool
+    skipped: bool = False
+    error: Optional[str] = None
 
 
 def split_compound_extension(path: str) -> tuple[str, str]:
@@ -621,6 +650,207 @@ def uncollapse_filename(collapsed: str, base_folder: str, delimiter: str = "__")
 
     original_path:str = os.path.join(base_folder, rel_path)
     return original_path
+
+
+def discover_input_files(input_pattern: str) -> list[str]:
+    """Resolve input files from a glob pattern using the standard batch CLI rules."""
+    search_subfolders = '**' in input_pattern
+    return get_files_to_process2(input_pattern, search_subfolders=search_subfolders)
+
+
+def resolve_batch_base_folder(input_pattern: str, input_files: list[str]) -> str:
+    """Resolve the logical base folder for a batch pattern."""
+    if not input_files:
+        raise ValueError("input_files cannot be empty")
+
+    if '**' in input_pattern:
+        base_folder = input_pattern.split('**')[0].rstrip('/\\')
+        if not base_folder:
+            base_folder = os.getcwd()
+        return os.path.abspath(base_folder)
+
+    return str(os.path.abspath(os.path.dirname(input_files[0])))
+
+
+def build_batch_tasks(
+    input_pattern: str,
+    output_folder: Optional[str],
+    output_extension: Optional[str],
+    output_suffix: str = "",
+    default_output_folder_suffix: str = "",
+    collapse_delimiter: Optional[str] = None,
+) -> BatchPlan:
+    """Build a standardized batch plan from an input pattern and output rules."""
+    input_files = discover_input_files(input_pattern)
+    if not input_files:
+        return BatchPlan(
+            input_pattern=input_pattern,
+            input_files=[],
+            tasks=[],
+            base_folder="",
+            output_folder=output_folder or "",
+        )
+
+    base_folder = resolve_batch_base_folder(input_pattern, input_files)
+
+    if output_folder is None:
+        output_folder = f"{base_folder}{default_output_folder_suffix}"
+
+    tasks: list[BatchTask] = []
+    for input_path in input_files:
+        if collapse_delimiter is None:
+            output_name_source = os.path.basename(input_path)
+        else:
+            output_name_source = collapse_filename(input_path, base_folder, collapse_delimiter)
+
+        output_name = os.path.basename(
+            resolve_output_path(output_name_source, extension=output_extension, suffix=output_suffix)
+        )
+        tasks.append(
+            BatchTask(
+                input_path=input_path,
+                output_path=os.path.join(output_folder, output_name),
+            )
+        )
+
+    return BatchPlan(
+        input_pattern=input_pattern,
+        input_files=input_files,
+        tasks=tasks,
+        base_folder=base_folder,
+        output_folder=output_folder,
+    )
+
+
+def should_skip_output(output_path: str, force: bool = False) -> bool:
+    """Return True when an existing output should be kept instead of reprocessed."""
+    return os.path.exists(output_path) and not force
+
+
+def print_dry_run_preview(plan: BatchPlan, extra_lines: Optional[list[str]] = None) -> None:
+    """Print a standardized dry-run preview for a batch plan."""
+    print(f"[DRY RUN] Would process {len(plan.tasks)} files")
+    print(f"[DRY RUN] Output folder: {plan.output_folder}")
+    for line in extra_lines or []:
+        print(f"[DRY RUN] {line}")
+    for task in plan.tasks:
+        print(f"[DRY RUN] {task.input_path} -> {task.output_path}")
+
+
+def _run_single_batch_task(
+    process_func: Callable[..., bool],
+    task: BatchTask,
+    process_kwargs: dict[str, Any],
+    skip_existing: bool,
+    force: bool,
+) -> BatchTaskResult:
+    """Execute one batch task and capture failures as structured results."""
+    try:
+        if skip_existing and should_skip_output(task.output_path, force=force):
+            return BatchTaskResult(
+                input_path=task.input_path,
+                output_path=task.output_path,
+                success=True,
+                skipped=True,
+            )
+
+        success = bool(process_func(task.input_path, task.output_path, **process_kwargs))
+        return BatchTaskResult(
+            input_path=task.input_path,
+            output_path=task.output_path,
+            success=success,
+            skipped=False,
+            error=None if success else "Processing returned False",
+        )
+    except Exception as exc:
+        return BatchTaskResult(
+            input_path=task.input_path,
+            output_path=task.output_path,
+            success=False,
+            skipped=False,
+            error=str(exc),
+        )
+
+
+def run_batch_tasks(
+    tasks: list[BatchTask],
+    process_func: Callable[..., bool],
+    process_kwargs: Optional[dict[str, Any]] = None,
+    maxcores: Optional[int] = None,
+    no_parallel: bool = False,
+    skip_existing: bool = False,
+    force: bool = False,
+) -> list[BatchTaskResult]:
+    """Run batch tasks sequentially or in parallel using a shared execution wrapper."""
+    process_kwargs = process_kwargs or {}
+
+    if not tasks:
+        return []
+
+    if no_parallel or len(tasks) == 1:
+        return [
+            _run_single_batch_task(process_func, task, process_kwargs, skip_existing, force)
+            for task in tasks
+        ]
+
+    max_workers = resolve_maxcores(maxcores, len(tasks))
+    futures = {}
+    results: list[BatchTaskResult] = []
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        for task in tasks:
+            future = executor.submit(
+                _run_single_batch_task,
+                process_func,
+                task,
+                process_kwargs,
+                skip_existing,
+                force,
+            )
+            futures[future] = task
+
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    result_order = {
+        (task.input_path, task.output_path): index
+        for index, task in enumerate(tasks)
+    }
+    results.sort(key=lambda result: result_order[(result.input_path, result.output_path)])
+    return results
+
+
+def summarize_batch_results(results: list[BatchTaskResult]) -> dict[str, int]:
+    """Summarize succeeded, failed, and skipped tasks."""
+    skipped = sum(1 for result in results if result.skipped)
+    failed = sum(1 for result in results if not result.success)
+    succeeded = sum(1 for result in results if result.success and not result.skipped)
+    return {
+        "total": len(results),
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+
+def iter_tczyx_blocks(
+    img: Any,
+    channels: Optional[list[int]] = None,
+) -> Iterator[tuple[int, int, np.ndarray]]:
+    """Yield per-(T,C) blocks as TCZYX arrays, using dask when available."""
+    shape = tuple(int(value) for value in img.shape)
+    if len(shape) != 5:
+        raise ValueError(f"Expected TCZYX image shape, got {shape}")
+
+    total_channels = shape[1]
+    selected_channels = list(range(total_channels)) if channels is None else channels
+
+    for t_index in range(shape[0]):
+        for c_index in selected_channels:
+            if hasattr(img, "dask_data") and img.dask_data is not None:
+                block = np.asarray(img.dask_data[t_index:t_index + 1, c_index:c_index + 1, :, :, :].compute())
+            else:
+                block = np.asarray(img.data[t_index:t_index + 1, c_index:c_index + 1, :, :, :])
+            yield t_index, c_index, block
 
 # ...existing code...
 

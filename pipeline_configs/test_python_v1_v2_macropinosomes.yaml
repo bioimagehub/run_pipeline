@@ -1,0 +1,52 @@
+run:
+- name: Force reprocessing for this test run
+  type: force
+  message: 'Reprocessing all segments for v1/v2 comparison.'
+
+- name: Convert to TIFF (v1)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/convert_to_tif.py'
+  - --input-search-pattern: '%TEST_FOLDER%/macropinosomes/*.ome.tif'
+  - --output-folder: '%TEST_FOLDER%/macropinosomes/output_compare/convert_v1'
+  - --output-format: tif
+  - --scene-filter: all
+  - --log-level: INFO
+
+- name: Convert to TIFF (v2)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python_v2/convert_to_tif.py'
+  - --input-search-pattern: '%TEST_FOLDER%/macropinosomes/*.ome.tif'
+  - --output-folder: '%TEST_FOLDER%/macropinosomes/output_compare/convert_v2'
+  - --output-format: tif
+  - --scene-filter: all
+  - --log-level: INFO
+
+- name: Filter mean 2D (v1)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python/filter.py'
+  - --input-search-pattern: '%TEST_FOLDER%/macropinosomes/*.ome.tif'
+  - --output-folder: '%TEST_FOLDER%/macropinosomes/output_compare/filter_v1'
+  - --method: mean
+  - --mode: 2d
+  - --size: 3
+  - --output-suffix: _mean
+  - --log-level: INFO
+
+- name: Filter mean 2D (v2)
+  environment: uv@3.11:default
+  commands:
+  - python
+  - '%REPO%/standard_code/python_v2/filter.py'
+  - --input-search-pattern: '%TEST_FOLDER%/macropinosomes/*.ome.tif'
+  - --output-folder: '%TEST_FOLDER%/macropinosomes/output_compare/filter_v2'
+  - --method: mean
+  - --mode: 2d
+  - --size: 3
+  - --output-suffix: _mean
+  - --log-level: INFO
