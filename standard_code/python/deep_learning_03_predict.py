@@ -124,7 +124,7 @@ def process_single_file(
         logger.info("Processing: %s", os.path.basename(input_path))
 
         img = rp.load_tczyx_image(input_path)
-        T, C, Z = img.dims.T, img.dims.C, img.dims.Z
+        T, C, Z, Y, X = img.dims.T, img.dims.C, img.dims.Z, img.dims.Y, img.dims.X
 
         if channel >= C:
             logger.warning(
@@ -149,10 +149,13 @@ def process_single_file(
             pred = predict_image(model, frame, patch_size, overlap, device, sw_batch_size)
             preds.append(pred)
 
-        pred_stack = np.stack(preds)  # (T, H, W)
+        # Convert to TCZYX shape (T, C=1, Z=1, Y, X)
+        pred_stack = np.stack(preds)  # (T, Y, X)
+        pred_stack = pred_stack[:, np.newaxis, np.newaxis, :, :]  # (T, 1, 1, Y, X)
 
+        # Save using rp.save_tczyx_image to preserve OME-TIFF and TCZYX
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        tifffile.imwrite(output_path, pred_stack.astype(np.float32))
+        rp.save_tczyx_image(pred_stack, output_path)
         logger.info("Saved: %s  shape=%s", output_path, pred_stack.shape)
         return True
 
@@ -309,16 +312,13 @@ run:
     output_folder = Path(args.output_folder).resolve()
     output_folder.mkdir(parents=True, exist_ok=True)
 
+    # Use rp.resolve_output_path to generate correct output filenames
     tasks: list[tuple[str, str]] = []
     for fpath in files:
-        stem = Path(fpath).stem
-        # Strip common compound extensions (.ome.tif etc.)
-        for ext in (".ome.tif", ".ome.tiff", ".tif", ".tiff"):
-            if stem.lower().endswith(ext.lstrip(".")):
-                stem = stem[: -len(ext.lstrip("."))].rstrip(".")
-                break
-        out_name = stem + args.output_suffix + ".tif"
-        tasks.append((fpath, str(output_folder / out_name)))
+        # Compose output path using output_folder and resolved filename
+        out_name = rp.resolve_output_path(fpath, ".ome.tif", args.output_suffix)
+        out_path = str(output_folder / Path(out_name).name)
+        tasks.append((fpath, out_path))
 
     # ------------------------------------------------------------------ #
     # Load model once (shared across files)                                #
