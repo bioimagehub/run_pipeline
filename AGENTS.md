@@ -343,6 +343,7 @@ Never use other image I/O methods directly; always go through these helper funct
 
 For user-facing Python CLIs in `standard_code/python/`, standardize the core batch-processing arguments so pipeline YAML files are predictable across modules.
 
+
 Required argument names for batch file-processing CLIs:
 
 - `--input-search-pattern`
@@ -357,6 +358,11 @@ Required argument names for batch file-processing CLIs:
    - Suffix appended to the input stem before the file extension.
    - Use this exact name instead of `--suffix`, `--output-file-name-extension`, or other variants.
    - Default values should be explicit and module-specific, for example `_filled`, `_tracked`, or `_gaussian`.
+
+- `--no-force`
+  - Do not reprocess even if the output file already exists.
+  - Use this flag to skip files that already have outputs, for efficiency in large batch runs.
+  - Use this exact name instead of alternatives such as `--skip-existing` or `--no-overwrite`.
 
 - `--no-parallel`
    - Disable parallel processing.

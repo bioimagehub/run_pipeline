@@ -255,9 +255,9 @@ run:
         help="Number of patches per GPU forward pass (default: 32).",
     )
     parser.add_argument(
-        "--force",
+        "--no-force",
         action="store_true",
-        help="Reprocess even if the output file already exists.",
+        help="Do not reprocess even if the output file already exists.",
     )
     parser.add_argument(
         "--no-parallel",
@@ -347,7 +347,7 @@ run:
             if process_single_file(
                 inp, out, model, device,
                 args.patch_size, args.overlap, args.sw_batch_size,
-                args.channel, args.force,
+                args.channel, not args.no_force,
             ):
                 ok += 1
     else:
@@ -360,7 +360,7 @@ run:
                     process_single_file,
                     inp, out, model, device,
                     args.patch_size, args.overlap, args.sw_batch_size,
-                    args.channel, args.force,
+                    args.channel, not args.no_force,
                 )
                 for inp, out in tasks
             ]
