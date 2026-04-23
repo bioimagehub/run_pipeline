@@ -390,7 +390,7 @@ def main():
     channel = 0
     min_distance = 10
     threshold_abs = 0.1
-    search_range=55
+    search_range=35
     time_search_memory = 2
     min_timepoints = 5
     min_size = 20
