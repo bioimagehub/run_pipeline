@@ -63,6 +63,7 @@ default = [
     "pyGPUreg",
     "roifile",
     "mahotas",
+	"napari[all]",
 
     "jdk4py>=21.0.8.0",
     "scyjava>=1.12.4",

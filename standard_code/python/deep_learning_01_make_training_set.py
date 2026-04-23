@@ -33,7 +33,6 @@ from pathlib import Path
 import numpy as np
 import napari
 import tifffile
-from empatches import EMPatches
 
 import bioimage_pipeline_utils as rp
 
@@ -292,20 +291,24 @@ run:
     # ------------------------------------------------------------------- #
     # 4. Extract patches                                                   #
     # ------------------------------------------------------------------- #
-    emp = EMPatches()
     all_patches: list[np.ndarray] = []
     patch_meta: list[tuple[int, int, tuple]] = []
 
     for file_idx, frame in enumerate(stacked):
-        patches, indices = emp.extract_patches(frame, patchsize=ps, overlap=0)
-        for local_idx, (patch, bounds) in enumerate(zip(patches, indices)):
-            ph, pw = patch.shape
-            if ph != ps or pw != ps:
-                padded = np.zeros((ps, ps), dtype=patch.dtype)
-                padded[:ph, :pw] = patch
-                patch = padded
-            all_patches.append(patch)
-            patch_meta.append((file_idx, local_idx, bounds))
+        h, w = frame.shape
+        local_idx = 0
+        # Use a strict non-overlapping grid so each spatial region is sampled once.
+        for r0 in range(0, h, ps):
+            for c0 in range(0, w, ps):
+                r1 = min(r0 + ps, h)
+                c1 = min(c0 + ps, w)
+
+                patch = np.zeros((ps, ps), dtype=frame.dtype)
+                patch[: r1 - r0, : c1 - c0] = frame[r0:r1, c0:c1]
+
+                all_patches.append(patch)
+                patch_meta.append((file_idx, local_idx, (r0, r1, c0, c1)))
+                local_idx += 1
 
     all_patches_arr = np.stack(all_patches)
     logger.info(
