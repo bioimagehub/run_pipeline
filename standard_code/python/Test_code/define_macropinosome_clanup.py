@@ -16,9 +16,8 @@ from skimage.feature import peak_local_max
 
 from skimage.morphology import reconstruction
 from scipy.ndimage import binary_fill_holes, median_filter
-
-
 import tifffile
+
 
 overlay_cmap = ListedColormap([
     (0.0, 0.0, 0.0, 0.0),   # 0 background: transparent
@@ -28,51 +27,6 @@ overlay_cmap = ListedColormap([
 ])
 
 
-def show_napari(*images, titles=None, coordinates=None):
-    """Show one or more images in napari.
-
-    Each image can be a numpy array, a dask array, or a BioImage object.
-    BioImage objects are displayed with a channel axis so each channel
-    becomes a separate layer.  Plain arrays are shown as-is.
-
-    Parameters
-    ----------
-    *images:
-        One or more images to display.
-    titles:
-        Optional list of layer name strings, one per image.  Falls back to
-        'Image 0', 'Image 1', … when not provided.
-    coordinates:
-        Optional list of napari-format points [T, Z, Y, X] to overlay.
-    """
-    import napari
-    import dask.array as da
-
-    if titles is None:
-        titles = [f"Image {i}" for i in range(len(images))]
-
-    viewer = napari.Viewer()
-
-    for img, title in zip(images, titles):
-        if hasattr(img, "get_image_dask_data"):
-            data = img.get_image_dask_data("TCZYX")
-            viewer.add_image(data, channel_axis=1, name=title)
-        elif isinstance(img, (np.ndarray, da.Array)):
-            viewer.add_image(img, name=title)
-        else:
-            # Last-resort: try to wrap as numpy
-            viewer.add_image(np.asarray(img), name=title)
-
-    if coordinates is not None:
-        if coordinates and isinstance(coordinates[0], list) and isinstance(coordinates[0][0], list):
-            coordinates = [pt for pts in coordinates for pt in pts]
-        viewer.add_points(
-            coordinates,
-            size=8,
-            face_color='red',
-            name='Points',
-        )
-    napari.run()
 
 def greyscale_fill_holes_2d_cpu(image: np.ndarray) -> np.ndarray:
     '''
@@ -126,59 +80,47 @@ def remove_opposite_false_pixels(mask: np.ndarray, iterations: int = 1) -> np.nd
 
     return out
 
+def find_macropinosome(image: np.ndarray, median_filter_size: int = 3, tolerance: float = 0.1, show_plot: bool = False) -> np.ndarray:
+    '''
+    From an input 2D grayscale image, find the macropinosome hole and ring mask.
+    Typically the input image is a cutout around (including entire ring)
+
+    The center pixel should be inside the hole
+
+    returns mask with 0 for background, 1 for hole, 2 for ring.
+    Returns all-zero mask if any QC/final check fails.
+    '''
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape}")
+
+    cy, cx = np.array(image.shape) // 2
+
+    filtered = median_filter(image, size=median_filter_size)
 
 
-
-
-
-def process_image(img_path):
-    img = tifffile.imread(img_path).astype(np.int32)
-
-    cy, cx = np.array(img.shape) // 2
-
-
-    filtered = median_filter(img, size=3)
-    # fix, axes = plt.subplots(1, 2, figsize=(11, 4))
-    # axes[0].imshow(img, cmap='gray')
-    # axes[0].set_title("Original image")
-    # axes[1].imshow(filtered, cmap='gray')
-    # axes[1].set_title("Median filtered image")
-    # plt.show()
-
-    filled = greyscale_fill_holes_2d_cpu(filtered)
-    
-    # print(filtered.dtype, filled.dtype) # int32 int32
-    # calculate score
-    score = filled / filtered
-    # arrange from 0 to 1
-    score = (score - score.min()) / (score.max() - score.min())
-    
-    # plt.imshow(score, cmap='gray')
-    # plt.title("Score map")
-    # plt.show()
-
-    # do not alow that the mask touches the edge. reduce the tolerance until it does not touch the edge
     mp_qc = True
-    tolerance = 0.1 * (filtered.max() - filtered.min())
+    tolerance = float(tolerance) * (float(filtered.max()) - float(filtered.min()))
     mask = np.zeros_like(filtered, dtype=bool)
     touching_edge = True
     while mp_qc:
         grown = flood(filtered, (cy, cx), tolerance=tolerance)
         if grown is None:
-            break
+            return np.zeros_like(filtered, dtype=np.uint8)
         mask = np.asarray(grown, dtype=bool)
 
         # fill holes in the mask
         mask = np.asarray(binary_fill_holes(mask), dtype=bool)
         
-        
+        # remove objects joined by a single pixel
         mask = remove_opposite_false_pixels(mask, iterations=2)
+
+        #
         # keep only the connected component that contains the center
         if not bool(mask[cy, cx]):
-            break
+            return np.zeros_like(filtered, dtype=np.uint8)
         center_component = flood(mask.astype(np.uint8), (cy, cx), tolerance=0)
         if center_component is None:
-            break
+            return np.zeros_like(filtered, dtype=np.uint8)
         mask = np.asarray(center_component, dtype=bool)
 
         # mask can not touch the edge of patch
@@ -194,50 +136,50 @@ def process_image(img_path):
 
     has_hole = bool(np.any(mask))
     has_ring = bool(np.any(ring_mask))
-    ring_brighter_than_hole = False
-    if has_hole and has_ring:
-        ring_brighter_than_hole = float(np.median(filtered[ring_mask])) > float(np.median(filtered[mask]))
+    if not has_hole or not has_ring:
+        return np.zeros_like(filtered, dtype=np.uint8)
+
+    ring_brighter_than_hole = float(np.median(filtered[ring_mask])) > float(np.median(filtered[mask]))
 
     final_pass = has_hole and has_ring and ring_brighter_than_hole and (not touching_edge)
-
     if not final_pass:
-        print(f"Image {img_path} failed final test.")
+        return np.zeros_like(filtered, dtype=np.uint8)
 
-    hole_overlay_value = 1 if final_pass else 2
-    overlay = np.zeros_like(filtered, dtype=np.uint8)
-    overlay[ring_mask] = 3
-    overlay[mask] = hole_overlay_value
+    output_mask = np.zeros_like(filtered, dtype=np.uint8)
+    output_mask[mask] = 1
+    output_mask[ring_mask] = 2
 
-    
-    # final plot
-    fix, axes = plt.subplots(1, 2, figsize=(14, 4))
-    axes[0].imshow(img, cmap='gray')
-    axes[0].set_title("Input image (grayscale)")
+    if show_plot:
+        overlay = np.zeros_like(filtered, dtype=np.uint8)
+        overlay[mask] = 1
+        overlay[ring_mask] = 3
 
-    axes[1].imshow(img, cmap='gray')
-    axes[1].imshow(overlay, cmap=overlay_cmap, vmin=0, vmax=3, interpolation='nearest')
-    center_color = 'lime' if final_pass else 'magenta'
-    axes[1].scatter([cx], [cy], s=42, c=center_color, marker='x')
-    result_text = "pass" if final_pass else "fail"
-    axes[1].set_title("Input + hole/ring overlay ({}, tol={:.2f})".format(result_text, tolerance))
+        fix, axes = plt.subplots(1, 2, figsize=(14, 4))
+        axes[0].imshow(image, cmap='gray')
+        axes[0].set_title("Input image (grayscale)")
 
-    plt.show()
+        axes[1].imshow(image, cmap='gray')
+        axes[1].imshow(overlay, cmap=overlay_cmap, vmin=0, vmax=3, interpolation='nearest')
+        axes[1].scatter([cx], [cy], s=42, c='lime', marker='x')
+        axes[1].set_title("Input + hole/ring overlay (pass)")
+        plt.show()
+
+    return output_mask
+
+
+def process_image(img_path):
+    img = tifffile.imread(img_path).astype(np.int32)
+
+    find_macropinosome(img, show_plot=True)
 
 
 
 def process_folder(folder_path):
-    images = glob(folder_path + "/*.tif")[:10]
+    images = glob(folder_path + "/*.tif")[10:20]
     for img_path in images:
         process_image(img_path)
 
 
-
 if __name__ == "__main__":
-    path = r"C:\Users\oyvinode\Desktop\del"
-    process_folder(path)
-
-    
-
-    
-
-
+ folder_path = r"C:\Users\oyvinode\Desktop\del"
+ process_folder(folder_path)

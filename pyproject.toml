@@ -43,6 +43,11 @@ torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 cucim-cu12 = { index = "nvidia" }
 
+[tool.uv.workspace]
+members = [
+    "standard_code/python/Test_code/sam2",
+]
+
  [dependency-groups]
 default = [
     "numpy>=2.1",
@@ -400,6 +405,8 @@ deep-learning = [
 	"kornia>=0.7",
 	"tensorboard>=2.16",
 	"setuptools",  # provides pkg_resources, required by tensorboard
+	"sam2>=1.1.0",
+	"huggingface-hub>=1.12.0",
 
 	# Scientific Python
 	"numpy>=2.1",
