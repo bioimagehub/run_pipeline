@@ -106,35 +106,144 @@ def assign_track_ids(
 # Step 2 + 3: Register SAM2 prompts and propagate BACKWARDS
 # ---------------------------------------------------------------------------
 
-def run_tracking(
+def _run_tracking_on_region(
     img_tyx: np.ndarray,
     det_mask_tyx: np.ndarray,
     predictor,
-    max_centroid_dist: float = 50.0,
+    max_centroid_dist: float,
+    label: str = "",
+    temporal_window: int | None = None,
 ) -> np.ndarray:
-    """Full backward-pass tracking pipeline fusing detection masks with SAM2.
+    """Run the full SAM2 backward-tracking pipeline on one (T, H, W) region.
+
+    Track IDs in the returned array start from 1.  The caller is responsible
+    for shifting them to globally unique values when stitching tiles.
+
+    Parameters
+    ----------
+    img_tyx          : (T, H, W) image region (used for JPEG encoding).
+    det_mask_tyx     : (T, H, W) uint8 binary detection mask for this region.
+    predictor        : SAM2VideoPredictor.
+    max_centroid_dist: centroid linking distance (px) for assign_track_ids.
+    label            : short string used in progress messages (e.g. tile coords).
+    temporal_window  : if set, process this many frames per SAM2 call, carrying
+                       the boundary mask forward to ensure track continuity.
+                       Reduces peak GPU/RAM usage for long videos.  ``None``
+                       processes all T frames in a single SAM2 session.
 
     Returns
     -------
-    (T, H, W) int32 array. Each pixel's value is the track ID (0 = background).
+    (T, H, W) int32 label map; 0 = background, 1..N = track IDs.
     """
     import torch
+    from contextlib import nullcontext
+    from tqdm import tqdm
 
     T, H, W = img_tyx.shape
     device = predictor._device
 
-    print("Assigning track IDs (backwards)...")
     frame_assignments, n_tracks = assign_track_ids(det_mask_tyx, max_centroid_dist)
-    print(f"  {n_tracks} unique tracks found across {T} frames.")
+    print(f"    {label}{n_tracks} tracks across {T} frames.")
 
+    # ------------------------------------------------------------------
+    # Windowed temporal path: process `temporal_window` frames at a time,
+    # carrying the boundary mask from one window into the next so that
+    # tracks propagate continuously even across window boundaries.
+    # Processes windows from LAST to FIRST (matching backward propagation).
+    # ------------------------------------------------------------------
+    if temporal_window is not None and T > temporal_window:
+        result = np.zeros((T, H, W), dtype=np.int32)
+        carry_mask: np.ndarray | None = None  # (H, W) int32 from the boundary of the next window
+        t_end = T
+        while t_end > 0:
+            t_start = max(0, t_end - temporal_window)
+            has_carry = (carry_mask is not None)
+            # Extend by 1 carry frame so SAM2 propagates continuity backward
+            # from the already-processed next window into this one.
+            t_end_ext = min(t_end + 1, T) if has_carry else t_end
+            wsize_total = t_end_ext - t_start
+            wsize_core  = t_end - t_start
+
+            # Pre-count prompts to skip JPEG encode + SAM2 init when empty.
+            n_det_prompts = sum(
+                len(frame_assignments[t_start + local_t])
+                for local_t in range(wsize_core)
+            )
+            total_prompts_preview = n_det_prompts + (len(np.unique(carry_mask)) - 1 if has_carry and carry_mask is not None else 0)
+            if total_prompts_preview == 0:
+                # Nothing to track in this window — skip entirely.
+                t_end = t_start
+                continue
+
+            print(
+                f"    {label}window [{t_start},{t_end}) — "
+                f"{wsize_total} frames ({wsize_core} core + {wsize_total - wsize_core} carry)"
+            )
+            win_img = img_tyx[t_start:t_end_ext]
+            with tempfile.TemporaryDirectory() as tmpdir:
+                _save_frames_as_jpeg(win_img, tmpdir)
+                _autocast = (
+                    torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                    if device == "cuda"
+                    else nullcontext()
+                )
+                with torch.inference_mode(), _autocast:
+                    inference_state = predictor.init_state(
+                        video_path=tmpdir,
+                        offload_video_to_cpu=(device == "cpu"),
+                    )
+                    total_prompts = 0
+                    # Detection prompts for core frames
+                    for local_t in range(wsize_core):
+                        global_t = t_start + local_t
+                        assignments = frame_assignments[global_t]
+                        if not assignments:
+                            continue
+                        hole = (det_mask_tyx[global_t] == 1).astype(np.uint8)
+                        labeled_win = cc_label(hole, connectivity=1)
+                        for lbl, track_id in assignments.items():
+                            binary_mask = (labeled_win == lbl)
+                            predictor.add_new_mask(
+                                inference_state, frame_idx=local_t,
+                                obj_id=track_id, mask=binary_mask,
+                            )
+                            total_prompts += 1
+                    # Carry mask at the boundary frame (local index = wsize_core)
+                    if has_carry:
+                        for tid in np.unique(carry_mask):
+                            if tid == 0:
+                                continue
+                            predictor.add_new_mask(
+                                inference_state, frame_idx=wsize_core,
+                                obj_id=int(tid), mask=(carry_mask == tid),
+                            )
+                            total_prompts += 1
+                    print(f"    {label}window [{t_start},{t_end}): {total_prompts} prompts registered.")
+                    with tqdm(total=wsize_total, desc=f"  propagate{' ' + label if label else ''} [{t_start},{t_end})", unit="frame", leave=False) as pbar:
+                        if total_prompts > 0:
+                            for frame_idx, obj_ids, video_res_masks in predictor.propagate_in_video(
+                                inference_state, start_frame_idx=wsize_total - 1, reverse=True,
+                            ):
+                                pbar.update(1)
+                                if frame_idx >= wsize_core:
+                                    continue  # skip carry frame
+                                global_idx = t_start + frame_idx
+                                for i, obj_id in enumerate(obj_ids):
+                                    binary = (video_res_masks[i, 0].float() > 0.0).cpu().numpy()
+                                    result[global_idx][binary] = int(obj_id)
+                    predictor.reset_state(inference_state)
+            # Carry for the next (earlier) window = earliest frame of this window
+            new_carry = result[t_start]
+            carry_mask = new_carry.copy() if new_carry.any() else None
+            t_end = t_start
+        return result
+
+    # ------------------------------------------------------------------
+    # Non-windowed (original) path — all T frames in a single SAM2 session.
+    # ------------------------------------------------------------------
     with tempfile.TemporaryDirectory() as tmpdir:
-        print("Saving frames as JPEG...")
         _save_frames_as_jpeg(img_tyx, tmpdir)
 
-        # On CUDA, SAM2 expects everything in BFloat16. Wrap all inference
-        # in autocast so activations and weights stay consistently BFloat16.
-        # On CPU, use nullcontext (float32 throughout).
-        from contextlib import nullcontext
         autocast_ctx = (
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)
             if device == "cuda"
@@ -146,11 +255,8 @@ def run_tracking(
                 offload_video_to_cpu=(device == "cpu"),
             )
 
-            print("Registering detection prompts...")
             total_prompts = 0
-            from tqdm import tqdm
-
-            for t, assignments in tqdm(enumerate(frame_assignments), total=T, desc="registering prompts", unit="frame"):
+            for t, assignments in enumerate(frame_assignments):
                 if not assignments:
                     continue
                 hole = (det_mask_tyx[t] == 1).astype(np.uint8)
@@ -164,14 +270,13 @@ def run_tracking(
                         mask=binary_mask,
                     )
                     total_prompts += 1
-            print(f"  {total_prompts} prompts registered.")
+            print(f"    {label}{total_prompts} prompts registered.")
 
-            print("Propagating backwards with SAM2...")
             result = np.zeros((T, H, W), dtype=np.int32)
-            with tqdm(total=T, desc="propagate in video", unit="frame") as pbar:
+            with tqdm(total=T, desc=f"  propagate{' ' + label if label else ''}", unit="frame", leave=False) as pbar:
                 for frame_idx, obj_ids, video_res_masks in predictor.propagate_in_video(
                     inference_state,
-                    start_frame_idx=T - 1,  # explicit: default picks earliest prompt frame → 0 → empty reverse order
+                    start_frame_idx=T - 1,
                     reverse=True,
                 ):
                     for i, obj_id in enumerate(obj_ids):
@@ -180,6 +285,132 @@ def run_tracking(
                     pbar.update(1)
 
             predictor.reset_state(inference_state)
+
+    return result
+
+
+def run_tracking(
+    img_tyx: np.ndarray,
+    det_mask_tyx: np.ndarray,
+    predictor,
+    max_centroid_dist: float = 50.0,
+    tile_hw: int | None = None,
+    tile_overlap: int = 64,
+    temporal_window: int | None = None,
+) -> np.ndarray:
+    """Backward-pass SAM2 tracking fusing detection masks with optional tiling.
+
+    When the full frame exceeds GPU VRAM, set ``tile_hw`` to process the frame
+    in overlapping spatial tiles.  Each tile is tracked independently and the
+    results are stitched with globally unique track IDs.  Tracks that straddle
+    a tile boundary are handled by writing each tile's contribution to the
+    non-overlapping central strip; the overlap region prevents edge artefacts.
+
+    Parameters
+    ----------
+    img_tyx           : (T, H, W) image frames (used as SAM2 video input).
+    det_mask_tyx      : (T, H, W) uint8 binary detection mask (1 = hole).
+    predictor         : SAM2VideoPredictor instance.
+    max_centroid_dist : max px between frames to link detections as one track.
+    tile_hw           : spatial tile side length in pixels.  ``None`` = full
+                        frame (no tiling).  Typical value: 512 or 768.
+    tile_overlap      : overlap between adjacent tiles in pixels (default 64).
+                        Each tile's contribution is written only in its central
+                        strip; the overlap width on each edge is ``tile_overlap//2``.
+
+    Returns
+    -------
+    (T, H, W) int32 array.  Pixel value = track ID (0 = background).
+    """
+    T, H, W = img_tyx.shape
+
+    if tile_hw is None or (tile_hw >= H and tile_hw >= W):
+        print("Running SAM2 tracking on full frame...")
+        return _run_tracking_on_region(
+            img_tyx, det_mask_tyx, predictor, max_centroid_dist,
+            temporal_window=temporal_window,
+        )
+
+    # ------------------------------------------------------------------
+    # Spatial tiling
+    # ------------------------------------------------------------------
+    stride = max(1, tile_hw - tile_overlap)
+    half_ov = tile_overlap // 2
+
+    # Tile origins: ensure the last tile always reaches the frame edge
+    def _origins(size: int) -> list[int]:
+        origins = list(range(0, size, stride))
+        if origins[-1] + tile_hw < size:
+            origins.append(size - tile_hw)
+        return origins
+
+    ys = _origins(H)
+    xs = _origins(W)
+    total_tiles = len(ys) * len(xs)
+    print(
+        f"Tiled SAM2 tracking: {len(ys)}×{len(xs)} = {total_tiles} tiles "
+        f"(tile_hw={tile_hw}, overlap={tile_overlap}, stride={stride})"
+    )
+
+    result = np.zeros((T, H, W), dtype=np.int32)
+    global_id_offset = 0
+
+    for ti, ty in enumerate(ys):
+        for tj, tx in enumerate(xs):
+            y0 = ty
+            y1 = min(ty + tile_hw, H)
+            x0 = tx
+            x1 = min(tx + tile_hw, W)
+
+            th, tw = y1 - y0, x1 - x0
+            tile_det = det_mask_tyx[:, y0:y1, x0:x1]
+            n_det = int(tile_det.sum())
+            print(f"  Tile ({ti},{tj}) [{y0}:{y1}, {x0}:{x1}] ({th}×{tw}): {n_det} detection pixels")
+            if n_det == 0:
+                continue
+
+            tile_img = img_tyx[:, y0:y1, x0:x1]
+
+            # Zero-pad edge tiles to tile_hw × tile_hw so SAM2 sees
+            # consistent frame dimensions across all tiles.
+            if th < tile_hw or tw < tile_hw:
+                pad_img = np.zeros((T, tile_hw, tile_hw), dtype=tile_img.dtype)
+                pad_det = np.zeros((T, tile_hw, tile_hw), dtype=tile_det.dtype)
+                pad_img[:, :th, :tw] = tile_img
+                pad_det[:, :th, :tw] = tile_det
+                tile_img, tile_det = pad_img, pad_det
+
+            tile_result = _run_tracking_on_region(
+                tile_img, tile_det, predictor, max_centroid_dist,
+                label=f"tile({ti},{tj}) ",
+                temporal_window=temporal_window,
+            )
+            # Crop result back to the actual (unpadded) tile size
+            tile_result = tile_result[:, :th, :tw]
+
+            max_tile_id = int(tile_result.max())
+            if max_tile_id == 0:
+                continue
+
+            # Shift IDs to globally unique range
+            tile_result[tile_result != 0] += global_id_offset
+            global_id_offset += max_tile_id
+
+            # "Own" region: strip half_ov from edges that abut a neighbour tile
+            # (but not from edges that are at the frame boundary).
+            ly0 = half_ov if ty > 0 else 0
+            ly1 = (y1 - y0) - (half_ov if y1 < H else 0)
+            lx0 = half_ov if tx > 0 else 0
+            lx1 = (x1 - x0) - (half_ov if x1 < W else 0)
+
+            dst_y0, dst_y1 = y0 + ly0, y0 + ly1
+            dst_x0, dst_x1 = x0 + lx0, x0 + lx1
+
+            src = tile_result[:, ly0:ly1, lx0:lx1]
+            dst = result[:, dst_y0:dst_y1, dst_x0:dst_x1]
+            # First-write-wins: don't overwrite IDs already placed by an
+            # earlier tile (can happen in the overlap zone).
+            result[:, dst_y0:dst_y1, dst_x0:dst_x1] = np.where(dst != 0, dst, src)
 
     return result
 

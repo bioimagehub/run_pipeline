@@ -2,6 +2,8 @@
 import sys
 import os
 import importlib
+import subprocess
+import threading
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,6 +11,7 @@ from bioio import BioImage
 from joblib import Parallel, delayed
 from scipy.ndimage import label as scipy_label
 from skimage.morphology import flood_fill, reconstruction
+import time
 import tifffile
 import torch
 import torch.nn.functional as F
@@ -17,6 +20,79 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import sam2_utils
 importlib.reload(sam2_utils)
 from sam2_utils import load_sam2_video_predictor, run_tracking, find_similar_object
+
+
+# %% GPU monitor (nvidia-smi polling in background thread)
+class _GpuMonitor:
+    """Background thread that polls nvidia-smi every `interval` seconds.
+
+    Usage::
+        mon = _GpuMonitor(interval=1.0)
+        mon.start()
+        ...
+        mon.stop()
+        mon.report()
+    """
+
+    def __init__(self, interval: float = 1.0, gpu_index: int = 0) -> None:
+        self.interval = interval
+        self.gpu_index = gpu_index
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.util_pct:    list[float] = []
+        self.mem_used_mb: list[float] = []
+
+    def _poll(self) -> None:
+        query = "utilization.gpu,memory.used"
+        cmd = [
+            "nvidia-smi",
+            f"--id={self.gpu_index}",
+            f"--query-gpu={query}",
+            "--format=csv,noheader,nounits",
+        ]
+        while not self._stop_event.is_set():
+            try:
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True).strip()
+                parts = out.split(",")
+                if len(parts) == 2:
+                    self.util_pct.append(float(parts[0].strip()))
+                    self.mem_used_mb.append(float(parts[1].strip()))
+            except Exception:
+                pass
+            self._stop_event.wait(self.interval)
+
+    def start(self) -> None:
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def report(self, label: str = "") -> None:
+        prefix = f"[GPU{self.gpu_index}]{' ' + label if label else ''}"
+        if self.util_pct:
+            print(
+                f"{prefix} GPU util  — mean: {sum(self.util_pct)/len(self.util_pct):.1f}%  "
+                f"peak: {max(self.util_pct):.1f}%"
+            )
+        if self.mem_used_mb:
+            print(
+                f"{prefix} VRAM used — mean: {sum(self.mem_used_mb)/len(self.mem_used_mb):.0f} MiB  "
+                f"peak: {max(self.mem_used_mb):.0f} MiB"
+            )
+        if not self.util_pct and not self.mem_used_mb:
+            print(f"{prefix} No GPU samples recorded (nvidia-smi unavailable?)")
+
+    def reset(self) -> None:
+        """Clear accumulated samples (call between stages to get per-stage stats)."""
+        self.util_pct.clear()
+        self.mem_used_mb.clear()
+
+
+_gpu_mon = _GpuMonitor(interval=0.5)
 
 
 # %% Functions
@@ -32,6 +108,51 @@ def greyscale_fill_holes(image: np.ndarray) -> np.ndarray:
     reconstructed = reconstruction(seed, inverted, method='dilation')
     filled = image_max - reconstructed
     return filled
+
+
+def _build_det_frame(
+    blobs: list[tuple[int, int, float]],
+    raw_frame: np.ndarray,
+    frame_H: int,
+    frame_W: int,
+    _tile_size: int,
+    _min_hole_area: int,
+    _max_hole_area: int,
+    _min_circularity: float,
+) -> np.ndarray:
+    """Build the binary detection mask for one frame from its blob list.
+
+    Designed to be called in parallel (thread-safe: no shared mutable state).
+    """
+    from skimage.measure import perimeter as sk_perimeter
+    _det = np.zeros((frame_H, frame_W), dtype=np.uint8)
+    for blob_y, blob_x, _sigma in blobs:
+        seed_y = int(np.clip(blob_y, 0, frame_H - 1))
+        seed_x = int(np.clip(blob_x, 0, frame_W - 1))
+        if _det[seed_y, seed_x] != 0:
+            continue
+        y0 = max(0, blob_y - _tile_size)
+        y1 = min(frame_H, blob_y + _tile_size)
+        x0 = max(0, blob_x - _tile_size)
+        x1 = min(frame_W, blob_x + _tile_size)
+        local_y = seed_y - y0
+        local_x = seed_x - x0
+        tile = raw_frame[y0:y1, x0:x1].astype(np.float32)
+        filled_tile = greyscale_fill_holes(tile)
+        if not (0 <= local_y < filled_tile.shape[0] and 0 <= local_x < filled_tile.shape[1]):
+            continue
+        flooded = flood_fill(filled_tile, seed_point=(local_y, local_x),
+                             new_value=-1.0, tolerance=0, connectivity=1)
+        raw_mask = flooded == -1.0
+        area = int(raw_mask.sum())
+        if not (_min_hole_area <= area <= _max_hole_area):
+            continue
+        perim = sk_perimeter(raw_mask.astype(np.uint8))
+        if perim > 0 and (4.0 * np.pi * area / perim ** 2) < _min_circularity:
+            continue
+        write_region = raw_mask & (_det[y0:y1, x0:x1] == 0)
+        _det[y0:y1, x0:x1][write_region] = 1
+    return _det
 
 
 def _gauss_kernel(sigma: float, device: torch.device) -> torch.Tensor:
@@ -79,6 +200,7 @@ def dog_detect_gpu(
     device: torch.device,
     n_scales: int = 8,
     max_aspect_ratio: float = 3.0,
+    batch_size: int = 16,
 ) -> list[list[tuple[int, int, float]]]:
     """Multi-scale batched GPU DoG + NMS on a (T, H, W) holes array.
 
@@ -86,50 +208,91 @@ def dog_detect_gpu(
     sigma is the representative scale at which the blob had maximum DoG response.
     Blobs whose intensity-weighted aspect ratio exceeds max_aspect_ratio are
     rejected as elongated structures (cell edges, filopodia, etc.).
-    """
-    t_in = torch.from_numpy(holes_tyx[:, None].astype(np.float32)).to(device)  # (T,1,H,W)
 
-    # Log-spaced sigmas; each adjacent pair forms one DoG scale
+    Memory strategy
+    ---------------
+    Frames are processed in temporal batches of ``batch_size`` to bound GPU
+    memory use.  Within each batch a running max replaces the full
+    (B, S, H, W) scale stack — only two (B, H, W) tensors (running max +
+    current scale) are live at once, cutting peak VRAM by factor S.
+    """
+    T = holes_tyx.shape[0]
     sigmas = np.geomspace(dog_min_sigma, dog_max_sigma, n_scales + 1)
     scale_sigmas = np.array([(sigmas[i] + sigmas[i + 1]) / 2 for i in range(n_scales)])
-
-    # Compute DoG response for each scale and stack: (T, S, H, W)
-    dog_scales = []
-    for i in range(n_scales):
-        k1 = _gauss_kernel(float(sigmas[i]), device)
-        k2 = _gauss_kernel(float(sigmas[i + 1]), device)
-        p1, p2 = k1.shape[-1] // 2, k2.shape[-1] // 2
-        dog = F.conv2d(t_in, k1, padding=p1) - F.conv2d(t_in, k2, padding=p2)  # (T,1,H,W)
-        dog_scales.append(dog.squeeze(1))  # (T,H,W)
-
-    dog_vol = torch.stack(dog_scales, dim=1)  # (T, S, H, W)
-
-    # Max across scales → combined response map and best-scale index
-    dog_max, best_scale_idx = dog_vol.max(dim=1)  # both (T, H, W)
-
-    # Per-frame relative threshold
-    frame_max = dog_max.amax(dim=(1, 2), keepdim=True)
-    above_thr = dog_max >= (frame_max * dog_threshold_rel)
-
-    # Non-maximum suppression: keep only strict local maxima
     nms_k = max(3, int(dog_min_sigma * 2 + 1) | 1)
-    local_max = F.max_pool2d(dog_max[:, None], kernel_size=nms_k, stride=1, padding=nms_k // 2).squeeze(1)
-    is_peak = (dog_max == local_max) & above_thr  # (T, H, W)
-
-    is_peak_np = is_peak.cpu().numpy()           # (T, H, W) bool
-    best_scale_np = best_scale_idx.cpu().numpy()  # (T, H, W) int
-    dog_max_np = dog_max.cpu().numpy()            # (T, H, W) float32
 
     blobs_per_frame: list[list[tuple[int, int, float]]] = []
-    for ti in range(holes_tyx.shape[0]):
-        ys, xs = np.where(is_peak_np[ti])
-        blob_sigmas = scale_sigmas[best_scale_np[ti][ys, xs]]
-        frame = dog_max_np[ti]
-        blobs: list[tuple[int, int, float]] = []
-        for y, x, sigma in zip(ys.tolist(), xs.tolist(), blob_sigmas.tolist()):
-            if _aspect_ratio(frame, y, x, sigma) <= max_aspect_ratio:
-                blobs.append((y, x, sigma))
-        blobs_per_frame.append(blobs)
+
+    # Precompute all Gaussian kernels once — they are identical across every batch.
+    gauss_kernels = [_gauss_kernel(float(s), device) for s in sigmas]
+
+    for batch_start in range(0, T, batch_size):
+        batch_end = min(batch_start + batch_size, T)
+        t_in = torch.from_numpy(
+            holes_tyx[batch_start:batch_end, None].astype(np.float32)
+        ).to(device)  # (B, 1, H, W)
+
+        # Running max across scales — never materialise (B, S, H, W).
+        # Peak VRAM: t_in + dog_max + best_scale_idx + one dog scale ≈ 4×(B,H,W).
+        dog_max: torch.Tensor | None = None
+        best_scale_idx: torch.Tensor | None = None
+        for i in range(n_scales):
+            k1 = gauss_kernels[i]
+            k2 = gauss_kernels[i + 1]
+            p1, p2 = k1.shape[-1] // 2, k2.shape[-1] // 2
+            dog = (F.conv2d(t_in, k1, padding=p1) - F.conv2d(t_in, k2, padding=p2)).squeeze(1)  # (B,H,W)
+            if dog_max is None:
+                dog_max = dog
+                best_scale_idx = torch.zeros(dog.shape, dtype=torch.long, device=device)
+            else:
+                better = dog > dog_max
+                dog_max = torch.where(better, dog, dog_max)
+                best_scale_idx = torch.where(
+                    better,
+                    torch.full_like(best_scale_idx, i),
+                    best_scale_idx,
+                )
+        del t_in
+
+        assert dog_max is not None and best_scale_idx is not None
+
+        # Per-frame relative threshold + NMS
+        frame_max = dog_max.amax(dim=(1, 2), keepdim=True)
+        above_thr = dog_max >= (frame_max * dog_threshold_rel)
+        local_max = F.max_pool2d(
+            dog_max[:, None], kernel_size=nms_k, stride=1, padding=nms_k // 2
+        ).squeeze(1)
+        is_peak = (dog_max == local_max) & above_thr  # (B, H, W)
+
+        is_peak_np     = is_peak.cpu().numpy()
+        best_scale_np  = best_scale_idx.cpu().numpy()
+        dog_max_np     = dog_max.cpu().numpy()
+
+        del dog_max, best_scale_idx, is_peak, local_max, above_thr, frame_max
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        for bi in range(batch_end - batch_start):
+            ys, xs = np.where(is_peak_np[bi])
+            blob_sigmas = scale_sigmas[best_scale_np[bi][ys, xs]]
+            frame = dog_max_np[bi]
+            blobs: list[tuple[int, int, float]] = []
+            for y, x, sigma in zip(ys.tolist(), xs.tolist(), blob_sigmas.tolist()):
+                if _aspect_ratio(frame, y, x, sigma) <= max_aspect_ratio:
+                    blobs.append((y, x, sigma))
+
+            # Cross-scale NMS: keep smallest sigma first, suppress larger blobs
+            # whose centre falls within 2×sigma of an already-accepted smaller blob.
+            blobs.sort(key=lambda b: b[2])
+            kept: list[tuple[int, int, float]] = []
+            for by, bx, bs in blobs:
+                if not any(
+                    ((by - ky) ** 2 + (bx - kx) ** 2) ** 0.5 < ks * 2
+                    for ky, kx, ks in kept
+                ):
+                    kept.append((by, bx, bs))
+            blobs_per_frame.append(kept)
+
     return blobs_per_frame
 
 
@@ -470,7 +633,6 @@ video_path        = r"E:\Oyvind\BIP-hub-scratch\train_macropinosome_model\input_
 prediction_video_path = r"E:\Oyvind\BIP-hub-scratch\train_macropinosome_model\deep_learning_output\predictions\Input_crest__KiaWee__250225_RPE-mNG-Phafin2_BSD_10ul_001_1_drift_pred.ome.tif"
 output_folder     = r"C:\Users\oyvinode\Desktop\del"
 
-size              = 2000   # spatial crop (YX) — reduce if RAM is tight
 channel           = 0
 z_slice           = 0
 
@@ -478,6 +640,7 @@ z_slice           = 0
 dog_min_sigma     = 2      # smallest expected hole radius in pixels
 dog_max_sigma     = 30     # largest expected hole radius in pixels
 dog_threshold_rel = 0.1    # DoG response threshold (lower = more sensitive)
+dog_batch_size    = 10     # frames per GPU batch for DoG (reduce if OOM)
 
 
 # General filtering
@@ -492,12 +655,15 @@ min_hole_depth            = 5.0    # mean (filled − original) at hole pixels; 
 
 # SAM2 tracking parameters
 max_centroid_dist = 50.0   # max px a vesicle can move frame-to-frame for ID linking
-tile_size         = 40  # SAM2 runs on tiles of this size (reduces GPU VRAM vs full frame)
+tile_size         = 40     # crop size for flood-fill (Stage 3)
+sam_tile_hw       = None   # SAM2 spatial tile size in px; set None to disable tiling (full frame)
+sam_tile_overlap  = 64     # overlap between adjacent SAM2 tiles in px
+temporal_window   = 10     # frames per SAM2 call; None = process all frames in one session (high RAM)
 
 
 # For debug
-max_T =   5 # set to None or a small integer to limit frames processed during dev/testing
-debug = True  # if True, shows QC plots and prints more info during processing
+max_T =   None # set to None or a small integer to limit frames processed during dev/testing
+debug = False  # if True, shows QC plots and prints more info during processing
 
 
 # %% Load image metadata
@@ -515,32 +681,40 @@ prediction_img = BioImage(prediction_video_path)
 print(f"Prediction image shape: {prediction_img.shape}  dtype: {prediction_img.dtype}")
 
 # %% Pre-load all frames into RAM as (T, H, W)
+t0_total = time.perf_counter()
+_gpu_mon.start()
 print(f"Loading {n_total} prediction frames …")
 all_frames = np.stack(
-    [prediction_img.get_image_data("YX", T=t, C=channel, Z=z_slice)[:size, :size]
+    [prediction_img.get_image_data("YX", T=t, C=channel, Z=z_slice)
      for t in range(n_total)]
-)  # (T, H, W)
+)  # (T, H, W) — full frame, no crop
 H, W = all_frames.shape[1], all_frames.shape[2]
 print(f"Loaded predictions: {all_frames.shape}  dtype: {all_frames.dtype}")
 
 print(f"Loading {n_total} raw frames …")
 raw_frames = np.stack(
-    [img.get_image_data("YX", T=t, C=channel, Z=z_slice)[:size, :size]
+    [img.get_image_data("YX", T=t, C=channel, Z=z_slice)
      for t in range(n_total)]
-)  # (T, H, W)
+)  # (T, H, W) — full frame, no crop
 print(f"Loaded raw:         {raw_frames.shape}  dtype: {raw_frames.dtype}")
+print(f"  Load elapsed: {time.perf_counter() - t0_total:.1f}s")
 
 
 # %% Stage 2: batched GPU DoG + NMS to find blob centres
 _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Running batched DoG on {_device} …")
+t0_dog = time.perf_counter()
+_gpu_mon.reset()
 
 blobs_per_frame = dog_detect_gpu(
     all_frames, dog_min_sigma, dog_max_sigma, dog_threshold_rel, _device,
     max_aspect_ratio=max_aspect_ratio,
+    batch_size=dog_batch_size,
 )
 n_total_blobs = sum(len(b) for b in blobs_per_frame)
 print(f"  Found {n_total_blobs} blob centres across {n_total} frames.")
+print(f"  Stage 2 (DoG) elapsed: {time.perf_counter() - t0_dog:.1f}s")
+_gpu_mon.report("Stage2-DoG")
 
 
 if debug:
@@ -555,34 +729,23 @@ if debug:
     plt.show()  
 
 
-# %% Stage 3: Build binary detection mask from blob centres via flood-fill
-from skimage.measure import perimeter as sk_perimeter
+# %% Stage 3: Build binary detection mask from blob centres via flood-fill (parallel)
+t0_stage3 = time.perf_counter()
+print(f"Building detection mask from blob centres (parallel, {n_total} frames) …")
 
-print("Building detection mask from blob centres …")
-det_mask_tyx = np.zeros((n_total, H, W), dtype=np.uint8)
-
-for t_idx in range(n_total):
-    filled_t = greyscale_fill_holes(raw_frames[t_idx].astype(np.float32))
-    for blob_y, blob_x, sigma in blobs_per_frame[t_idx]:
-        seed_y = int(np.clip(blob_y, 0, H - 1))
-        seed_x = int(np.clip(blob_x, 0, W - 1))
-        # Skip if this pixel is already claimed by a prior blob
-        if det_mask_tyx[t_idx, seed_y, seed_x] != 0:
-            continue
-        flooded = flood_fill(filled_t, seed_point=(seed_y, seed_x),
-                             new_value=-1.0, tolerance=0, connectivity=1)
-        raw_mask = flooded == -1.0
-        area = int(raw_mask.sum())
-        if not (min_hole_area <= area <= max_hole_area):
-            continue
-        perim = sk_perimeter(raw_mask.astype(np.uint8))
-        if perim > 0 and (4.0 * np.pi * area / perim ** 2) < min_circularity:
-            continue
-        det_mask_tyx[t_idx][raw_mask] = 1
+frame_dets = Parallel(n_jobs=-1, prefer='threads')(
+    delayed(_build_det_frame)(
+        blobs_per_frame[t_idx], raw_frames[t_idx],
+        H, W, tile_size, min_hole_area, max_hole_area, min_circularity,
+    )
+    for t_idx in range(n_total)
+)
+det_mask_tyx = np.stack(frame_dets)
 
 n_det_pixels = int(det_mask_tyx.sum())
 n_det_frames = int((det_mask_tyx.sum(axis=(1, 2)) > 0).sum())
 print(f"  Detection mask: {n_det_pixels} hole pixels across {n_det_frames}/{n_total} frames.")
+print(f"  Stage 3 elapsed: {time.perf_counter() - t0_stage3:.1f}s")
 
 if debug:
     plt.figure(figsize=(12, 6))
@@ -606,14 +769,22 @@ if debug:
 print("Loading SAM2 video predictor …")
 predictor = load_sam2_video_predictor()
 
+t0_sam = time.perf_counter()
+_gpu_mon.reset()
 global_mask_tyx = run_tracking(
     img_tyx=all_frames,
     det_mask_tyx=det_mask_tyx,
     predictor=predictor,
     max_centroid_dist=max_centroid_dist,
+    tile_hw=sam_tile_hw,
+    tile_overlap=sam_tile_overlap,
+    temporal_window=temporal_window,
 )
 n_unique_tracks = int(global_mask_tyx.max())
 print(f"Tracking complete. Unique tracks: {n_unique_tracks}")
+print(f"  Stage 4 (SAM2) elapsed: {time.perf_counter() - t0_sam:.1f}s")
+_gpu_mon.stop()
+_gpu_mon.report("Stage4-SAM2")
 
 
 # %% Debug: overlay global_mask_tyx on all_frames for all tracked frames
@@ -653,8 +824,9 @@ if debug:
 
 
 # %% save as tif
-output_path = os.path.join(output_folder, "global_mask_v5.tif")
+output_path = os.path.join(output_folder, "global_mask_v7.tif")
 import tifffile
 tifffile.imwrite(output_path, global_mask_tyx.astype(np.uint16))
 print(f"Saved global mask to {output_path}")
+print(f"Total elapsed: {time.perf_counter() - t0_total:.1f}s")
 # %%
