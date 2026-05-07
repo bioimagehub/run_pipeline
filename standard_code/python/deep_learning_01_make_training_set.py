@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 import napari
 import tifffile
+from scipy.ndimage import distance_transform_edt
 
 import bioimage_pipeline_utils as rp
 
@@ -65,6 +66,9 @@ def centroids2images(
     """Stamp Gaussian blobs at each centroid onto a blank image.
 
     Reproduced from centroid-unet / DataUtils.py.
+    NOTE: kept for reference only.  Training-set generation now uses
+    _centroids_to_dist_map which produces bounded EDT disks so that
+    sub-patches without any centroid are EXACTLY zero (no Gaussian bleed).
     """
     circle_mat = _get_gaussian(g_radius)
     temp = np.zeros(
@@ -79,6 +83,34 @@ def centroids2images(
         c1 = g_radius + c + g_radius
         temp[r0:r1, c0:c1] = np.maximum(temp[r0:r1, c0:c1], circle_mat)
     return temp[g_radius:-g_radius, g_radius:-g_radius]
+
+
+def _centroids_to_dist_map(
+    local_centroids: list[tuple[float, float]],
+    h: int,
+    w: int,
+    radius: int,
+) -> np.ndarray:
+    """Generate a normalised EDT probability map from in-tile centroid coords.
+
+    For each centroid a binary disk of *radius* pixels is drawn, clipped to
+    the tile boundary.  The EDT of each disk is normalised so the centre pixel
+    equals 1 and the edge equals 0.  Multiple disks are merged via element-wise
+    maximum.  Returns an all-zero array when *local_centroids* is empty,
+    ensuring that tiles with no annotated cells have an EXACTLY zero target.
+    """
+    result = np.zeros((h, w), dtype=np.float32)
+    yy, xx = np.ogrid[:h, :w]
+    for (cy, cx) in local_centroids:
+        disk = ((yy - cy) ** 2 + (xx - cx) ** 2) <= radius ** 2
+        if not disk.any():
+            continue
+        edt = distance_transform_edt(disk).astype(np.float32)
+        max_val = edt.max()
+        if max_val > 0:
+            edt /= max_val
+        result = np.maximum(result, edt)
+    return result
 
 
 # ----------------------------------------------------------------------- #
@@ -152,7 +184,6 @@ run:
   - --patch-size: 256
   - --sub-patch-size: 128
   - --gaussian-radius: 15
-  - --zero-keep-ratio: 0.2
 
 - name: Pause for manual inspection
   type: pause
@@ -200,18 +231,9 @@ run:
         default=20,
         help="Radius for Gaussian blobs placed at each clicked centroid.",
     )
-    parser.add_argument(
-        "--zero-keep-ratio",
-        type=float,
-        default=0.10,
-        help="Fraction of non-zero patch count to keep as empty patches.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for reproducible zero-patch downsampling.",
-    )
+    # --zero-keep-ratio and --seed have been moved to deep_learning_03_train.py.
+    # Filtering empty patches at training time lets you adjust the ratio
+    # without regenerating the training set on disk.
     parser.add_argument(
         "--log-level",
         type=str,
@@ -382,7 +404,7 @@ run:
     np.save(os.path.join(session_dir, "frames.npy"), all_patches_arr)
 
     # ------------------------------------------------------------------- #
-    # 8. Generate Gaussian-blob labels                                     #
+    # 8. Build per-patch centroid lookup                                   #
     # ------------------------------------------------------------------- #
     n_patches = all_patches_arr.shape[0]
     if args.max_patches is not None:
@@ -395,59 +417,61 @@ run:
         if 0 <= pidx < n_patches:
             patch_points[pidx].append([y, x])
 
-    label_images = np.zeros((n_patches, ps, ps), dtype=np.float32)
-    for pidx, points in patch_points.items():
-        label_images[pidx] = centroids2images(
-            points, ps, ps, g_radius=args.gaussian_radius
-        )
-
-    np.save(os.path.join(session_dir, "labels.npy"), label_images)
-    nonzero_total = int((label_images.max(axis=(1, 2)) > 0).sum())
-    logger.info(
-        "Saved label images: %s  (non-zero: %d / %d)",
-        label_images.shape,
-        nonzero_total,
-        n_patches,
-    )
-
     # ------------------------------------------------------------------- #
-    # 9. Split into sub-patches                                            #
+    # 9. Split into sub-patches with per-tile EDT labels                   #
     # ------------------------------------------------------------------- #
+    # Labels are generated per sub-patch (not on the full patch first) so  #
+    # that sub-patches with no annotated centroid are EXACTLY zero.         #
+    # Previously, Gaussian blobs were stamped on the full patch image and   #
+    # then cut into sub-patches; the Gaussian tail (~0.12 at mid-edge) bled #
+    # into adjacent tiles, making them appear non-zero to the zero-filter   #
+    # in deep_learning_03_train.py.  Using EDT disks with per-sub-patch     #
+    # clipping eliminates this bleed entirely.                              #
     work_patches = all_patches_arr[:n_patches, ...]
 
     sub_frames: list[np.ndarray] = []
     sub_labels: list[np.ndarray] = []
+    g_radius = args.gaussian_radius
     for i in range(work_patches.shape[0]):
+        tile_pts = patch_points.get(i, [])
         for r in range(0, ps, sps):
             for c in range(0, ps, sps):
                 sub_frames.append(work_patches[i, r : r + sps, c : c + sps])
-                sub_labels.append(label_images[i, r : r + sps, c : c + sps])
+                # Only centroids that fall within this sub-patch
+                local_pts = [
+                    (y - r, x - c)
+                    for (y, x) in tile_pts
+                    if r <= y < r + sps and c <= x < c + sps
+                ]
+                sub_labels.append(
+                    _centroids_to_dist_map(local_pts, sps, sps, g_radius)
+                )
 
     sub_frames_arr = np.stack(sub_frames)
     sub_labels_arr = np.stack(sub_labels)
     logger.info("%dx%d sub-patches: %s", sps, sps, sub_frames_arr.shape)
 
     # ------------------------------------------------------------------- #
-    # 10. Downsample zero-label patches                                    #
+    # 10. Downsample zero-label patches  [MOVED to deep_learning_03_train] #
     # ------------------------------------------------------------------- #
-    nonzero_mask = sub_labels_arr.max(axis=(1, 2)) > 0
-    nonzero_idx = np.where(nonzero_mask)[0]
-    zero_idx = np.where(~nonzero_mask)[0]
+    # Zero-patch filtering (--zero-keep-ratio) has been moved to
+    # deep_learning_03_train.py so the ratio can be adjusted without
+    # regenerating the training set on disk.  All sub-patches are saved.
+    #
+    # nonzero_mask = sub_labels_arr.max(axis=(1, 2)) > 0
+    # nonzero_idx  = np.where(nonzero_mask)[0]
+    # zero_idx     = np.where(~nonzero_mask)[0]
+    # n_keep_zero  = max(1, int(round(len(nonzero_idx) * args.zero_keep_ratio)))
+    # rng          = np.random.default_rng(args.seed)
+    # kept_zero_idx = rng.choice(zero_idx, size=min(n_keep_zero, len(zero_idx)), replace=False)
+    # final_idx     = np.sort(np.concatenate([nonzero_idx, kept_zero_idx]))
 
-    n_keep_zero = max(1, int(round(len(nonzero_idx) * args.zero_keep_ratio)))
-
-    rng = np.random.default_rng(args.seed)
-    kept_zero_idx = rng.choice(
-        zero_idx, size=min(n_keep_zero, len(zero_idx)), replace=False
+    nonzero_count = int((sub_labels_arr.max(axis=(1, 2)) > 0).sum())
+    logger.info(
+        "Sub-patches total: %d  (non-zero: %d, zero: %d) -- all saved;",
+        len(sub_labels_arr), nonzero_count, len(sub_labels_arr) - nonzero_count,
     )
-
-    final_idx = np.sort(np.concatenate([nonzero_idx, kept_zero_idx]))
-    sub_frames_final = sub_frames_arr[final_idx]
-    sub_labels_final = sub_labels_arr[final_idx]
-
-    logger.info("Non-zero patches : %d", len(nonzero_idx))
-    logger.info("Zero patches kept: %d  (~%.0f%%)", len(kept_zero_idx), args.zero_keep_ratio * 100)
-    logger.info("Final dataset    : %d patches", len(final_idx))
+    logger.info("  use --zero-keep-ratio in deep_learning_03_train.py to filter at train time.")
 
     # ------------------------------------------------------------------- #
     # 11. Save training set                                                #
@@ -456,7 +480,7 @@ run:
     os.makedirs(train_target_dir, exist_ok=True)
 
     for save_idx, (img_patch, lbl) in enumerate(
-        zip(sub_frames_final, sub_labels_final)
+        zip(sub_frames_arr, sub_labels_arr)
     ):
         fname = f"{save_idx}.tif"
         tifffile.imwrite(
@@ -466,7 +490,7 @@ run:
             os.path.join(train_target_dir, fname), lbl.astype(np.float32)
         )
 
-    logger.info("Saved %d pairs to:", len(final_idx))
+    logger.info("Saved %d pairs to:", len(sub_frames_arr))
     logger.info("  input  -> %s", train_input_dir)
     logger.info("  target -> %s", train_target_dir)
 

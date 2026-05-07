@@ -30,7 +30,7 @@ from tqdm import tqdm
 # Import utilities from companion files in the same directory
 sys.path.insert(0, str(Path(__file__).parent))
 from deep_learning_00_utils import UNet  # noqa: E402
-from deep_learning_02_train import CentroidUNetModule  # noqa: E402
+from standard_code.python.deep_learning_03_train import CentroidUNetModule  # noqa: E402
 
 import bioimage_pipeline_utils as rp
 

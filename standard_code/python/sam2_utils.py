@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore", message="cannot import name '_C' from 'sam2'")
 
 import numpy as np
 from PIL import Image
-from skimage.measure import label, regionprops
+from skimage.measure import label as cc_label, regionprops
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def _save_frames_as_jpeg(frames: np.ndarray, folder: str) -> None:
     os.makedirs(folder, exist_ok=True)
     for i, frame in enumerate(frames):
         rgb = np.stack([_normalize_to_uint8(frame)] * 3, axis=-1)
-        Image.fromarray(rgb).save(os.path.join(folder, f"{i:05d}.png")) # lossless
+        Image.fromarray(rgb).save(os.path.join(folder, f"{i:05d}.jpg"), quality=95)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ def assign_track_ids(
 
     for t in range(T - 1, -1, -1):          # REVERSED: last frame first
         hole = (det_mask_tyx[t] == 1).astype(np.uint8)
-        labeled = label(hole, connectivity=1)
+        labeled = cc_label(hole, connectivity=1)
         regions = regionprops(labeled)
 
         if not regions:
@@ -149,13 +149,14 @@ def run_tracking(
             print("Registering detection prompts...")
             total_prompts = 0
             from tqdm import tqdm
+
             for t, assignments in tqdm(enumerate(frame_assignments), total=T, desc="registering prompts", unit="frame"):
                 if not assignments:
                     continue
                 hole = (det_mask_tyx[t] == 1).astype(np.uint8)
-                labeled = label(hole, connectivity=1)
-                for label, track_id in assignments.items():
-                    binary_mask = (labeled == label)
+                labeled = cc_label(hole, connectivity=1)
+                for lbl, track_id in assignments.items():
+                    binary_mask = (labeled == lbl)
                     predictor.add_new_mask(
                         inference_state,
                         frame_idx=t,
@@ -169,7 +170,9 @@ def run_tracking(
             result = np.zeros((T, H, W), dtype=np.int32)
             with tqdm(total=T, desc="propagate in video", unit="frame") as pbar:
                 for frame_idx, obj_ids, video_res_masks in predictor.propagate_in_video(
-                    inference_state, reverse=True     # REVERSED: strong -> weak
+                    inference_state,
+                    start_frame_idx=T - 1,  # explicit: default picks earliest prompt frame → 0 → empty reverse order
+                    reverse=True,
                 ):
                     for i, obj_id in enumerate(obj_ids):
                         binary = (video_res_masks[i, 0].float() > 0.0).cpu().numpy()
@@ -185,7 +188,7 @@ def run_tracking(
 # Predictor loader
 # ---------------------------------------------------------------------------
 
-def load_sam2_predictor(model_id: str = "facebook/sam2-hiera-large"):
+def load_sam2_video_predictor(model_id: str = "facebook/sam2-hiera-large"):
     import torch
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
@@ -495,4 +498,428 @@ def find_similar_object(
         predicted = _predict_one(labeled_mask == obj_id)
         result_2d[predicted] = obj_id
     return result_2d
+
+
+# ---------------------------------------------------------------------------
+# Macropinosome seed-based backwards tracking
+# ---------------------------------------------------------------------------
+
+def _mp_greyscale_fill_holes(image: np.ndarray) -> np.ndarray:
+    """Morphological hole-fill via reconstruction (inverted dilation)."""
+    from skimage.morphology import reconstruction as _sk_reconstruction
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape}")
+    if image.size == 0 or np.all(image == image.flat[0]):
+        return image.copy()
+    image_max = float(image.max())
+    inverted = image_max - image.astype(np.float32)
+    seed = inverted.copy()
+    seed[1:-1, 1:-1] = float(inverted.min())
+    reconstructed = _sk_reconstruction(seed, inverted, method="dilation")
+    return image_max - reconstructed
+
+
+def _mp_aspect_ratio(frame: np.ndarray, cy: int, cx: int, sigma: float) -> float:
+    """Intensity-weighted eigenvalue aspect ratio of a frame patch.
+
+    Returns ``np.inf`` for degenerate patches. Circular ≈ 1.0, elongated >> 1.
+    """
+    r = max(3, int(sigma * 2.0))
+    y0, y1 = max(0, cy - r), min(frame.shape[0], cy + r + 1)
+    x0, x1 = max(0, cx - r), min(frame.shape[1], cx + r + 1)
+    patch = frame[y0:y1, x0:x1].astype(np.float64)
+    patch = np.clip(patch, 0, None)
+    total = patch.sum()
+    if total == 0:
+        return np.inf
+    gy, gx = np.mgrid[y0:y1, x0:x1]
+    my = (gy * patch).sum() / total
+    mx = (gx * patch).sum() / total
+    cov_yy = ((gy - my) ** 2 * patch).sum() / total
+    cov_xx = ((gx - mx) ** 2 * patch).sum() / total
+    cov_yx = ((gy - my) * (gx - mx) * patch).sum() / total
+    eigvals = np.linalg.eigvalsh([[cov_yy, cov_yx], [cov_yx, cov_xx]])
+    l_min, l_max = eigvals[0], eigvals[1]
+    if l_min <= 0:
+        return np.inf
+    return float(l_max / l_min)
+
+
+def _mp_detect_seeds_at_frame(
+    t: int,
+    seeds_yx: list[tuple[int, int]],
+    all_frames: np.ndarray,
+    global_mask_tyx: np.ndarray,
+    next_track_id: int,
+    tile_size: int,
+    max_hole_area: int,
+    min_hole_area: int,
+    max_aspect_ratio: float,
+    min_fill_brightness_ratio: float,
+    min_ring_contrast_ratio: float,
+    ring_width: int,
+    min_circularity: float,
+    min_hole_depth: float,
+) -> tuple[dict[int, dict], int]:
+    """Flood-fill each seed point at frame t and register new track IDs.
+
+    Sigma for the aspect-ratio filter is derived from the detected hole area
+    as ``sqrt(area / pi)``.  All other filters mirror those in the DoG-based
+    detector in track_sam_05.py.
+
+    Returns
+    -------
+    new_tracks : {track_id: {'y': cy_global, 'x': cx_global, 't': t}}
+    next_track_id : updated counter
+    """
+    from scipy.ndimage import label as _scipy_label, binary_dilation as _bin_dil
+    from skimage.morphology import flood_fill as _flood_fill
+    from skimage.measure import perimeter as _sk_perimeter
+
+    H, W = all_frames.shape[1], all_frames.shape[2]
+    new_tracks: dict[int, dict] = {}
+
+    for blob_y, blob_x in seeds_yx:
+        blob_y, blob_x = int(blob_y), int(blob_x)
+
+        # Skip if this location is already claimed by an existing track
+        if global_mask_tyx[t, blob_y, blob_x] != 0:
+            continue
+
+        # Tile bounds
+        y0 = max(0, blob_y - tile_size)
+        y1 = min(H, blob_y + tile_size)
+        x0 = max(0, blob_x - tile_size)
+        x1 = min(W, blob_x + tile_size)
+
+        seed_y = blob_y - y0
+        seed_x = blob_x - x0
+
+        tile = all_frames[t, y0:y1, x0:x1].astype(np.float32)
+        filled = _mp_greyscale_fill_holes(tile)
+
+        if not (0 <= seed_y < filled.shape[0] and 0 <= seed_x < filled.shape[1]):
+            continue
+
+        flooded = _flood_fill(filled, seed_point=(seed_y, seed_x),
+                              new_value=-1.0, tolerance=0, connectivity=1)
+        raw_mask = flooded == -1.0
+
+        if raw_mask.sum() > max_hole_area or raw_mask.sum() < min_hole_area:
+            continue
+
+        # Keep only the connected component that contains the seed
+        labeled_raw, _ = _scipy_label(raw_mask)
+        seed_label = labeled_raw[seed_y, seed_x]
+        if seed_label == 0:
+            continue
+        component = (labeled_raw == seed_label)
+
+        # Derive sigma from area for the aspect-ratio check
+        area = int(component.sum())
+        sigma = float(np.sqrt(area / np.pi))
+        ys_c, xs_c = np.where(component)
+        cy_loc = int(ys_c.mean())
+        cx_loc = int(xs_c.mean())
+        if _mp_aspect_ratio(tile, cy_loc, cx_loc, sigma) > max_aspect_ratio:
+            continue
+
+        # Filter 1: fill brightness ratio
+        tile_mean = float(tile.mean())
+        if tile_mean > 0 and filled[component].mean() < min_fill_brightness_ratio * tile_mean:
+            continue
+
+        # Filter 2: hole depth — mean(filled − original) over hole pixels
+        hole_depth = float(
+            (filled.astype(np.float64) - tile.astype(np.float64))[component].mean()
+        )
+        if hole_depth < min_hole_depth:
+            continue
+
+        # Filter 3: ring contrast — bright membrane ring around the dark interior
+        ring = _bin_dil(component, iterations=ring_width) & ~component
+        if ring.any() and component.any():
+            ring_mean = float(tile[ring].mean())
+            interior_mean = float(tile[component].mean())
+            if interior_mean > 0 and ring_mean / interior_mean < min_ring_contrast_ratio:
+                continue
+
+        # Filter 4: circularity — 4π·area / perimeter²
+        perim = float(_sk_perimeter(component.astype(np.uint8)))
+        if perim > 0 and (4.0 * np.pi * area / perim ** 2) < min_circularity:
+            continue
+
+        cy_global = cy_loc + y0
+        cx_global = cx_loc + x0
+
+        # Write to global mask (no-overwrite: first writer wins)
+        write_region = component & (global_mask_tyx[t, y0:y1, x0:x1] == 0)
+        global_mask_tyx[t, y0:y1, x0:x1] = np.where(
+            write_region, next_track_id, global_mask_tyx[t, y0:y1, x0:x1]
+        )
+        new_tracks[next_track_id] = {'y': cy_global, 'x': cx_global, 't': t}
+        next_track_id += 1
+
+    return new_tracks, next_track_id
+
+
+def _mp_propagate_one_step(
+    t: int,
+    active_tracks: dict[int, dict],
+    all_frames: np.ndarray,
+    global_mask_tyx: np.ndarray,
+    predictor,
+    tile_size: int,
+) -> None:
+    """Propagate every active track from frame t to frame t-1 using SAM2.
+
+    Frame t is the SAM prompt (frame 0 of a 2-frame mini-video); frame t-1 is
+    the propagation target (frame 1).  Neighbouring tracks inside the tile are
+    included as context labels so SAM can delineate touching objects.
+
+    Mutates
+    -------
+    global_mask_tyx[t-1] : written with predicted track IDs (no-overwrite).
+    active_tracks         : centroids updated to t-1 position; lost tracks removed.
+    """
+    H, W = all_frames.shape[1], all_frames.shape[2]
+    lost: list[int] = []
+
+    for track_id, state in list(active_tracks.items()):
+        cy, cx = state['y'], state['x']
+
+        y0 = max(0, cy - tile_size)
+        y1 = min(H, cy + tile_size)
+        x0 = max(0, cx - tile_size)
+        x1 = min(W, cx + tile_size)
+
+        tile_t    = all_frames[t,     y0:y1, x0:x1]
+        tile_prev = all_frames[t - 1, y0:y1, x0:x1]
+
+        region_ids = global_mask_tyx[t, y0:y1, x0:x1]
+        source_mask = np.zeros_like(region_ids, dtype=np.int32)
+
+        if not np.any(region_ids == track_id):
+            lost.append(track_id)
+            continue
+
+        source_mask[region_ids == track_id] = 1
+        next_label = 2
+        for other_id in np.unique(region_ids):
+            if other_id == 0 or other_id == track_id:
+                continue
+            source_mask[region_ids == other_id] = next_label
+            next_label += 1
+
+        # tile_prev as (1, H, W) triggers the video path in find_similar_object
+        pred = find_similar_object(
+            source_image=tile_t,
+            source_mask=source_mask,
+            target=tile_prev[np.newaxis],
+            predictor=predictor,
+        )  # (1, th, tw) int32
+
+        primary_pred = pred[0] == 1  # (th, tw) bool
+
+        if primary_pred.sum() == 0:
+            lost.append(track_id)
+            continue
+
+        write_region = primary_pred & (global_mask_tyx[t - 1, y0:y1, x0:x1] == 0)
+        global_mask_tyx[t - 1, y0:y1, x0:x1] = np.where(
+            write_region, track_id, global_mask_tyx[t - 1, y0:y1, x0:x1]
+        )
+
+        ys_p, xs_p = np.where(primary_pred)
+        active_tracks[track_id] = {
+            'y': int(ys_p.mean()) + y0,
+            'x': int(xs_p.mean()) + x0,
+        }
+
+    for tid in lost:
+        del active_tracks[tid]
+
+
+def track_macropinosome_from_seed(
+    image: "np.ndarray",
+    seeds: list[tuple[int, int, int]],
+    predictor,
+    *,
+    channel: int = 0,
+    z_slice: int = 0,
+    crop_size: "int | None" = None,
+    tile_size: int = 40,
+    max_hole_area: int = 10000,
+    min_hole_area: int = 8,
+    max_aspect_ratio: float = 2.0,
+    min_fill_brightness_ratio: float = 0.0,
+    min_ring_contrast_ratio: float = 1.2,
+    ring_width: int = 3,
+    min_circularity: float = 0.5,
+    min_hole_depth: float = 5.0,
+    verbose: bool = True,
+) -> np.ndarray:
+    """Track macropinosomes backwards in time from seed coordinates.
+
+    Combines morphological hole-fill detection with SAM2 tile-based
+    frame-to-frame propagation.  The algorithm loops backwards from the latest
+    seeded frame to frame 0:
+
+    1. At each frame *t*, every seed coordinate assigned to that frame is
+       flood-filled to recover the precise hole mask.  Each hole that passes
+       all quality filters becomes a new track.
+    2. All active tracks are propagated one step backwards (frame *t* → *t*-1)
+       using SAM2 on small tiles centred on the last known centroid.
+    3. At the next frame (*t*-1), any seed coordinates there are initialised
+       and added as new tracks before propagation continues.
+
+    Parameters
+    ----------
+    image : np.ndarray (T, Y, X) *or* BioImage
+        Source video.  If a ``BioImage`` is provided, frames are loaded using
+        the ``channel``, ``z_slice``, and ``crop_size`` arguments.
+    seeds : list of (t, y, x) tuples
+        One tuple per seed coordinate.  Multiple seeds at the same frame are
+        evaluated independently; any that pass the hole-fill filters become
+        separate tracks.  Seeds outside the valid frame range are ignored with
+        a warning.
+    predictor : SAM2VideoPredictor
+        Loaded via :func:`load_sam2_video_predictor`.
+    channel : int
+        Channel index — used only when *image* is a ``BioImage``.
+    z_slice : int
+        Z-slice index — used only when *image* is a ``BioImage``.
+    crop_size : int or None
+        Spatial crop applied as ``frame[:crop_size, :crop_size]`` before
+        tracking.  ``None`` keeps the full frame.  Used only for ``BioImage``.
+    tile_size : int
+        Half-width (px) of the tile centred on each track centroid that is
+        passed to SAM2.  The full tile is ``2*tile_size × 2*tile_size`` px.
+        Increase for large or fast-moving objects.
+    max_hole_area : int
+        Maximum flood-fill region area (px²) accepted as a valid hole.
+    min_hole_area : int
+        Minimum flood-fill region area (px²) accepted as a valid hole.
+    max_aspect_ratio : float
+        Intensity-weighted eigenvalue ratio threshold.  Objects above this
+        are rejected as elongated (cell edges, filopodia, etc.).
+    min_fill_brightness_ratio : float
+        ``filled[hole].mean() / tile.mean()`` must exceed this.  Set to
+        ``0.0`` to disable (recommended when holes sit inside bright cells).
+    min_ring_contrast_ratio : float
+        ``tile[ring].mean() / tile[hole].mean()`` threshold for the bright
+        membrane ring surrounding the hole.
+    ring_width : int
+        Dilation iterations used to define the membrane ring.
+    min_circularity : float
+        ``4π·area / perimeter²`` threshold (1.0 = perfect circle).
+    min_hole_depth : float
+        ``mean(filled − original)`` over the hole region.  Ensures the hole
+        is genuinely darker than its filled surroundings.  Set to ``0.0`` to
+        disable.
+    verbose : bool
+        Print frame-by-frame progress.
+
+    Returns
+    -------
+    global_mask_tyx : np.ndarray, shape (T, H, W), dtype int32
+        Track-ID map.  Pixel value = track ID (1-based); 0 = background.  T
+        and spatial dimensions match the input array (or loaded BioImage).
+    """
+    from collections import defaultdict
+
+    # ------------------------------------------------------------------
+    # 1. Load frames into a (T, H, W) float32 array
+    # ------------------------------------------------------------------
+    _is_bioimage = hasattr(image, "get_image_data") and hasattr(image, "dims")
+
+    if _is_bioimage:
+        n_total = image.dims.T
+        frames_list = [
+            image.get_image_data("YX", T=t, C=channel, Z=z_slice)
+            for t in range(n_total)
+        ]
+        if crop_size is not None:
+            frames_list = [f[:crop_size, :crop_size] for f in frames_list]
+        all_frames = np.stack(frames_list).astype(np.float32)
+    else:
+        all_frames = np.asarray(image, dtype=np.float32)
+        if all_frames.ndim != 3:
+            raise ValueError(
+                f"Expected a (T, Y, X) array, got shape {all_frames.shape}"
+            )
+
+    T, H, W = all_frames.shape
+
+    # ------------------------------------------------------------------
+    # 2. Group seeds by frame
+    # ------------------------------------------------------------------
+    seeds_per_frame: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for st, sy, sx in seeds:
+        st, sy, sx = int(st), int(sy), int(sx)
+        if 0 <= st < T:
+            seeds_per_frame[st].append((sy, sx))
+        elif verbose:
+            print(f"  Warning: seed (t={st}, y={sy}, x={sx}) outside T=[0,{T-1}], skipped.")
+
+    if not seeds_per_frame:
+        raise ValueError("No valid seeds found within the image time range.")
+
+    t_start = max(seeds_per_frame.keys())
+
+    # ------------------------------------------------------------------
+    # 3. Backwards tracking loop
+    # ------------------------------------------------------------------
+    global_mask_tyx = np.zeros((T, H, W), dtype=np.int32)
+    active_tracks: dict[int, dict] = {}
+    next_track_id = 1
+
+    try:
+        from tqdm import tqdm as _tqdm
+        frame_iter = _tqdm(
+            range(t_start, -1, -1), desc="backwards tracking", unit="frame"
+        ) if verbose else range(t_start, -1, -1)
+    except ImportError:
+        frame_iter = range(t_start, -1, -1)
+
+    for t in frame_iter:
+        # Step A: flood-fill seeds at this frame → new tracks
+        new_tracks, next_track_id = _mp_detect_seeds_at_frame(
+            t=t,
+            seeds_yx=seeds_per_frame.get(t, []),
+            all_frames=all_frames,
+            global_mask_tyx=global_mask_tyx,
+            next_track_id=next_track_id,
+            tile_size=tile_size,
+            max_hole_area=max_hole_area,
+            min_hole_area=min_hole_area,
+            max_aspect_ratio=max_aspect_ratio,
+            min_fill_brightness_ratio=min_fill_brightness_ratio,
+            min_ring_contrast_ratio=min_ring_contrast_ratio,
+            ring_width=ring_width,
+            min_circularity=min_circularity,
+            min_hole_depth=min_hole_depth,
+        )
+        active_tracks.update(new_tracks)
+
+        if verbose:
+            print(f"  t={t}: +{len(new_tracks)} new tracks, {len(active_tracks)} active")
+
+        # Step B: propagate all active tracks to frame t-1
+        if t == 0 or not active_tracks:
+            break
+
+        _mp_propagate_one_step(
+            t=t,
+            active_tracks=active_tracks,
+            all_frames=all_frames,
+            global_mask_tyx=global_mask_tyx,
+            predictor=predictor,
+            tile_size=tile_size,
+        )
+
+    if verbose:
+        print(f"Tracking complete. Total unique tracks: {next_track_id - 1}")
+
+    return global_mask_tyx
 
