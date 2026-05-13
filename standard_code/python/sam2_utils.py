@@ -37,7 +37,27 @@ def _normalize_to_uint8(frame: np.ndarray) -> np.ndarray:
 def _save_frames_as_jpeg(frames: np.ndarray, folder: str) -> None:
     os.makedirs(folder, exist_ok=True)
     for i, frame in enumerate(frames):
-        rgb = np.stack([_normalize_to_uint8(frame)] * 3, axis=-1)
+        if frame.ndim == 2:
+            # (H, W) grayscale → replicate to RGB
+            rgb = np.stack([_normalize_to_uint8(frame)] * 3, axis=-1)
+        elif frame.ndim == 3:
+            # (C, H, W) multi-channel
+            n_ch = frame.shape[0]
+            if n_ch > 3:
+                print(
+                    f"Warning: frame has {n_ch} channels, using only the first 3 for RGB."
+                )
+                frame = frame[:3]
+                n_ch = 3
+            channels = [_normalize_to_uint8(frame[c]) for c in range(n_ch)]
+            # Pad missing channels with zeros (e.g. 2-channel → R, G, black)
+            while len(channels) < 3:
+                channels.append(np.zeros_like(channels[0]))
+            rgb = np.stack(channels, axis=-1)
+        else:
+            raise ValueError(
+                f"_save_frames_as_jpeg: unexpected frame shape {frame.shape}, expected (H, W) or (C, H, W)"
+            )
         Image.fromarray(rgb).save(os.path.join(folder, f"{i:05d}.jpg"), quality=95)
 
 
@@ -413,6 +433,111 @@ def run_tracking(
             result[:, dst_y0:dst_y1, dst_x0:dst_x1] = np.where(dst != 0, dst, src)
 
     return result
+
+
+def predict_prev_frame(
+    img_next: np.ndarray,
+    img_curr: np.ndarray,
+    mask_next: np.ndarray,
+    predictor,
+) -> np.ndarray:
+    """Propagate a labeled mask one step backward using a 2-frame SAM2 call.
+
+    Builds a mini 2-frame video ``[img_curr, img_next]``, seeds all object IDs
+    found in ``mask_next`` at frame index 1, and returns the predicted labeled
+    mask at frame index 0 (``img_curr``).
+
+    Parameters
+    ----------
+    img_next  : (H, W) or (C, H, W) raw image at time t+1.
+    img_curr  : (H, W) or (C, H, W) raw image at time t.
+    mask_next : (H, W) int32 labeled mask at t+1 (0 = background, 1..N = IDs).
+    predictor : SAM2VideoPredictor instance.
+
+    Returns
+    -------
+    (H, W) int32 predicted mask at time t.
+    """
+    import torch
+    from contextlib import nullcontext
+
+    H, W = img_curr.shape[-2], img_curr.shape[-1]
+    track_ids = [int(tid) for tid in np.unique(mask_next) if tid != 0]
+    if not track_ids:
+        return np.zeros((H, W), dtype=np.int32)
+
+    two_frames = np.stack([img_curr, img_next])  # (2, H, W) or (2, C, H, W)
+    result = np.zeros((H, W), dtype=np.int32)
+
+    device = predictor._device
+    _autocast = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if device == "cuda"
+        else nullcontext()
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _save_frames_as_jpeg(two_frames, tmpdir)
+        with torch.inference_mode(), _autocast:
+            inference_state = predictor.init_state(
+                video_path=tmpdir,
+                offload_video_to_cpu=(device == "cpu"),
+            )
+            for tid in track_ids:
+                binary_mask = (mask_next == tid)
+                predictor.add_new_mask(
+                    inference_state, frame_idx=1, obj_id=tid, mask=binary_mask,
+                )
+            for frame_idx, obj_ids, video_res_masks in predictor.propagate_in_video(
+                inference_state, start_frame_idx=1, reverse=True,
+            ):
+                if frame_idx == 0:
+                    for i, obj_id in enumerate(obj_ids):
+                        binary = (video_res_masks[i, 0].float() > 0.0).cpu().numpy()
+                        result[binary] = int(obj_id)
+            predictor.reset_state(inference_state)
+
+    return result
+
+
+def track_sam2_video(
+    img_tyx: np.ndarray,
+    det_mask_tyx: np.ndarray,
+    predictor,
+    max_centroid_dist: float = 50.0,
+    tile_hw: int | None = None,
+    tile_overlap: int = 64,
+    temporal_window: int | None = None,
+) -> np.ndarray:
+    """Track objects across all frames using SAM2 backward propagation.
+
+    Convenience wrapper around :func:`run_tracking`.  Seeds every frame with
+    its per-frame detection mask, links detections backward in time using
+    centroid matching, and lets SAM2 propagate masks cleanly.
+
+    Parameters
+    ----------
+    img_tyx          : (T, H, W) raw image frames (used as SAM2 video input).
+    det_mask_tyx     : (T, H, W) uint8 binary detection mask (1 = object).
+    predictor        : SAM2VideoPredictor instance from ``load_sam2_video_predictor``.
+    max_centroid_dist: max px between frames to link detections as one track.
+    tile_hw          : spatial tile size; ``None`` = full frame.
+    tile_overlap     : overlap between adjacent tiles in pixels.
+    temporal_window  : frames per SAM2 call; ``None`` = all frames at once.
+
+    Returns
+    -------
+    (T, H, W) int32 array.  Pixel value = track ID (0 = background).
+    """
+    return run_tracking(
+        img_tyx=img_tyx,
+        det_mask_tyx=det_mask_tyx,
+        predictor=predictor,
+        max_centroid_dist=max_centroid_dist,
+        tile_hw=tile_hw,
+        tile_overlap=tile_overlap,
+        temporal_window=temporal_window,
+    )
 
 
 # ---------------------------------------------------------------------------
