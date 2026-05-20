@@ -159,6 +159,100 @@ def segment_algorithmic(
     return (labeled == comp_id).astype(np.float32), center_y, center_x
 
 
+QC_FAIL_HOLE_ID = 1
+QC_FAIL_RING_ID = 2
+FIRST_TRACK_HOLE_ID = 3
+
+
+def _qc_macropinosome_mask(
+    frame_raw: np.ndarray,
+    hole_mask_crop: np.ndarray,
+    y0: int,
+    y1: int,
+    x0: int,
+    x1: int,
+) -> dict[str, object]:
+    """Run macropinosome QC on one candidate hole mask inside one frame crop.
+
+    The returned dict contains:
+      passes_qc, reason, hole_mask_crop, ring_mask_crop, outer_half_step
+    """
+    tile_raw = frame_raw[y0:y1, x0:x1]
+    hole_mask_crop = binary_fill_holes(hole_mask_crop).astype(np.uint8)
+    area = int(hole_mask_crop.sum())
+
+    if not (min_hole_area <= area <= max_hole_area):
+        return {
+            "passes_qc": False,
+            "reason": f"area={area} outside [{min_hole_area}, {max_hole_area}]",
+            "hole_mask_crop": hole_mask_crop,
+            "ring_mask_crop": np.zeros_like(hole_mask_crop, dtype=np.uint8),
+            "outer_half_step": None,
+        }
+
+    prev = hole_mask_crop.copy()
+    ring_medians: list[float] = []
+    for _r in range(ring_search_steps):
+        curr = dilation(prev, disk(1))
+        annulus = (curr == 1) & (prev == 0)
+        if not annulus.any():
+            break
+        ring_medians.append(float(np.median(tile_raw[annulus])))
+        prev = curr
+
+    if len(ring_medians) < 3:
+        return {
+            "passes_qc": False,
+            "reason": "ring profile too short (<3 annuli)",
+            "hole_mask_crop": hole_mask_crop,
+            "ring_mask_crop": np.zeros_like(hole_mask_crop, dtype=np.uint8),
+            "outer_half_step": None,
+        }
+
+    profile = np.array(ring_medians, dtype=np.float32)
+    ring_peak_step = int(np.argmax(profile))
+    ring_peak_val = float(profile[ring_peak_step])
+
+    _n_bg = max(1, len(profile) - ring_peak_step - 2)
+    bg_estimate = float(np.min(profile[-_n_bg:]))
+    corrected_half = bg_estimate + (ring_peak_val - bg_estimate) * 0.5
+
+    hole_median_val = float(np.median(tile_raw[hole_mask_crop == 1]))
+    is_dark_inside = hole_median_val < ring_peak_val * 0.90
+    has_dark_outside = (
+        ring_peak_step < len(profile) - 1 and
+        float(np.min(profile[ring_peak_step + 1:])) < corrected_half
+    )
+    is_ring_within_range = ring_peak_step < len(profile) - 2
+
+    outer_half_step = ring_peak_step + 2
+    for _i in range(ring_peak_step + 1, len(profile)):
+        if profile[_i] < corrected_half:
+            outer_half_step = _i + 1
+            break
+
+    dist_from_hole = distance_transform_edt(hole_mask_crop == 0)
+    ring_mask_crop = ((dist_from_hole > 0) & (dist_from_hole <= outer_half_step)).astype(np.uint8)
+
+    reasons: list[str] = []
+    if not is_dark_inside:
+        reasons.append(f"hole_median={hole_median_val:.0f} >= 90% peak={ring_peak_val * 0.90:.0f}")
+    if not has_dark_outside:
+        reasons.append(f"outside never drops below bg_half={corrected_half:.0f}")
+    if not is_ring_within_range:
+        reasons.append(f"ring peak at last step {ring_peak_step + 1}")
+    if outer_half_step > 10:
+        reasons.append(f"outer_half_step={outer_half_step} > 10")
+
+    return {
+        "passes_qc": len(reasons) == 0,
+        "reason": ", ".join(reasons) if reasons else "pass",
+        "hole_mask_crop": hole_mask_crop,
+        "ring_mask_crop": ring_mask_crop,
+        "outer_half_step": int(outer_half_step),
+    }
+
+
 # %% Input paths
 # All user-facing configuration lives here — change these variables to point at
 # a different dataset without touching any other part of the script.
@@ -313,14 +407,16 @@ if debug:
 last_frame_score_f32 = last_frame_score.astype(np.float32)
 
 # Final labeled mask:
-#   odd  labels = dark hole  (1, 3, 5, …)
-#   even labels = bright ring (2, 4, 6, …)  where ring 2k encircles hole 2k-1
+#   1/2 reserved for QC-failed hole/ring masks
+#   odd  labels >= 3 = dark hole  (3, 5, 7, …)
+#   even labels >= 4 = bright ring (4, 6, 8, …)  where ring 2k encircles hole 2k-1
 H_img, W_img = last_frame.shape
 hole_ring_mask = np.zeros((H_img, W_img), dtype=np.int32)
-next_odd_id = 1
+next_odd_id = FIRST_TRACK_HOLE_ID
 
 macropinosome_coordinates_filtered = []
 mp_outer_half_steps: list[int] = []  # ring width (px from hole edge) for each accepted MP
+accepted_hole_ids: list[int] = []
 
 for y, x in macropinosome_coordinates:
     # ------------------------------------------------------------------ #
@@ -359,96 +455,31 @@ for y, x in macropinosome_coordinates:
             print(f"Discarded ({y},{x}): flood area={area} outside [{min_hole_area}, {max_hole_area}]")
         continue
 
-    # Radial profile: grow outward from flood_mask boundary in RAW image
-    prev = flood_mask.copy()
-    ring_medians: list[float] = []
-    for _r in range(ring_search_steps):
-        curr = dilation(prev, disk(1))
-        annulus = (curr == 1) & (prev == 0)
-        if not annulus.any():
-            break
-        ring_medians.append(float(np.median(tile_raw[annulus])))
-        prev = curr
-
-    if len(ring_medians) < 3:
-        continue
-
-    profile        = np.array(ring_medians, dtype=np.float32)
-    ring_peak_step = int(np.argmax(profile))        # 0-based step from hole edge
-    ring_peak_val  = float(profile[ring_peak_step])
-    half_max       = ring_peak_val / 2.0
-
-    # --- Background-corrected thresholds ---
-    # Estimate background from the tail of the profile (last few steps).
-    # Use 50% of (peak - background) above background as the ring boundary.
-    # This avoids the absolute half_max being below background in high-
-    # fluorescence regions, which would make the outer filter impossible to pass.
-    _n_bg = max(1, len(profile) - ring_peak_step - 2)
-    bg_estimate    = float(np.min(profile[-_n_bg:]))
-    corrected_half = bg_estimate + (ring_peak_val - bg_estimate) * 0.5
-
-    # --- FWHM filters ---
-    hole_median_val  = float(np.median(tile_raw[flood_mask == 1]))
-    # Hole must be darker than the ring (using absolute contrast: hole < peak)
-    is_dark_inside   = hole_median_val < ring_peak_val * 0.90
-    # Outside must drop to at least the bg-corrected midpoint after the peak
-    has_dark_outside = (ring_peak_step < len(profile) - 1 and
-                        float(np.min(profile[ring_peak_step + 1:])) < corrected_half)
-    is_ring_within_range = ring_peak_step < len(profile) - 2
-
-    if not (is_dark_inside and has_dark_outside and is_ring_within_range):
-        if debug:
-            reason = []
-            if not is_dark_inside:
-                reason.append(f"hole_median={hole_median_val:.0f} >= 90% peak={ring_peak_val * 0.90:.0f}")
-            if not has_dark_outside:
-                reason.append(f"outside never drops below bg_half={corrected_half:.0f}")
-            if not is_ring_within_range:
-                reason.append(f"ring peak at last step {ring_peak_step+1} (no outer drop visible)")
-            print(f"Discarded ({y},{x}): {', '.join(reason)}")
-        continue
-
-    # --- Outer boundary: first step after peak below bg-corrected half ---
-    outer_half_step = ring_peak_step + 2  # fallback: 2 steps past peak
-    for _i in range(ring_peak_step + 1, len(profile)):
-        if profile[_i] < corrected_half:
-            outer_half_step = _i + 1  # 1-based dilation count from flood_mask edge
-            break
-
-    # --- Filter: discard if ring extends too far from hole edge ---
-    max_outer_half_step = 10
-    if outer_half_step > max_outer_half_step:
-        if debug:
-            print(f"Discarded ({y},{x}): outer_half_step={outer_half_step} > {max_outer_half_step}")
-        continue
-
-    # --- Build masks ---
-    # Hole: fill any interior gaps in the score flood region
     hole_mask_crop = binary_fill_holes(flood_mask).astype(np.uint8)
-    # Ring: Euclidean distance from the hole boundary gives a circular ring
-    # regardless of the hole shape.  Pixels within [1, outer_half_step] px of
-    # the hole edge form the annulus; already-claimed pixels are excluded so
-    # adjacent macropinosomes never eat into each other's territory.
-    _dist_from_hole = distance_transform_edt(hole_mask_crop == 0)
-    _existing_crop  = hole_ring_mask[_y0:_y1, _x0:_x1]
-    _forbidden      = (_existing_crop != 0)
-    ring_mask_crop  = ((_dist_from_hole > 0) &
-                       (_dist_from_hole <= outer_half_step) &
-                       (~_forbidden)).astype(np.uint8)
+    qc_result = _qc_macropinosome_mask(last_frame, hole_mask_crop, _y0, _y1, _x0, _x1)
 
-    # --- Assign labels; never overwrite an earlier detection ---
-    hole_id = next_odd_id
-    ring_id  = next_odd_id + 1
-    next_odd_id += 2
+    if qc_result["passes_qc"]:
+        hole_id = next_odd_id
+        ring_id = next_odd_id + 1
+        next_odd_id += 2
+        macropinosome_coordinates_filtered.append((y, x))
+        mp_outer_half_steps.append(int(qc_result["outer_half_step"]))
+        accepted_hole_ids.append(hole_id)
+    else:
+        hole_id = QC_FAIL_HOLE_ID
+        ring_id = QC_FAIL_RING_ID
+        if debug:
+            print(f"QC-failed ({y},{x}): {qc_result['reason']}")
 
+    _existing_crop = hole_ring_mask[_y0:_y1, _x0:_x1]
+    _forbidden = (_existing_crop != 0)
+    ring_mask_crop = qc_result["ring_mask_crop"] & (~_forbidden)
     _view = hole_ring_mask[_y0:_y1, _x0:_x1]
-    _view[(hole_mask_crop == 1) & (_view == 0)] = hole_id
+    _view[(qc_result["hole_mask_crop"] == 1) & (_view == 0)] = hole_id
     _view[(ring_mask_crop == 1) & (_view == 0)] = ring_id
 
-    macropinosome_coordinates_filtered.append((y, x))
-    mp_outer_half_steps.append(outer_half_step)
-
     if debug:
+        outer_half_step = qc_result["outer_half_step"] if qc_result["outer_half_step"] is not None else -1
         _dy0 = max(0, y - tile_size * 2);  _dy1 = min(H_img, y + tile_size * 2 + 1)
         _dx0 = max(0, x - tile_size * 2);  _dx1 = min(W_img, x + tile_size * 2 + 1)
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -462,27 +493,19 @@ for y, x in macropinosome_coordinates:
         axes[1].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == hole_id, colors='cyan',   linewidths=1.5)
         axes[1].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == ring_id, colors='yellow', linewidths=1.5)
         axes[1].set_title(
-            f"Score  area={area}px²  peak_step={ring_peak_step+1}  outer_step={outer_half_step}"
+            f"Score  area={area}px²  QC={'pass' if qc_result['passes_qc'] else 'fail'}  outer_step={outer_half_step}"
         )
         axes[1].axis("off")
-        _rr = range(1, len(profile) + 1)
-        axes[2].plot(_rr, profile, marker='o', color='steelblue', markersize=4)
-        axes[2].axhline(half_max,        color='white',  linestyle=':',  linewidth=1.2, label=f'half_max={half_max:.0f}')
-        axes[2].axhline(bg_estimate,       color='gray',   linestyle=':',  linewidth=1.0, label=f'bg={bg_estimate:.0f}')
-        axes[2].axhline(corrected_half,    color='cyan',   linestyle=':',  linewidth=1.2, label=f'bg_half={corrected_half:.0f}')
-        axes[2].axvline(ring_peak_step+1, color='red',    linestyle='--', label=f'peak step={ring_peak_step+1}')
-        axes[2].axvline(outer_half_step,  color='orange', linestyle='--', label=f'outer step={outer_half_step}')
-        axes[2].axhline(ring_peak_val,    color='yellow', linestyle=':',  label=f'peak={ring_peak_val:.0f}')
-        axes[2].set_xlabel("Steps from hole edge (px)")
-        axes[2].set_ylabel("Annulus median intensity")
-        axes[2].set_title("Radial profile from hole edge (FWHM)")
-        axes[2].legend(fontsize=7)
+        axes[2].imshow(qc_result["ring_mask_crop"], cmap="Blues")
+        axes[2].set_title(f"QC={'pass' if qc_result['passes_qc'] else 'fail'}  outer_step={outer_half_step}")
+        axes[2].axis("off")
         plt.tight_layout()
         plt.show()
 
 print(f"\nAccepted {len(macropinosome_coordinates_filtered)} / {len(macropinosome_coordinates)} candidates.")
-print(f"Hole labels (odd):  1, 3, 5, …  up to {next_odd_id - 2 if next_odd_id > 1 else 'none'}")
-print(f"Ring labels (even): 2, 4, 6, …  up to {next_odd_id - 1 if next_odd_id > 1 else 'none'}")
+print(f"QC-fail reserve labels: hole={QC_FAIL_HOLE_ID}, ring={QC_FAIL_RING_ID}")
+print(f"Hole labels (odd):  3, 5, 7, …  up to {next_odd_id - 2 if next_odd_id > FIRST_TRACK_HOLE_ID else 'none'}")
+print(f"Ring labels (even): 4, 6, 8, …  up to {next_odd_id - 1 if next_odd_id > FIRST_TRACK_HOLE_ID else 'none'}")
 
 # %% QC: zoomed tiles for every accepted macropinosome
 # Summary QC plot shown after the main detection loop completes.
@@ -499,8 +522,8 @@ if debug and macropinosome_coordinates_filtered:
                              figsize=(n_cols * 2.5, n_rows * 2.5),
                              squeeze=False)
     for _idx, (fy, fx) in enumerate(macropinosome_coordinates_filtered):
-        hole_id_q = 2 * _idx + 1
-        ring_id_q = 2 * _idx + 2
+        hole_id_q = accepted_hole_ids[_idx]
+        ring_id_q = hole_id_q + 1
         _dy0 = max(0, fy - tile_size);  _dy1 = min(H_img, fy + tile_size + 1)
         _dx0 = max(0, fx - tile_size);  _dx1 = min(W_img, fx + tile_size + 1)
         crop_raw  = last_frame[_dy0:_dy1, _dx0:_dx1]
@@ -562,117 +585,260 @@ print("SAM2 predictor ready.")
 
 
 # %% SAM2 backward tracking
-# Now we track each confirmed macropinosome backward through all frames.
-#
-# Strategy per macropinosome:
-#   1. Cut a fixed spatial crop (tile_size pixels each side of the centroid)
-#      that stays at the same pixel coordinates in every frame.
-#   2. For every frame, build a 3-channel version of that crop:
-#        ch 0 = raw fluorescence
-#        ch 1 = hole score  (filled – raw, Gaussian-smoothed) — highlights dark
-#               holes with bright rings, the same signal used for detection
-#        ch 2 = raw fluorescence again
-#      This gives SAM extra contrast on the macropinosome even though it was
-#      not trained on these tiny vesicles.
-#   3. Seed SAM2 at the last frame with the hole masks of ALL macropinosomes
-#      present in the crop (not just the target), so SAM can track multiple
-#      objects and distinguish them from each other when they come close.
-#   4. Run SAM2 backward propagation.
-#   5. Identify which SAM2 track ID corresponds to our target macropinosome
-#      (the one whose mask covers the seed centroid in the last frame).
-#   6. For every earlier frame: extract that track's hole mask, reconstruct
-#      the ring via EDT with the same outer_half_step width from detection,
-#      and write both back to tracking_mask.
+# Stage A: Track all macropinosomes seeded in the last frame.
+# Stage B: For each earlier frame (T-2 ... 0), detect new macropinosomes.
+#          If a detected center is outside all currently tracked masks, seed a
+#          new object there and run backward SAM2 tracking from that frame.
 
-# Context padding for fill algorithm: large enough that the hole-fill kernel
-# has enough surrounding tissue to compute an accurate filled image.
-_fill_context_pad = max(64, tile_size)
+def _detect_macropinosomes_in_frame(
+    frame_raw: np.ndarray,
+    threshold_rel: float = 0.4,
+) -> list[dict[str, object]]:
+    """Detect macropinosomes in one frame using the same logic as frame T-1.
 
-for mp_idx, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
-    hole_id_target = 2 * mp_idx + 1
-    ring_id_target = 2 * mp_idx + 2
-    outer_r        = mp_outer_half_steps[mp_idx]   # ring width (px) from detection
+    Returns a list of dicts with keys:
+      y, x, outer_half_step, hole_mask_crop, crop_bounds
+    """
+    frame_filled = greyscale_fill_holes_kernel_2d(frame_raw, kernel_size=256, kernel_overlap=50)
+    frame_score = gaussian_filter(frame_filled - frame_raw, sigma=3)
+    coords = peak_local_max(frame_score, min_distance=5, threshold_rel=threshold_rel)
 
-    print(f"\n--- Tracking MP#{hole_id_target} at ({mp_y},{mp_x}), ring_width={outer_r} px ---")
+    frame_score_f32 = frame_score.astype(np.float32)
+    accepted: list[dict[str, object]] = []
 
-    # Fixed spatial crop bounds (same for every frame)
-    _cy0 = max(0, mp_y - tile_size)
-    _cy1 = min(H_img, mp_y + tile_size + 1)
-    _cx0 = max(0, mp_x - tile_size)
-    _cx1 = min(W_img, mp_x + tile_size + 1)
-    cH = _cy1 - _cy0
-    cW = _cx1 - _cx0
+    for y, x in coords:
+        _pad = ring_search_steps + 55
+        _y0 = max(0, y - _pad); _y1 = min(H_img, y + _pad + 1)
+        _x0 = max(0, x - _pad); _x1 = min(W_img, x + _pad + 1)
+        tile_score = frame_score_f32[_y0:_y1, _x0:_x1]
+        tile_raw = frame_raw[_y0:_y1, _x0:_x1]
+        cy_c, cx_c = y - _y0, x - _x0
 
-    # Build 3-channel video: shape (n_total, 3, cH, cW)
-    video_3ch = np.zeros((n_total, 3, cH, cW), dtype=np.float32)
+        peak_score = float(tile_score[cy_c, cx_c])
+        if peak_score <= 0:
+            continue
 
-    for frame_t in range(n_total):
-        raw_crop = raw_frames[frame_t, _cy0:_cy1, _cx0:_cx1].astype(np.float32)
+        filled_s = flood_fill(tile_score, (cy_c, cx_c), new_value=-1.0, tolerance=peak_score / 2)
+        flood_mask = (filled_s == -1.0).astype(np.uint8)
 
-        # Compute score on a larger crop so fill has enough context around the hole.
-        # A kernel_size smaller than the full-frame value is fine here because
-        # the context area is already limited to _fill_context_pad pixels.
-        _fy0 = max(0, _cy0 - _fill_context_pad); _fy1 = min(H_img, _cy1 + _fill_context_pad)
-        _fx0 = max(0, _cx0 - _fill_context_pad); _fx1 = min(W_img, _cx1 + _fill_context_pad)
-        raw_large    = raw_frames[frame_t, _fy0:_fy1, _fx0:_fx1]
+        props = regionprops(flood_mask)
+        if not props:
+            continue
+        area = props[0].area
+        if not (min_hole_area <= area <= max_hole_area):
+            continue
+
+        hole_mask_crop = binary_fill_holes(flood_mask).astype(np.uint8)
+        qc_result = _qc_macropinosome_mask(frame_raw, hole_mask_crop, _y0, _y1, _x0, _x1)
+        if not qc_result["passes_qc"]:
+            continue
+        accepted.append({
+            "y": int(y),
+            "x": int(x),
+            "outer_half_step": int(qc_result["outer_half_step"]),
+            "hole_mask_crop": qc_result["hole_mask_crop"],
+            "crop_bounds": (_y0, _y1, _x0, _x1),
+        })
+
+    return accepted
+
+
+def _build_video_3ch_until(
+    last_frame_idx: int,
+    y0: int,
+    y1: int,
+    x0: int,
+    x1: int,
+    context_pad: int,
+) -> np.ndarray:
+    """Build (last_frame_idx+1, 3, H, W) video with channels [raw, score, raw]."""
+    cH = y1 - y0
+    cW = x1 - x0
+    out = np.zeros((last_frame_idx + 1, 3, cH, cW), dtype=np.float32)
+
+    for frame_t in range(last_frame_idx + 1):
+        raw_crop = raw_frames[frame_t, y0:y1, x0:x1].astype(np.float32)
+
+        fy0 = max(0, y0 - context_pad); fy1 = min(H_img, y1 + context_pad)
+        fx0 = max(0, x0 - context_pad); fx1 = min(W_img, x1 + context_pad)
+        raw_large = raw_frames[frame_t, fy0:fy1, fx0:fx1]
         filled_large = greyscale_fill_holes_kernel_2d(raw_large, kernel_size=128, kernel_overlap=25)
-        _ry0 = _cy0 - _fy0; _ry1 = _ry0 + cH
-        _rx0 = _cx0 - _fx0; _rx1 = _rx0 + cW
+        ry0 = y0 - fy0; ry1 = ry0 + cH
+        rx0 = x0 - fx0; rx1 = rx0 + cW
         score_crop = gaussian_filter(
-            filled_large[_ry0:_ry1, _rx0:_rx1].astype(np.float32) - raw_crop,
+            filled_large[ry0:ry1, rx0:rx1].astype(np.float32) - raw_crop,
             sigma=3,
         )
 
-        video_3ch[frame_t, 0] = raw_crop
-        video_3ch[frame_t, 1] = score_crop
-        video_3ch[frame_t, 2] = raw_crop
+        out[frame_t, 0] = raw_crop
+        out[frame_t, 1] = score_crop
+        out[frame_t, 2] = raw_crop
 
-    # Seed mask: binary hole pixels at last frame for ALL macropinosomes in crop.
-    # SAM will see them as separate connected components and assign distinct track IDs.
-    seed_frame_crop = hole_ring_mask[_cy0:_cy1, _cx0:_cx1]
-    det_mask = np.zeros((n_total, cH, cW), dtype=np.uint8)
-    det_mask[t] = ((seed_frame_crop % 2 == 1) & (seed_frame_crop > 0)).astype(np.uint8)
+    return out
 
-    # Run SAM2 backward tracking on the 3-channel crop
+
+def _track_single_seed_backward(
+    seed_t: int,
+    seed_y: int,
+    seed_x: int,
+    hole_id_target: int,
+    ring_id_target: int,
+    outer_r: int,
+    candidate_hole_crop: np.ndarray | None = None,
+) -> bool:
+    """Track one seed backward from frame seed_t and write into tracking_mask."""
+    cy0 = max(0, seed_y - tile_size)
+    cy1 = min(H_img, seed_y + tile_size + 1)
+    cx0 = max(0, seed_x - tile_size)
+    cx1 = min(W_img, seed_x + tile_size + 1)
+    cH = cy1 - cy0
+    cW = cx1 - cx0
+
+    if candidate_hole_crop is not None and candidate_hole_crop.any():
+        qc_seed = _qc_macropinosome_mask(raw_frames[seed_t], candidate_hole_crop, cy0, cy1, cx0, cx1)
+        view_seed = tracking_mask[seed_t, cy0:cy1, cx0:cx1]
+        hole_seed_id = hole_id_target if qc_seed["passes_qc"] else QC_FAIL_HOLE_ID
+        ring_seed_id = ring_id_target if qc_seed["passes_qc"] else QC_FAIL_RING_ID
+        view_seed[(qc_seed["hole_mask_crop"] == 1) & (view_seed == 0)] = hole_seed_id
+        view_seed[(qc_seed["ring_mask_crop"] == 1) & (view_seed == 0)] = ring_seed_id
+
+    video_3ch = _build_video_3ch_until(seed_t, cy0, cy1, cx0, cx1, context_pad=max(64, tile_size))
+
+    det_mask = np.zeros((seed_t + 1, cH, cW), dtype=np.uint8)
+    seed_frame_crop = tracking_mask[seed_t, cy0:cy1, cx0:cx1]
+    det_mask[seed_t] = ((seed_frame_crop % 2 == 1) & (seed_frame_crop > 0)).astype(np.uint8)
+
     sam_result = _run_tracking_on_region(
-        video_3ch, det_mask, predictor, max_centroid_dist=float(tile_size),
-        label=f"MP#{hole_id_target} ",
+        video_3ch,
+        det_mask,
+        predictor,
+        max_centroid_dist=float(tile_size),
+        label=f"seed@t{seed_t} id{hole_id_target} ",
     )
 
-    # Identify which SAM2 track ID covers our target centroid in the last frame
-    _local_y = mp_y - _cy0
-    _local_x = mp_x - _cx0
-    target_sam_id = int(sam_result[t, _local_y, _local_x])
+    local_y = seed_y - cy0
+    local_x = seed_x - cx0
+    target_sam_id = 0
+
+    if candidate_hole_crop is not None and candidate_hole_crop.any():
+        ids = sam_result[seed_t][candidate_hole_crop > 0]
+        ids = ids[ids != 0]
+        if ids.size > 0:
+            vals, counts = np.unique(ids, return_counts=True)
+            target_sam_id = int(vals[np.argmax(counts)])
+
+    if target_sam_id == 0 and 0 <= local_y < cH and 0 <= local_x < cW:
+        target_sam_id = int(sam_result[seed_t, local_y, local_x])
 
     if target_sam_id == 0:
-        print(f"  Warning: SAM2 produced no mask at seed location — skipping.")
-        continue
-    print(f"  SAM2 track ID for this macropinosome = {target_sam_id}")
+        if debug:
+            print(f"  Warning: SAM2 produced no mask at seed ({seed_y},{seed_x}) in t={seed_t}.")
+        return False
 
-    # Write hole + ring for every earlier frame back to tracking_mask.
-    # The last frame is already filled from the detection step; skip it.
-    for frame_t in range(n_total):
-        if frame_t == t:
-            continue
-
+    for frame_t in range(seed_t):
         hole_crop_t = (sam_result[frame_t] == target_sam_id)
         if not hole_crop_t.any():
             continue
 
-        # Fill small gaps inside the SAM mask (same as detection step)
-        hole_filled_t = binary_fill_holes(hole_crop_t).astype(np.uint8)
+        qc_result = _qc_macropinosome_mask(raw_frames[frame_t], hole_crop_t.astype(np.uint8), cy0, cy1, cx0, cx1)
+        write_hole_id = hole_id_target if qc_result["passes_qc"] else QC_FAIL_HOLE_ID
+        write_ring_id = ring_id_target if qc_result["passes_qc"] else QC_FAIL_RING_ID
 
-        # Reconstruct ring via EDT: pixels within [1, outer_r] px of hole boundary
-        dist_t     = distance_transform_edt(hole_filled_t == 0)
-        ring_crop_t = ((dist_t > 0) & (dist_t <= outer_r)).astype(np.uint8)
+        view = tracking_mask[frame_t, cy0:cy1, cx0:cx1]
+        view[(qc_result["hole_mask_crop"] == 1) & (view == 0)] = write_hole_id
+        view[(qc_result["ring_mask_crop"] == 1) & (view == 0)] = write_ring_id
 
-        # Write to tracking_mask without overwriting earlier detections
-        _view = tracking_mask[frame_t, _cy0:_cy1, _cx0:_cx1]
-        _view[(hole_filled_t == 1) & (_view == 0)] = hole_id_target
-        _view[(ring_crop_t  == 1) & (_view == 0)] = ring_id_target
+    return True
+
+
+print("\nStage A: Tracking seeds from the last frame ...")
+for mp_idx, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
+    hole_id_target = accepted_hole_ids[mp_idx]
+    ring_id_target = hole_id_target + 1
+    outer_r = mp_outer_half_steps[mp_idx]
+    print(f"  seed MP#{hole_id_target} at t={t}, center=({mp_y},{mp_x}), ring_width={outer_r}")
+    _track_single_seed_backward(
+        seed_t=t,
+        seed_y=mp_y,
+        seed_x=mp_x,
+        hole_id_target=hole_id_target,
+        ring_id_target=ring_id_target,
+        outer_r=outer_r,
+        candidate_hole_crop=None,
+    )
+
+
+print("\nStage B: Backward discovery of new macropinosomes ...")
+new_tracks_added = 0
+for seed_t in range(t - 1, -1, -1):
+    candidates = _detect_macropinosomes_in_frame(raw_frames[seed_t], threshold_rel=0.4)
+    if debug:
+        print(f"t={seed_t}: detected {len(candidates)} candidate(s) before overlap filtering")
+
+    accepted_new_in_frame = 0
+    for cand in candidates:
+        seed_y = int(cand["y"])
+        seed_x = int(cand["x"])
+
+        # Reject candidates whose center is already covered by any tracked mask.
+        if tracking_mask[seed_t, seed_y, seed_x] != 0:
+            continue
+
+        hole_id_target = next_odd_id
+        ring_id_target = next_odd_id + 1
+        next_odd_id += 2
+        outer_r = int(cand["outer_half_step"])
+
+        # Build candidate hole mask in this seed tile coordinates.
+        cy0 = max(0, seed_y - tile_size)
+        cy1 = min(H_img, seed_y + tile_size + 1)
+        cx0 = max(0, seed_x - tile_size)
+        cx1 = min(W_img, seed_x + tile_size + 1)
+        cH = cy1 - cy0
+        cW = cx1 - cx0
+        candidate_hole_crop = np.zeros((cH, cW), dtype=np.uint8)
+
+        y0_det, y1_det, x0_det, x1_det = cand["crop_bounds"]
+        hole_mask_det = cand["hole_mask_crop"]
+        iy0 = max(cy0, y0_det); iy1 = min(cy1, y1_det)
+        ix0 = max(cx0, x0_det); ix1 = min(cx1, x1_det)
+        if iy1 <= iy0 or ix1 <= ix0:
+            continue
+
+        src_y0, src_y1 = iy0 - y0_det, iy1 - y0_det
+        src_x0, src_x1 = ix0 - x0_det, ix1 - x0_det
+        dst_y0, dst_y1 = iy0 - cy0, iy1 - cy0
+        dst_x0, dst_x1 = ix0 - cx0, ix1 - cx0
+        candidate_hole_crop[dst_y0:dst_y1, dst_x0:dst_x1] = hole_mask_det[src_y0:src_y1, src_x0:src_x1]
+
+        if not candidate_hole_crop.any():
+            continue
+
+        ok = _track_single_seed_backward(
+            seed_t=seed_t,
+            seed_y=seed_y,
+            seed_x=seed_x,
+            hole_id_target=hole_id_target,
+            ring_id_target=ring_id_target,
+            outer_r=outer_r,
+            candidate_hole_crop=candidate_hole_crop,
+        )
+
+        if ok:
+            accepted_new_in_frame += 1
+            new_tracks_added += 1
+            if debug:
+                print(
+                    f"  Added new track hole_id={hole_id_target} at t={seed_t}, "
+                    f"center=({seed_y},{seed_x}), ring_width={outer_r}"
+                )
+
+    if debug and accepted_new_in_frame > 0:
+        print(f"t={seed_t}: accepted {accepted_new_in_frame} new track(s)")
 
 print(f"\nTracking complete.")
 print(f"Frames with at least one mask: {(tracking_mask.any(axis=(1, 2))).sum()} / {n_total}")
+print(f"New tracks discovered after t={t}: {new_tracks_added}")
 
 
 # %% QC: tracked macropinosomes over time
@@ -680,8 +846,8 @@ print(f"Frames with at least one mask: {(tracking_mask.any(axis=(1, 2))).sum()} 
 # and rings (blue) overlaid on the raw image. Displays up to 5 frames evenly
 # spaced across the temporal range.
 if debug and len(macropinosome_coordinates_filtered) > 0:
-    # Select up to 5 frames evenly spaced across the video
-    n_display = min(5, n_total)
+    # Select up to 10 frames evenly spaced across the video
+    n_display = min(10, n_total)
     frame_indices = np.linspace(0, n_total - 1, n_display, dtype=int)
 
     fig, axes = plt.subplots(1, n_display, figsize=(n_display * 4, 4), squeeze=False)
@@ -724,63 +890,141 @@ if debug and len(macropinosome_coordinates_filtered) > 0:
 
 
 # %% QC: zoomed macropinosome tracks over time
-# Grid showing each accepted macropinosome across multiple timepoints.
-# Rows = different macropinosomes; Columns = evenly spaced timepoints.
-# Each cell is a ±tile_size crop centered on the macropinosome with hole (red)
-# and ring (blue) overlays.
-if debug and len(macropinosome_coordinates_filtered) > 0:
-    n_mp = len(macropinosome_coordinates_filtered)
-    n_time_samples = min(5, n_total)
+# Grid showing tracked macropinosomes plus explicit failed-QC examples.
+# Rows = different tracks / failed-QC components; Columns = evenly spaced
+# timepoints. Each cell is a ±tile_size crop with hole/ring overlays.
+if debug and (tracking_mask > 0).any():
+    n_time_samples = min(10, n_total)
     time_samples = np.linspace(0, n_total - 1, n_time_samples, dtype=int)
 
-    fig, axes = plt.subplots(n_mp, n_time_samples, figsize=(n_time_samples * 3, n_mp * 3), squeeze=False)
+    row_specs: list[dict[str, object]] = []
 
-    for mp_row, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
-        hole_id_mp = 2 * mp_row + 1
-        ring_id_mp = 2 * mp_row + 2
+    # Normal tracked rows: all odd IDs except the reserved QC-fail bucket.
+    hole_ids_all = sorted(
+        int(_id) for _id in np.unique(tracking_mask)
+        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1
+    )
+    for hole_id_mp in hole_ids_all:
+        frames_present = np.where((tracking_mask == hole_id_mp).any(axis=(1, 2)))[0]
+        if frames_present.size == 0:
+            continue
+        ref_t = int(frames_present[-1])
+        ys, xs = np.where(tracking_mask[ref_t] == hole_id_mp)
+        if ys.size == 0:
+            continue
+        cy = int(np.round(float(ys.mean())))
+        cx = int(np.round(float(xs.mean())))
+        row_specs.append({
+            "label": f"MP#{hole_id_mp}",
+            "hole_id": hole_id_mp,
+            "ring_id": hole_id_mp + 1,
+            "center": (cy, cx),
+            "is_fail": False,
+        })
 
-        for time_col, frame_t in enumerate(time_samples):
-            ax = axes[mp_row, time_col]
+    # Failed QC rows: one row per connected failed component in sampled frames.
+    for frame_t in time_samples:
+        fail_hole = (tracking_mask[frame_t] == QC_FAIL_HOLE_ID).astype(np.uint8)
+        fail_ring = (tracking_mask[frame_t] == QC_FAIL_RING_ID).astype(np.uint8)
+        labeled_fail = cc_label(fail_hole, connectivity=1)
+        fail_ids = [int(_id) for _id in np.unique(labeled_fail) if _id != 0]
+        for fail_comp_id in fail_ids:
+            ys, xs = np.where(labeled_fail == fail_comp_id)
+            if ys.size == 0:
+                continue
+            cy = int(np.round(float(ys.mean())))
+            cx = int(np.round(float(xs.mean())))
+            row_specs.append({
+                "label": f"FAIL@t={frame_t}#{fail_comp_id}",
+                "hole_id": QC_FAIL_HOLE_ID,
+                "ring_id": QC_FAIL_RING_ID,
+                "center": (cy, cx),
+                "is_fail": True,
+                "ref_t": int(frame_t),
+            })
 
-            # Crop bounds around this macropinosome
-            _cy0 = max(0, mp_y - tile_size)
-            _cy1 = min(H_img, mp_y + tile_size + 1)
-            _cx0 = max(0, mp_x - tile_size)
-            _cx1 = min(W_img, mp_x + tile_size + 1)
+    n_rows_total = len(row_specs)
+    if n_rows_total == 0:
+        plt.figure(figsize=(6, 2))
+        plt.title("No tracked or failed-QC masks found for zoom QC")
+        plt.axis("off")
+        plt.show()
+    else:
+        fig, axes = plt.subplots(
+            n_rows_total,
+            n_time_samples,
+            figsize=(n_time_samples * 3, n_rows_total * 3),
+            squeeze=False,
+        )
 
-            # Extract crop from raw and mask
-            raw_crop = raw_frames[frame_t, _cy0:_cy1, _cx0:_cx1]
-            mask_crop = tracking_mask[frame_t, _cy0:_cy1, _cx0:_cx1]
+        for mp_row, row_spec in enumerate(row_specs):
+            hole_id_mp = int(row_spec["hole_id"])
+            ring_id_mp = int(row_spec["ring_id"])
+            mp_y, mp_x = row_spec["center"]
+            is_fail = bool(row_spec["is_fail"])
+            ref_t = int(row_spec.get("ref_t", -1))
 
-            # Show raw image
-            ax.imshow(raw_crop, cmap="gray")
+            for time_col, frame_t in enumerate(time_samples):
+                ax = axes[mp_row, time_col]
 
-            # Overlay holes and rings for this macropinosome only
-            ov = np.zeros((*raw_crop.shape, 4), dtype=np.float32)
-            hole_pixels = (mask_crop == hole_id_mp)
-            ring_pixels = (mask_crop == ring_id_mp)
+                # Crop bounds around this macropinosome
+                _cy0 = max(0, mp_y - tile_size)
+                _cy1 = min(H_img, mp_y + tile_size + 1)
+                _cx0 = max(0, mp_x - tile_size)
+                _cx1 = min(W_img, mp_x + tile_size + 1)
 
-            ov[hole_pixels] = [1.0, 0.2, 0.2, 0.6]  # red for hole
-            ov[ring_pixels] = [0.3, 0.7, 1.0, 0.5]  # blue for ring
+                # Extract crop from raw and mask
+                raw_crop = raw_frames[frame_t, _cy0:_cy1, _cx0:_cx1]
+                mask_crop = tracking_mask[frame_t, _cy0:_cy1, _cx0:_cx1]
 
-            ax.imshow(ov)
+                # Show raw image
+                ax.imshow(raw_crop, cmap="gray")
 
-            # Contours for clarity
-            ax.contour(hole_pixels, colors="cyan", linewidths=1.0)
-            ax.contour(ring_pixels, colors="yellow", linewidths=0.8)
+                # Overlay holes and rings for this macropinosome only
+                ov = np.zeros((*raw_crop.shape, 4), dtype=np.float32)
+                if is_fail and frame_t == ref_t:
+                    fail_hole_crop = (mask_crop == QC_FAIL_HOLE_ID).astype(np.uint8)
+                    fail_labeled_crop = cc_label(fail_hole_crop, connectivity=1)
+                    local_y = mp_y - _cy0
+                    local_x = mp_x - _cx0
+                    fail_comp_id = 0
+                    if 0 <= local_y < fail_labeled_crop.shape[0] and 0 <= local_x < fail_labeled_crop.shape[1]:
+                        fail_comp_id = int(fail_labeled_crop[local_y, local_x])
+                    hole_pixels = fail_labeled_crop == fail_comp_id if fail_comp_id != 0 else np.zeros_like(fail_hole_crop, dtype=bool)
+                    ring_pixels = (mask_crop == QC_FAIL_RING_ID) & dilation(hole_pixels.astype(np.uint8), disk(2)).astype(bool)
+                else:
+                    hole_pixels = (mask_crop == hole_id_mp)
+                    ring_pixels = (mask_crop == ring_id_mp)
 
-            # Mark the centroid
-            _local_y = mp_y - _cy0
-            _local_x = mp_x - _cx0
-            if 0 <= _local_y < raw_crop.shape[0] and 0 <= _local_x < raw_crop.shape[1]:
-                ax.plot(_local_x, _local_y, "c+", markersize=10, markeredgewidth=1.5)
+                if is_fail:
+                    ov[hole_pixels] = [1.0, 0.0, 0.8, 0.65]  # magenta for QC-failed hole
+                    ov[ring_pixels] = [1.0, 0.6, 0.0, 0.50]  # orange for QC-failed ring
+                else:
+                    ov[hole_pixels] = [1.0, 0.2, 0.2, 0.6]  # red for hole
+                    ov[ring_pixels] = [0.3, 0.7, 1.0, 0.5]  # blue for ring
 
-            ax.set_title(f"MP#{hole_id_mp} t={frame_t}", fontsize=8)
-            ax.axis("off")
+                ax.imshow(ov)
 
-    fig.suptitle(f"{n_mp} macropinosomes tracked across {n_time_samples} timepoints", fontsize=11)
-    plt.tight_layout()
-    plt.show()
+                # Contours for clarity
+                ax.contour(hole_pixels, colors="cyan", linewidths=1.0)
+                ax.contour(ring_pixels, colors="yellow", linewidths=0.8)
+
+                # Mark the centroid
+                _local_y = mp_y - _cy0
+                _local_x = mp_x - _cx0
+                if 0 <= _local_y < raw_crop.shape[0] and 0 <= _local_x < raw_crop.shape[1]:
+                    ax.plot(_local_x, _local_y, "c+", markersize=10, markeredgewidth=1.5)
+
+                ax.set_title(f"{row_spec['label']} t={frame_t}", fontsize=8)
+                ax.axis("off")
+
+        n_fail_rows = sum(1 for row in row_specs if bool(row["is_fail"]))
+        fig.suptitle(
+            f"{len(hole_ids_all)} tracked macropinosomes + {n_fail_rows} failed-QC rows across {n_time_samples} timepoints",
+            fontsize=11,
+        )
+        plt.tight_layout()
+        plt.show()
 
 
 
