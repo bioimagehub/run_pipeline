@@ -1460,14 +1460,21 @@ if debug and (tracking_mask > 0).any():
     n_time_samples = min(10, n_total)
     time_samples = np.linspace(0, n_total - 1, n_time_samples, dtype=int)
 
+    discarded_short_tracks = 0
     successful_hole_ids = sorted(
-        int(_id) for _id in np.unique(tracking_mask)
-        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1
+        int(_id)
+        for _id in np.unique(tracking_mask)
+        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1 and np.where((tracking_mask == _id).any(axis=(1, 2)))[0].size >= 3
     )
+    for _id in np.unique(tracking_mask):
+        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1:
+            _present = np.where((tracking_mask == _id).any(axis=(1, 2)))[0]
+            if _present.size < 3:
+                discarded_short_tracks += 1
 
     if len(successful_hole_ids) == 0:
         plt.figure(figsize=(6, 2))
-        plt.title("No successful tracked masks found after split")
+        plt.title("No successful tracked masks found after split (tracks < 3 timepoints discarded)")
         plt.axis("off")
         plt.show()
     else:
@@ -1530,7 +1537,7 @@ if debug and (tracking_mask > 0).any():
                 ax.axis("off")
 
         fig.suptitle(
-            f"Successful tracks only after split ({len(successful_hole_ids)} tracks, {n_time_samples} timepoints)",
+            f"Successful tracks only after split ({len(successful_hole_ids)} tracks, {discarded_short_tracks} discarded < 3 timepoints, {n_time_samples} timepoints)",
             fontsize=11,
         )
         plt.tight_layout()
