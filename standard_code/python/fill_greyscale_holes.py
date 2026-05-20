@@ -19,7 +19,6 @@ import sysconfig
 from pathlib import Path
 from typing import Optional
 import logging
-import h5py
 import json
 from contextlib import ExitStack, contextmanager
 import tifffile
@@ -900,6 +899,9 @@ def process_single_image(
 
         for fmt in output_formats:
             if fmt == 'ilastik-h5':
+                import h5py
+
+
                 output_path = f"{output_stem}.h5"
                 logging.info(f"Preparing Ilastik HDF5 (streaming): {Path(output_path).name}")
                 axis_configs = [
