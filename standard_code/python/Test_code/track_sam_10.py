@@ -377,7 +377,7 @@ if debug:
         _passed = "ACCEPTED" if any(
             (macropinosome_coordinates[:, 0] == _cy) & (macropinosome_coordinates[:, 1] == _cx)
         ) else f"DROPPED by peak_local_max (score={_sv:.2f} < {_global_max * 0.4:.2f})"
-        print(f"  ({_cy},{_cx})  score={_sv:.2f}  rel={_sv / _global_max:.3f}  → {_passed}")
+        print(f"  ({_cy},{_cx})  score={_sv:.2f}  rel={_sv / _global_max:.3f}  -> {_passed}")
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     axes[0].imshow(last_frame[_iy0:_iy1, _ix0:_ix1], cmap="gray")
@@ -478,29 +478,29 @@ for y, x in macropinosome_coordinates:
     _view[(qc_result["hole_mask_crop"] == 1) & (_view == 0)] = hole_id
     _view[(ring_mask_crop == 1) & (_view == 0)] = ring_id
 
-    if debug:
-        outer_half_step = qc_result["outer_half_step"] if qc_result["outer_half_step"] is not None else -1
-        _dy0 = max(0, y - tile_size * 2);  _dy1 = min(H_img, y + tile_size * 2 + 1)
-        _dx0 = max(0, x - tile_size * 2);  _dx1 = min(W_img, x + tile_size * 2 + 1)
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        axes[0].imshow(last_frame[_dy0:_dy1, _dx0:_dx1], cmap="gray")
-        axes[0].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == hole_id, colors='cyan',   linewidths=1.5)
-        axes[0].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == ring_id, colors='yellow', linewidths=1.5)
-        axes[0].plot(x - _dx0, y - _dy0, 'c+', markersize=12)
-        axes[0].set_title(f"Raw ({y},{x})  cyan=hole  yellow=ring")
-        axes[0].axis("off")
-        axes[1].imshow(last_frame_score[_dy0:_dy1, _dx0:_dx1], cmap="magma")
-        axes[1].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == hole_id, colors='cyan',   linewidths=1.5)
-        axes[1].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == ring_id, colors='yellow', linewidths=1.5)
-        axes[1].set_title(
-            f"Score  area={area}px²  QC={'pass' if qc_result['passes_qc'] else 'fail'}  outer_step={outer_half_step}"
-        )
-        axes[1].axis("off")
-        axes[2].imshow(qc_result["ring_mask_crop"], cmap="Blues")
-        axes[2].set_title(f"QC={'pass' if qc_result['passes_qc'] else 'fail'}  outer_step={outer_half_step}")
-        axes[2].axis("off")
-        plt.tight_layout()
-        plt.show()
+    # if debug:
+    #     outer_half_step = qc_result["outer_half_step"] if qc_result["outer_half_step"] is not None else -1
+    #     _dy0 = max(0, y - tile_size * 2);  _dy1 = min(H_img, y + tile_size * 2 + 1)
+    #     _dx0 = max(0, x - tile_size * 2);  _dx1 = min(W_img, x + tile_size * 2 + 1)
+    #     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    #     axes[0].imshow(last_frame[_dy0:_dy1, _dx0:_dx1], cmap="gray")
+    #     axes[0].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == hole_id, colors='cyan',   linewidths=1.5)
+    #     axes[0].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == ring_id, colors='yellow', linewidths=1.5)
+    #     axes[0].plot(x - _dx0, y - _dy0, 'c+', markersize=12)
+    #     axes[0].set_title(f"Raw ({y},{x})  cyan=hole  yellow=ring")
+    #     axes[0].axis("off")
+    #     axes[1].imshow(last_frame_score[_dy0:_dy1, _dx0:_dx1], cmap="magma")
+    #     axes[1].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == hole_id, colors='cyan',   linewidths=1.5)
+    #     axes[1].contour(hole_ring_mask[_dy0:_dy1, _dx0:_dx1] == ring_id, colors='yellow', linewidths=1.5)
+    #     axes[1].set_title(
+    #         f"Score  area={area}px²  QC={'pass' if qc_result['passes_qc'] else 'fail'}  outer_step={outer_half_step}"
+    #     )
+    #     axes[1].axis("off")
+    #     axes[2].imshow(qc_result["ring_mask_crop"], cmap="Blues")
+    #     axes[2].set_title(f"QC={'pass' if qc_result['passes_qc'] else 'fail'}  outer_step={outer_half_step}")
+    #     axes[2].axis("off")
+    #     plt.tight_layout()
+    #     plt.show()
 
 print(f"\nAccepted {len(macropinosome_coordinates_filtered)} / {len(macropinosome_coordinates)} candidates.")
 print(f"QC-fail reserve labels: hole={QC_FAIL_HOLE_ID}, ring={QC_FAIL_RING_ID}")
@@ -692,8 +692,12 @@ def _track_single_seed_backward(
     ring_id_target: int,
     outer_r: int,
     candidate_hole_crop: np.ndarray | None = None,
-) -> bool:
-    """Track one seed backward from frame seed_t and write into tracking_mask."""
+) -> tuple[bool, int]:
+    """Track one seed bidirectionally from frame seed_t and write into tracking_mask.
+
+    Returns (success, adopted_hole_id). If SAM2 forward propagation overlaps an
+    existing tracked object, the new seed adopts that existing hole ID.
+    """
     cy0 = max(0, seed_y - tile_size)
     cy1 = min(H_img, seed_y + tile_size + 1)
     cx0 = max(0, seed_x - tile_size)
@@ -709,53 +713,177 @@ def _track_single_seed_backward(
         view_seed[(qc_seed["hole_mask_crop"] == 1) & (view_seed == 0)] = hole_seed_id
         view_seed[(qc_seed["ring_mask_crop"] == 1) & (view_seed == 0)] = ring_seed_id
 
-    video_3ch = _build_video_3ch_until(seed_t, cy0, cy1, cx0, cx1, context_pad=max(64, tile_size))
+    video_3ch = _build_video_3ch_until(n_total - 1, cy0, cy1, cx0, cx1, context_pad=max(64, tile_size))
 
-    det_mask = np.zeros((seed_t + 1, cH, cW), dtype=np.uint8)
     seed_frame_crop = tracking_mask[seed_t, cy0:cy1, cx0:cx1]
-    det_mask[seed_t] = ((seed_frame_crop % 2 == 1) & (seed_frame_crop > 0)).astype(np.uint8)
-
-    sam_result = _run_tracking_on_region(
-        video_3ch,
-        det_mask,
-        predictor,
-        max_centroid_dist=float(tile_size),
-        label=f"seed@t{seed_t} id{hole_id_target} ",
-    )
+    seed_binary = ((seed_frame_crop % 2 == 1) & (seed_frame_crop > 0)).astype(np.uint8)
+    seed_labeled = cc_label(seed_binary, connectivity=1).astype(np.int32)
 
     local_y = seed_y - cy0
     local_x = seed_x - cx0
-    target_sam_id = 0
-
+    seed_local_obj_id = 0
     if candidate_hole_crop is not None and candidate_hole_crop.any():
-        ids = sam_result[seed_t][candidate_hole_crop > 0]
-        ids = ids[ids != 0]
-        if ids.size > 0:
-            vals, counts = np.unique(ids, return_counts=True)
-            target_sam_id = int(vals[np.argmax(counts)])
+        overlapping_ids = seed_labeled[candidate_hole_crop > 0]
+        overlapping_ids = overlapping_ids[overlapping_ids != 0]
+        if overlapping_ids.size > 0:
+            vals, counts = np.unique(overlapping_ids, return_counts=True)
+            seed_local_obj_id = int(vals[np.argmax(counts)])
+    if seed_local_obj_id == 0 and 0 <= local_y < cH and 0 <= local_x < cW:
+        seed_local_obj_id = int(seed_labeled[local_y, local_x])
+    if seed_local_obj_id == 0:
+        if debug:
+            print(f"  Warning: no seeded object found at ({seed_y},{seed_x}) in t={seed_t}.")
+        return False, hole_id_target
 
-    if target_sam_id == 0 and 0 <= local_y < cH and 0 <= local_x < cW:
-        target_sam_id = int(sam_result[seed_t, local_y, local_x])
+    sam_result = np.zeros((n_total, cH, cW), dtype=np.int32)
+    object_ids = [int(_id) for _id in np.unique(seed_labeled) if _id != 0]
+    if not object_ids:
+        return False, hole_id_target
+
+    device = predictor._device
+    autocast_ctx = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if device == "cuda"
+        else nullcontext()
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sam2_utils._save_frames_as_jpeg(video_3ch, tmpdir)
+
+        for reverse in (True, False):
+            with torch.inference_mode(), autocast_ctx:
+                inference_state = predictor.init_state(
+                    video_path=tmpdir,
+                    offload_video_to_cpu=(device == "cpu"),
+                )
+                for obj_id in object_ids:
+                    predictor.add_new_mask(
+                        inference_state,
+                        frame_idx=seed_t,
+                        obj_id=obj_id,
+                        mask=(seed_labeled == obj_id),
+                    )
+
+                for frame_idx, obj_ids_out, masks_out in predictor.propagate_in_video(
+                    inference_state,
+                    start_frame_idx=seed_t,
+                    reverse=reverse,
+                ):
+                    for i, obj_id in enumerate(obj_ids_out):
+                        binary = (masks_out[i, 0].float() > 0.0).cpu().numpy()
+                        sam_result[frame_idx][binary] = int(obj_id)
+
+                predictor.reset_state(inference_state)
+
+    target_sam_id = seed_local_obj_id
+    adopted_hole_id = hole_id_target
+    adopted_ring_id = ring_id_target
 
     if target_sam_id == 0:
         if debug:
             print(f"  Warning: SAM2 produced no mask at seed ({seed_y},{seed_x}) in t={seed_t}.")
-        return False
+        return False, hole_id_target
 
-    for frame_t in range(seed_t):
+    # If forward propagation overlaps an existing tracked object, treat them as
+    # the same object and adopt the existing ID.
+    for frame_t in range(seed_t + 1, n_total):
         hole_crop_t = (sam_result[frame_t] == target_sam_id)
         if not hole_crop_t.any():
             continue
 
         qc_result = _qc_macropinosome_mask(raw_frames[frame_t], hole_crop_t.astype(np.uint8), cy0, cy1, cx0, cx1)
-        write_hole_id = hole_id_target if qc_result["passes_qc"] else QC_FAIL_HOLE_ID
-        write_ring_id = ring_id_target if qc_result["passes_qc"] else QC_FAIL_RING_ID
+        pred_union = (qc_result["hole_mask_crop"] == 1) | (qc_result["ring_mask_crop"] == 1)
+        if not pred_union.any():
+            continue
+
+        existing_view = tracking_mask[frame_t, cy0:cy1, cx0:cx1]
+        overlap_labels = existing_view[pred_union]
+        overlap_labels = overlap_labels[overlap_labels >= FIRST_TRACK_HOLE_ID]
+        if overlap_labels.size == 0:
+            continue
+
+        overlap_hole_ids = np.where(overlap_labels % 2 == 0, overlap_labels - 1, overlap_labels)
+        overlap_hole_ids = overlap_hole_ids[overlap_hole_ids >= FIRST_TRACK_HOLE_ID]
+        if overlap_hole_ids.size == 0:
+            continue
+
+        vals, counts = np.unique(overlap_hole_ids, return_counts=True)
+        adopted_hole_id = int(vals[np.argmax(counts)])
+        adopted_ring_id = adopted_hole_id + 1
+
+        if debug:
+            print(
+                f"  Forward overlap at t={frame_t}: adopting existing ID {adopted_hole_id} "
+                f"instead of new ID {hole_id_target}"
+            )
+
+        if candidate_hole_crop is not None and candidate_hole_crop.any():
+            view_seed = tracking_mask[seed_t, cy0:cy1, cx0:cx1]
+            view_seed[view_seed == hole_id_target] = adopted_hole_id
+            view_seed[view_seed == ring_id_target] = adopted_ring_id
+        break
+
+    for frame_t in range(n_total):
+        if frame_t == seed_t and candidate_hole_crop is not None and candidate_hole_crop.any():
+            continue
+        hole_crop_t = (sam_result[frame_t] == target_sam_id)
+        if not hole_crop_t.any():
+            continue
+
+        qc_result = _qc_macropinosome_mask(raw_frames[frame_t], hole_crop_t.astype(np.uint8), cy0, cy1, cx0, cx1)
+        write_hole_id = adopted_hole_id if qc_result["passes_qc"] else QC_FAIL_HOLE_ID
+        write_ring_id = adopted_ring_id if qc_result["passes_qc"] else QC_FAIL_RING_ID
 
         view = tracking_mask[frame_t, cy0:cy1, cx0:cx1]
         view[(qc_result["hole_mask_crop"] == 1) & (view == 0)] = write_hole_id
         view[(qc_result["ring_mask_crop"] == 1) & (view == 0)] = write_ring_id
 
-    return True
+    return True, adopted_hole_id
+
+
+def _mask_centroid(binary_mask: np.ndarray) -> tuple[int, int] | None:
+    """Return the integer centroid of a binary mask, or None if empty."""
+    ys, xs = np.where(binary_mask)
+    if ys.size == 0:
+        return None
+    return int(np.round(float(ys.mean()))), int(np.round(float(xs.mean())))
+
+
+def _shift_binary_mask(binary_mask: np.ndarray, shift_y: int, shift_x: int) -> np.ndarray:
+    """Translate a binary mask by integer pixels without wrap-around."""
+    shifted = np.zeros_like(binary_mask, dtype=np.uint8)
+    h, w = binary_mask.shape
+
+    src_y0 = max(0, -shift_y)
+    src_y1 = min(h, h - shift_y)
+    src_x0 = max(0, -shift_x)
+    src_x1 = min(w, w - shift_x)
+
+    dst_y0 = max(0, shift_y)
+    dst_y1 = dst_y0 + (src_y1 - src_y0)
+    dst_x0 = max(0, shift_x)
+    dst_x1 = dst_x0 + (src_x1 - src_x0)
+
+    if src_y1 <= src_y0 or src_x1 <= src_x0:
+        return shifted
+
+    shifted[dst_y0:dst_y1, dst_x0:dst_x1] = binary_mask[src_y0:src_y1, src_x0:src_x1]
+    return shifted
+
+
+def _local_score_crop(frame_idx: int, y0: int, y1: int, x0: int, x1: int, context_pad: int) -> np.ndarray:
+    """Compute the local hole-score crop used for QC and repair similarity checks."""
+    raw_crop = raw_frames[frame_idx, y0:y1, x0:x1].astype(np.float32)
+    fy0 = max(0, y0 - context_pad); fy1 = min(H_img, y1 + context_pad)
+    fx0 = max(0, x0 - context_pad); fx1 = min(W_img, x1 + context_pad)
+    raw_large = raw_frames[frame_idx, fy0:fy1, fx0:fx1]
+    filled_large = greyscale_fill_holes_kernel_2d(raw_large, kernel_size=128, kernel_overlap=25)
+    ry0 = y0 - fy0; ry1 = ry0 + (y1 - y0)
+    rx0 = x0 - fx0; rx1 = rx0 + (x1 - x0)
+    return gaussian_filter(
+        filled_large[ry0:ry1, rx0:rx1].astype(np.float32) - raw_crop,
+        sigma=3,
+    )
 
 
 print("\nStage A: Tracking seeds from the last frame ...")
@@ -764,7 +892,7 @@ for mp_idx, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
     ring_id_target = hole_id_target + 1
     outer_r = mp_outer_half_steps[mp_idx]
     print(f"  seed MP#{hole_id_target} at t={t}, center=({mp_y},{mp_x}), ring_width={outer_r}")
-    _track_single_seed_backward(
+    _ok, _adopted_hole_id = _track_single_seed_backward(
         seed_t=t,
         seed_y=mp_y,
         seed_x=mp_x,
@@ -821,7 +949,7 @@ for seed_t in range(t - 1, -1, -1):
         if not candidate_hole_crop.any():
             continue
 
-        ok = _track_single_seed_backward(
+        ok, adopted_hole_id = _track_single_seed_backward(
             seed_t=seed_t,
             seed_y=seed_y,
             seed_x=seed_x,
@@ -832,12 +960,18 @@ for seed_t in range(t - 1, -1, -1):
         )
 
         if ok:
-            accepted_new_in_frame += 1
-            new_tracks_added += 1
-            if debug:
+            if adopted_hole_id == hole_id_target:
+                accepted_new_in_frame += 1
+                new_tracks_added += 1
+                if debug:
+                    print(
+                        f"  Added new track hole_id={hole_id_target} at t={seed_t}, "
+                        f"center=({seed_y},{seed_x}), ring_width={outer_r}"
+                    )
+            elif debug:
                 print(
-                    f"  Added new track hole_id={hole_id_target} at t={seed_t}, "
-                    f"center=({seed_y},{seed_x}), ring_width={outer_r}"
+                    f"  Merged seed at t={seed_t}, center=({seed_y},{seed_x}) into existing "
+                    f"hole_id={adopted_hole_id}"
                 )
 
     if debug and accepted_new_in_frame > 0:
@@ -846,6 +980,268 @@ for seed_t in range(t - 1, -1, -1):
 print(f"\nTracking complete.")
 print(f"Frames with at least one mask: {(tracking_mask.any(axis=(1, 2))).sum()} / {n_total}")
 print(f"New tracks discovered after t={t}: {new_tracks_added}")
+
+
+# %% Track repair: close one-frame dropouts
+# Search for single missing frames inside an otherwise continuous track.
+# We only repair when:
+#   1. the object moves only a little between t-1 and t+1,
+#   2. the hole-score image changes only a little between those neighbors,
+#   3. the repaired crop passes the same macropinosome QC as normal tracks.
+# If a repaired frame overlaps a QC-fail bucket, we overwrite that failure with
+# the real track ID so temporary failures can be promoted back into the track.
+if debug and tracking_mask.any():
+    repair_max_motion_px = max(8, tile_size // 4)
+    repair_max_score_rel_mae = 0.20
+    repair_context_pad = max(64, tile_size)
+    repair_default_ring_width = 10
+
+    repair_stats = {
+        "gaps_checked": 0,
+        "gaps_repaired": 0,
+        "gaps_rejected_motion": 0,
+        "gaps_rejected_score": 0,
+    }
+
+    tracked_hole_ids = sorted(
+        int(_id) for _id in np.unique(tracking_mask)
+        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1
+    )
+
+    for hole_id in tracked_hole_ids:
+        ring_id = hole_id + 1
+        present_frames = np.where((tracking_mask == hole_id).any(axis=(1, 2)))[0]
+        if present_frames.size < 2:
+            continue
+
+        for left_t, right_t in zip(present_frames[:-1], present_frames[1:]):
+            if right_t - left_t != 2:
+                continue
+
+            repair_stats["gaps_checked"] += 1
+            gap_t = int(left_t + 1)
+
+            left_mask = tracking_mask[left_t] == hole_id
+            right_mask = tracking_mask[right_t] == hole_id
+            left_cent = _mask_centroid(left_mask)
+            right_cent = _mask_centroid(right_mask)
+            if left_cent is None or right_cent is None:
+                continue
+
+            motion_px = float(np.hypot(right_cent[0] - left_cent[0], right_cent[1] - left_cent[1]))
+            if motion_px > repair_max_motion_px:
+                repair_stats["gaps_rejected_motion"] += 1
+                continue
+
+            interp_y = int(np.round((left_cent[0] + right_cent[0]) / 2.0))
+            interp_x = int(np.round((left_cent[1] + right_cent[1]) / 2.0))
+            y0 = max(0, interp_y - tile_size)
+            y1 = min(H_img, interp_y + tile_size + 1)
+            x0 = max(0, interp_x - tile_size)
+            x1 = min(W_img, interp_x + tile_size + 1)
+
+            score_left = _local_score_crop(left_t, y0, y1, x0, x1, repair_context_pad)
+            score_gap = _local_score_crop(gap_t, y0, y1, x0, x1, repair_context_pad)
+            score_right = _local_score_crop(right_t, y0, y1, x0, x1, repair_context_pad)
+
+            denom = float(np.mean(np.abs(score_left)) + np.mean(np.abs(score_right)) + 1e-6)
+            left_mae = float(np.mean(np.abs(score_gap - score_left)) / denom)
+            right_mae = float(np.mean(np.abs(score_gap - score_right)) / denom)
+            if min(left_mae, right_mae) > repair_max_score_rel_mae:
+                repair_stats["gaps_rejected_score"] += 1
+                continue
+
+            use_left = left_mae <= right_mae
+            template_t = int(left_t if use_left else right_t)
+            template_cent = left_cent if use_left else right_cent
+            template_mask = (tracking_mask[template_t, y0:y1, x0:x1] == hole_id).astype(np.uint8)
+            if not template_mask.any():
+                continue
+
+            template_local_cent = (template_cent[0] - y0, template_cent[1] - x0)
+            target_local_cent = (interp_y - y0, interp_x - x0)
+            shift_y = int(target_local_cent[0] - template_local_cent[0])
+            shift_x = int(target_local_cent[1] - template_local_cent[1])
+            repaired_hole_crop = _shift_binary_mask(template_mask, shift_y, shift_x)
+            if not repaired_hole_crop.any():
+                continue
+
+            repaired_hole_crop = binary_fill_holes(repaired_hole_crop).astype(np.uint8)
+            dist_repaired = distance_transform_edt(repaired_hole_crop == 0)
+            repaired_ring_crop = ((dist_repaired > 0) & (dist_repaired <= repair_default_ring_width)).astype(np.uint8)
+
+            gap_view = tracking_mask[gap_t, y0:y1, x0:x1]
+            writable = (gap_view == 0) | (gap_view == QC_FAIL_HOLE_ID) | (gap_view == QC_FAIL_RING_ID)
+            gap_view[(repaired_hole_crop == 1) & writable] = hole_id
+            gap_view[(repaired_ring_crop == 1) & writable] = ring_id
+            repair_stats["gaps_repaired"] += 1
+
+            if debug:
+                print(
+                    f"  Repaired gap t={gap_t} for hole_id={hole_id}: motion={motion_px:.2f}px, "
+                    f"left_mae={left_mae:.3f}, right_mae={right_mae:.3f}"
+                )
+
+    print(
+        "Track repair summary: "
+        f"checked={repair_stats['gaps_checked']}, repaired={repair_stats['gaps_repaired']}, "
+        f"rejected_motion={repair_stats['gaps_rejected_motion']}, "
+        f"rejected_score={repair_stats['gaps_rejected_score']}"
+    )
+
+
+# %% Track split: split likely identity switches
+# If a track changes too abruptly between consecutive frames, we assume the
+# ID jumped to a different macropinosome and split the track at that boundary.
+if tracking_mask.any():
+    split_max_motion_px = max(8.0, tile_size * 0.20)
+    split_max_score_rel_change = 0.25
+    split_max_score_abs_change = 6.0
+    split_score_cache: dict[int, np.ndarray] = {}
+
+    def _get_score_frame(frame_t: int) -> np.ndarray:
+        if frame_t not in split_score_cache:
+            _raw = raw_frames[frame_t]
+            _filled = greyscale_fill_holes_kernel_2d(_raw, kernel_size=256, kernel_overlap=50)
+            split_score_cache[frame_t] = gaussian_filter(_filled - _raw, sigma=3).astype(np.float32)
+        return split_score_cache[frame_t]
+
+    def _mean_hole_score(frame_t: int, hole_mask: np.ndarray) -> float:
+        if not hole_mask.any():
+            return float("nan")
+        _score = _get_score_frame(frame_t)
+        return float(np.mean(_score[hole_mask]))
+
+    split_stats = {
+        "boundaries_checked": 0,
+        "gap_boundaries_checked": 0,
+        "splits_made": 0,
+    }
+
+    initial_hole_ids = sorted(
+        int(_id) for _id in np.unique(tracking_mask)
+        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1
+    )
+
+    for start_hole_id in initial_hole_ids:
+        current_hole_id = int(start_hole_id)
+
+        while True:
+            split_done = False
+            boundary_stats: list[dict[str, float | int]] = []
+
+            for frame_t in range(n_total - 1):
+                mask_t = (tracking_mask[frame_t] == current_hole_id)
+                mask_n = (tracking_mask[frame_t + 1] == current_hole_id)
+                if not mask_t.any() or not mask_n.any():
+                    continue
+
+                c_t = _mask_centroid(mask_t)
+                c_n = _mask_centroid(mask_n)
+                if c_t is None or c_n is None:
+                    continue
+
+                split_stats["boundaries_checked"] += 1
+
+                motion_px = float(np.hypot(c_n[0] - c_t[0], c_n[1] - c_t[1]))
+                s_t = _mean_hole_score(frame_t, mask_t)
+                s_n = _mean_hole_score(frame_t + 1, mask_n)
+                abs_score_change = float(abs(s_n - s_t))
+                rel_score_change = float(abs(s_n - s_t) / (abs(s_t) + 1e-6))
+                boundary_stats.append({
+                    "frame_t": int(frame_t),
+                    "motion_px": motion_px,
+                    "rel_score_change": rel_score_change,
+                    "abs_score_change": abs_score_change,
+                })
+
+            if boundary_stats:
+                motions = np.array([float(_b["motion_px"]) for _b in boundary_stats], dtype=np.float32)
+                rel_scores = np.array([float(_b["rel_score_change"]) for _b in boundary_stats], dtype=np.float32)
+
+                adaptive_motion_thr = float(max(split_max_motion_px, 2.0 * np.median(motions)))
+                adaptive_score_thr = float(max(split_max_score_rel_change, 1.7 * np.median(rel_scores)))
+
+                for b in boundary_stats:
+                    frame_t = int(b["frame_t"])
+                    motion_px = float(b["motion_px"])
+                    rel_score_change = float(b["rel_score_change"])
+                    abs_score_change = float(b["abs_score_change"])
+
+                    if motion_px <= adaptive_motion_thr:
+                        continue
+                    if rel_score_change <= adaptive_score_thr:
+                        continue
+                    if abs_score_change <= split_max_score_abs_change:
+                        continue
+
+                    new_hole_id = next_odd_id
+                    new_ring_id = next_odd_id + 1
+                    next_odd_id += 2
+
+                    old_ring_id = current_hole_id + 1
+                    for k in range(frame_t + 1, n_total):
+                        m_h = (tracking_mask[k] == current_hole_id)
+                        m_r = (tracking_mask[k] == old_ring_id)
+                        tracking_mask[k][m_h] = new_hole_id
+                        tracking_mask[k][m_r] = new_ring_id
+
+                    split_stats["splits_made"] += 1
+                    if debug:
+                        print(
+                            f"  Split track at t={frame_t}->{frame_t+1}: "
+                            f"{current_hole_id}->{new_hole_id}, motion={motion_px:.2f}px, "
+                            f"score_change_rel={rel_score_change:.3f}, score_change_abs={abs_score_change:.2f}, "
+                            f"thr_motion={adaptive_motion_thr:.2f}, thr_score={adaptive_score_thr:.3f}"
+                        )
+
+                    current_hole_id = new_hole_id
+                    split_done = True
+                    break
+
+            # Gap-aware split: if repair did not close a gap, split the track into
+            # a new ID for the segment after the gap.
+            if not split_done:
+                present_frames = np.where((tracking_mask == current_hole_id).any(axis=(1, 2)))[0]
+                for left_t, right_t in zip(present_frames[:-1], present_frames[1:]):
+                    if int(right_t - left_t) < 2:
+                        continue
+
+                    split_stats["gap_boundaries_checked"] += 1
+
+                    split_frame_t = int(left_t + 1)
+                    new_hole_id = next_odd_id
+                    new_ring_id = next_odd_id + 1
+                    next_odd_id += 2
+
+                    old_ring_id = current_hole_id + 1
+                    for k in range(split_frame_t + 1, n_total):
+                        m_h = (tracking_mask[k] == current_hole_id)
+                        m_r = (tracking_mask[k] == old_ring_id)
+                        tracking_mask[k][m_h] = new_hole_id
+                        tracking_mask[k][m_r] = new_ring_id
+
+                    split_stats["splits_made"] += 1
+                    if debug:
+                        print(
+                            f"  Split unresolved-gap track at t={split_frame_t}->{split_frame_t+1}: "
+                            f"{current_hole_id}->{new_hole_id}, gap={int(right_t - left_t - 1)} frame(s)"
+                        )
+
+                    current_hole_id = new_hole_id
+                    split_done = True
+                    break
+
+            if not split_done:
+                break
+
+    print(
+        "Track split summary: "
+        f"checked={split_stats['boundaries_checked']}, gap_checked={split_stats['gap_boundaries_checked']}, "
+        f"splits={split_stats['splits_made']}, "
+        f"motion_thr_min={split_max_motion_px:.1f}, score_thr_min={split_max_score_rel_change:.2f}, "
+        f"score_abs_thr_min={split_max_score_abs_change:.1f}"
+    )
 
 
 # %% QC: tracked macropinosomes over time
@@ -1051,6 +1447,90 @@ if debug and (tracking_mask > 0).any():
         n_fail_rows = sum(1 for row in row_specs if bool(row["is_fail"]))
         fig.suptitle(
             f"{len(hole_ids_all)} tracked macropinosomes + {n_fail_rows} failed-QC rows across {n_time_samples} timepoints",
+            fontsize=11,
+        )
+        plt.tight_layout()
+        plt.show()
+
+
+# %% QC: successful tracks only after split
+# Replot only accepted/track IDs (odd IDs >= FIRST_TRACK_HOLE_ID), excluding
+# reserved QC-fail buckets, to inspect the final post-split identities.
+if debug and (tracking_mask > 0).any():
+    n_time_samples = min(10, n_total)
+    time_samples = np.linspace(0, n_total - 1, n_time_samples, dtype=int)
+
+    successful_hole_ids = sorted(
+        int(_id) for _id in np.unique(tracking_mask)
+        if _id >= FIRST_TRACK_HOLE_ID and _id % 2 == 1
+    )
+
+    if len(successful_hole_ids) == 0:
+        plt.figure(figsize=(6, 2))
+        plt.title("No successful tracked masks found after split")
+        plt.axis("off")
+        plt.show()
+    else:
+        fig, axes = plt.subplots(
+            len(successful_hole_ids),
+            n_time_samples,
+            figsize=(n_time_samples * 3, len(successful_hole_ids) * 3),
+            squeeze=False,
+        )
+
+        for row_idx, hole_id_mp in enumerate(successful_hole_ids):
+            ring_id_mp = hole_id_mp + 1
+            present_frames = np.where((tracking_mask == hole_id_mp).any(axis=(1, 2)))[0]
+            if present_frames.size == 0:
+                continue
+
+            ref_t = int(present_frames[-1])
+            ys_ref, xs_ref = np.where(tracking_mask[ref_t] == hole_id_mp)
+            if ys_ref.size == 0:
+                continue
+            ref_y = int(np.round(float(ys_ref.mean())))
+            ref_x = int(np.round(float(xs_ref.mean())))
+
+            for col_idx, frame_t in enumerate(time_samples):
+                ax = axes[row_idx, col_idx]
+
+                ys_t, xs_t = np.where(tracking_mask[frame_t] == hole_id_mp)
+                if ys_t.size > 0:
+                    cy = int(np.round(float(ys_t.mean())))
+                    cx = int(np.round(float(xs_t.mean())))
+                else:
+                    cy, cx = ref_y, ref_x
+
+                y0 = max(0, cy - tile_size)
+                y1 = min(H_img, cy + tile_size + 1)
+                x0 = max(0, cx - tile_size)
+                x1 = min(W_img, cx + tile_size + 1)
+
+                raw_crop = raw_frames[frame_t, y0:y1, x0:x1]
+                mask_crop = tracking_mask[frame_t, y0:y1, x0:x1]
+
+                hole_pixels = (mask_crop == hole_id_mp)
+                ring_pixels = (mask_crop == ring_id_mp)
+
+                ov = np.zeros((*raw_crop.shape, 4), dtype=np.float32)
+                ov[hole_pixels] = [1.0, 0.2, 0.2, 0.6]
+                ov[ring_pixels] = [0.3, 0.7, 1.0, 0.5]
+
+                ax.imshow(raw_crop, cmap="gray")
+                ax.imshow(ov)
+                ax.contour(hole_pixels, colors="cyan", linewidths=1.0)
+                ax.contour(ring_pixels, colors="yellow", linewidths=0.8)
+
+                local_y = cy - y0
+                local_x = cx - x0
+                if 0 <= local_y < raw_crop.shape[0] and 0 <= local_x < raw_crop.shape[1]:
+                    ax.plot(local_x, local_y, "c+", markersize=10, markeredgewidth=1.5)
+
+                ax.set_title(f"MP#{hole_id_mp} t={frame_t}", fontsize=8)
+                ax.axis("off")
+
+        fig.suptitle(
+            f"Successful tracks only after split ({len(successful_hole_ids)} tracks, {n_time_samples} timepoints)",
             fontsize=11,
         )
         plt.tight_layout()
