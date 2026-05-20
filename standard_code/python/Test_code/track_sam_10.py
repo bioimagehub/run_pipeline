@@ -531,13 +531,20 @@ if debug and macropinosome_coordinates_filtered:
         ov = np.zeros((*crop_raw.shape, 4), dtype=np.float32)
         ov[crop_mask == hole_id_q] = [1.0, 0.2, 0.2, 0.6]   # hole  → red
         ov[crop_mask == ring_id_q] = [0.3, 0.7, 1.0, 0.45]  # ring  → blue
+        ov[crop_mask == QC_FAIL_HOLE_ID] = [1.0, 0.0, 0.8, 0.60]  # QC fail hole → magenta
+        ov[crop_mask == QC_FAIL_RING_ID] = [1.0, 0.6, 0.0, 0.45]  # QC fail ring → orange
         ax = axes[_idx // n_cols][_idx % n_cols]
         ax.imshow(crop_raw, cmap="gray")
         ax.imshow(ov)
         ax.contour(crop_mask == hole_id_q, colors='cyan',   linewidths=0.8)
         ax.contour(crop_mask == ring_id_q, colors='yellow', linewidths=0.8)
+        if (crop_mask == QC_FAIL_HOLE_ID).any():
+            ax.contour(crop_mask == QC_FAIL_HOLE_ID, colors='magenta', linewidths=0.8)
+        if (crop_mask == QC_FAIL_RING_ID).any():
+            ax.contour(crop_mask == QC_FAIL_RING_ID, colors='orange', linewidths=0.8)
         ax.plot(fx - _dx0, fy - _dy0, 'c+', markersize=8)
-        ax.set_title(f"#{hole_id_q}  ({fy},{fx})", fontsize=7)
+        _n_fail_px = int((crop_mask == QC_FAIL_HOLE_ID).sum())
+        ax.set_title(f"#{hole_id_q}  ({fy},{fx})  fail_px={_n_fail_px}", fontsize=7)
         ax.axis("off")
     # hide unused axes
     for _idx in range(n_mp, n_rows * n_cols):
@@ -870,6 +877,10 @@ if debug and len(macropinosome_coordinates_filtered) > 0:
         ring_pixels = (frame_mask % 2 == 0) & (frame_mask > 0)
         ov[ring_pixels] = [0.3, 0.7, 1.0, 0.4]  # blue
 
+        # Reserved QC-fail bucket overlays
+        ov[frame_mask == QC_FAIL_HOLE_ID] = [1.0, 0.0, 0.8, 0.65]  # magenta
+        ov[frame_mask == QC_FAIL_RING_ID] = [1.0, 0.6, 0.0, 0.50]  # orange
+
         ax.imshow(ov)
 
         # Draw contours around each macropinosome's hole and ring
@@ -880,8 +891,14 @@ if debug and len(macropinosome_coordinates_filtered) > 0:
             ax.contour(frame_mask == hole_id, colors="cyan", linewidths=1.0)
             ax.contour(frame_mask == ring_id, colors="yellow", linewidths=0.8)
 
+        if (frame_mask == QC_FAIL_HOLE_ID).any():
+            ax.contour(frame_mask == QC_FAIL_HOLE_ID, colors="magenta", linewidths=1.0)
+        if (frame_mask == QC_FAIL_RING_ID).any():
+            ax.contour(frame_mask == QC_FAIL_RING_ID, colors="orange", linewidths=0.8)
+
         n_objects = len(np.unique(frame_mask)) // 2  # pairs of (hole, ring)
-        ax.set_title(f"t={frame_t}  ({n_objects} objects)", fontsize=9)
+        n_fail_px = int((frame_mask == QC_FAIL_HOLE_ID).sum())
+        ax.set_title(f"t={frame_t}  ({n_objects} objects, fail_px={n_fail_px})", fontsize=9)
         ax.axis("off")
 
     fig.suptitle("Tracked macropinosomes (red=hole, blue=ring)", fontsize=11)
@@ -996,18 +1013,27 @@ if debug and (tracking_mask > 0).any():
                     hole_pixels = (mask_crop == hole_id_mp)
                     ring_pixels = (mask_crop == ring_id_mp)
 
+                fail_hole_pixels = (mask_crop == QC_FAIL_HOLE_ID)
+                fail_ring_pixels = (mask_crop == QC_FAIL_RING_ID)
+
                 if is_fail:
                     ov[hole_pixels] = [1.0, 0.0, 0.8, 0.65]  # magenta for QC-failed hole
                     ov[ring_pixels] = [1.0, 0.6, 0.0, 0.50]  # orange for QC-failed ring
                 else:
                     ov[hole_pixels] = [1.0, 0.2, 0.2, 0.6]  # red for hole
                     ov[ring_pixels] = [0.3, 0.7, 1.0, 0.5]  # blue for ring
+                    ov[fail_hole_pixels] = [1.0, 0.0, 0.8, 0.65]  # show nearby QC-fail hole
+                    ov[fail_ring_pixels] = [1.0, 0.6, 0.0, 0.50]  # show nearby QC-fail ring
 
                 ax.imshow(ov)
 
                 # Contours for clarity
                 ax.contour(hole_pixels, colors="cyan", linewidths=1.0)
                 ax.contour(ring_pixels, colors="yellow", linewidths=0.8)
+                if (not is_fail) and fail_hole_pixels.any():
+                    ax.contour(fail_hole_pixels, colors="magenta", linewidths=0.9)
+                if (not is_fail) and fail_ring_pixels.any():
+                    ax.contour(fail_ring_pixels, colors="orange", linewidths=0.8)
 
                 # Mark the centroid
                 _local_y = mp_y - _cy0
@@ -1015,7 +1041,11 @@ if debug and (tracking_mask > 0).any():
                 if 0 <= _local_y < raw_crop.shape[0] and 0 <= _local_x < raw_crop.shape[1]:
                     ax.plot(_local_x, _local_y, "c+", markersize=10, markeredgewidth=1.5)
 
-                ax.set_title(f"{row_spec['label']} t={frame_t}", fontsize=8)
+                if is_fail:
+                    ax.set_title(f"{row_spec['label']} t={frame_t}", fontsize=8)
+                else:
+                    n_fail_px = int(fail_hole_pixels.sum())
+                    ax.set_title(f"{row_spec['label']} t={frame_t} fail_px={n_fail_px}", fontsize=8)
                 ax.axis("off")
 
         n_fail_rows = sum(1 for row in row_specs if bool(row["is_fail"]))
