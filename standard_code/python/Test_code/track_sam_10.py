@@ -1,4 +1,11 @@
 # %% Imports
+# Standard library and third-party imports.
+# - BioImage: reads multi-dimensional microscopy files (OME-TIFF, ND2, etc.) and
+#   exposes them as labelled 5-D arrays (T, C, Z, Y, X).
+# - skimage / scipy: morphological operations (dilation, flood_fill, reconstruction),
+#   distance transforms, peak detection and region measurements.
+# - sam2_utils / fill_greyscale_holes: local project modules — SAM2 video predictor
+#   wrapper and the GPU-accelerated hole-fill kernel.
 import sys
 import os
 import importlib
@@ -28,12 +35,29 @@ _script_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() 
 sys.path.insert(0, os.path.join(_script_dir, ".."))
 import sam2_utils
 importlib.reload(sam2_utils)
-from sam2_utils import load_sam2_video_predictor, predict_prev_frame
+from sam2_utils import load_sam2_video_predictor, predict_prev_frame, _run_tracking_on_region
 from fill_greyscale_holes import greyscale_fill_holes_kernel_2d
 
 # %% GPU monitor (nvidia-smi polling in background thread)
+# Placeholder for an optional background thread that polls nvidia-smi to log
+# GPU memory / utilisation while the heavy processing runs.  Currently empty —
+# add a threading.Thread here if you want live GPU stats printed to the console.
 
 # %% Functions
+# Helper function used later when tracking backwards through frames.
+# segment_algorithmic() takes a single 2-D greyscale crop around a candidate
+# macropinosome and returns a binary mask of just that object.
+#
+# How it works:
+#   1. Morphological reconstruction (erosion-based) fills the dark interior of
+#      the macropinosome by "flooding" from the image border inward, producing
+#      a "filled" version where holes are filled with the surrounding intensity.
+#   2. score = filled – raw  →  bright where the raw image had a dark hole.
+#   3. The seed point (centre of the crop, or a caller-supplied coordinate)
+#      seeds a flood-fill on the "filled" image at equal intensity, extracting
+#      the connected plateau that corresponds to the object interior.
+#   4. Median filtering of the filled image + a final connected-component step
+#      clean up noise and return the largest component that touches the seed.
 
 def segment_algorithmic(
     crop_2d: np.ndarray,
@@ -136,6 +160,21 @@ def segment_algorithmic(
 
 
 # %% Input paths
+# All user-facing configuration lives here — change these variables to point at
+# a different dataset without touching any other part of the script.
+#
+# Key parameters:
+#   tile_size         – half-width (px) of the debug zoom crop shown around each
+#                       accepted macropinosome.  Does NOT affect detection.
+#   ring_search_steps – how many 1-pixel dilation steps to take outward from the
+#                       flood-filled hole boundary when building the radial profile.
+#                       25 steps = up to 25 px from the hole edge are sampled.
+#   min/max_hole_area – flood-fill areas outside this range are rejected as noise
+#                       (too small) or whole-cell background (too large).
+#   max_T             – set to a small number (e.g. 10) to test on just the first
+#                       N frames; set to None to process the entire video.
+#   debug             – when True, matplotlib plots are shown at every stage so
+#                       you can inspect what the algorithm is doing interactively.
 video_path            = r"E:\Oyvind\BIP-hub-scratch\train_macropinosome_model\input_drift_corrected\Input_crest__KiaWee__250225_RPE-mNG-Phafin2_BSD_10ul_001_1_drift.ome.tif"
 # prediction_video_path = r"E:\Oyvind\BIP-hub-scratch\train_macropinosome_model\deep_learning_output\predictions\Input_crest__KiaWee__250225_RPE-mNG-Phafin2_BSD_10ul_001_1_drift_pred.ome.tif"
 output_folder         = r"C:\Users\oyvinode\Desktop\del"
@@ -159,6 +198,12 @@ debug = True  # if True shows QC plots at each stage
 
 
 # %% Load image metadata
+# Open the OME-TIFF with BioImage (lazy — nothing is read from disk yet) and
+# print the full array shape so it is easy to spot mis-configured channel/Z
+# indices.  Then eagerly load all T frames for the chosen channel + Z slice
+# into a single NumPy array of shape (T, H, W) in memory.  Loading all frames
+# at once is faster than repeated random access later and keeps downstream code
+# simple (no lazy-loading bookkeeping).
 img = BioImage(video_path)
 n_total = img.dims.T
 print(f"Image shape: {img.shape}  dtype: {img.dtype}")
@@ -175,7 +220,33 @@ print(f"Loaded raw:         {raw_frames.shape}  dtype: {raw_frames.dtype}, elaps
 
 
 # %% find macropinosomes in the last frame
-
+# Detection is done on the LAST frame only.  The idea is that macropinosomes
+# are most mature (largest, brightest ring) at the end of the timelapse, so
+# this frame gives the strongest signal for initial detection.  Tracking then
+# propagates the found objects backwards to earlier frames.
+#
+# Detection pipeline:
+#   1. greyscale_fill_holes_kernel_2d() — morphologically fills dark holes in
+#      the image using a sliding 256-px kernel.  The result (last_frame_filled)
+#      is a version of the image where macropinosome interiors are filled with
+#      the surrounding ring intensity.
+#   2. score = filled – raw, smoothed with a Gaussian.  Bright pixels in this
+#      "score" image correspond to locations where the raw image was darker than
+#      its surroundings — i.e. the dark interior of a macropinosome hole.
+#   3. peak_local_max() on the score image finds local brightness peaks that are
+#      at least threshold_rel × global_max bright and at least min_distance px
+#      apart.  Each peak is a candidate macropinosome centre.
+#
+# After detection, a DEBUG block (controlled by the debug flag) re-runs
+# peak_local_max at a very low threshold and prints/plots all candidate peaks
+# in a region of interest so you can see exactly why a specific structure was
+# accepted or rejected at this stage.
+#
+# The main per-candidate validation loop that follows then applies stricter
+# FWHM-based filters on the radial fluorescence profile to confirm each peak
+# is truly a macropinosome (dark hole + bright surrounding ring + dark cytoplasm
+# outside) and builds a labeled mask (hole_ring_mask) where odd labels are
+# hole interiors and even labels are the encircling fluorescent rings.
 t = n_total - 1
 
 last_frame = raw_frames[t]
@@ -249,6 +320,7 @@ hole_ring_mask = np.zeros((H_img, W_img), dtype=np.int32)
 next_odd_id = 1
 
 macropinosome_coordinates_filtered = []
+mp_outer_half_steps: list[int] = []  # ring width (px from hole edge) for each accepted MP
 
 for y, x in macropinosome_coordinates:
     # ------------------------------------------------------------------ #
@@ -374,6 +446,7 @@ for y, x in macropinosome_coordinates:
     _view[(ring_mask_crop == 1) & (_view == 0)] = ring_id
 
     macropinosome_coordinates_filtered.append((y, x))
+    mp_outer_half_steps.append(outer_half_step)
 
     if debug:
         _dy0 = max(0, y - tile_size * 2);  _dy1 = min(H_img, y + tile_size * 2 + 1)
@@ -412,6 +485,12 @@ print(f"Hole labels (odd):  1, 3, 5, …  up to {next_odd_id - 2 if next_odd_id 
 print(f"Ring labels (even): 2, 4, 6, …  up to {next_odd_id - 1 if next_odd_id > 1 else 'none'}")
 
 # %% QC: zoomed tiles for every accepted macropinosome
+# Summary QC plot shown after the main detection loop completes.
+# For each accepted macropinosome a small zoomed crop (±tile_size px) is shown
+# with a red overlay on the hole interior and a blue overlay on the ring annulus,
+# plus cyan/yellow contour lines so the mask boundaries are easy to judge.
+# This lets you quickly scan all detections side-by-side and spot any that look
+# wrong before moving on to the tracking stage.
 if debug and macropinosome_coordinates_filtered:
     n_mp   = len(macropinosome_coordinates_filtered)
     n_cols = min(8, n_mp)
@@ -448,436 +527,265 @@ if debug and macropinosome_coordinates_filtered:
     plt.show()
 
 
+# %% Build global tracking mask volume
+# Now that we have confirmed macropinosome locations in the last frame we can
+# create a 3-D volume that will hold per-frame masks for the entire video.
+#
+# Shape: (T, H, W) — same time axis as raw_frames, same spatial dimensions.
+# Dtype: int32 — matches hole_ring_mask; odd values = hole interiors,
+#                even values = ring annuli (0 = background).
+#
+# For now only the last frame (index t = n_total - 1) is filled in with the
+# detections we just computed.  All earlier frames are still zero and will be
+# populated by the tracking loop in the next cells.
+#
+# Label meaning (same convention carried through to all frames):
+#   1, 3, 5, …  → hole interior of macropinosome #1, #2, #3, …
+#   2, 4, 6, …  → ring annulus  of macropinosome #1, #2, #3, …
+tracking_mask = np.zeros((n_total, H_img, W_img), dtype=np.int32)
+tracking_mask[t] = hole_ring_mask
+
+print(f"tracking_mask shape: {tracking_mask.shape}  dtype: {tracking_mask.dtype}")
+print(f"Frame {t} seeded with {len(macropinosome_coordinates_filtered)} macropinosomes.")
+
+
+# %% Load SAM2 predictor
+# Load the SAM2 video predictor.  Device (CUDA or CPU) is auto-detected
+# inside load_sam2_video_predictor().  This only needs to happen once — the same predictor instance
+# is reused for all per-macropinosome crops below.
+#
+# The checkpoint path is relative to the script's parent directory where
+# the SAM2 model weights are expected to live.  Adjust if needed.
+print("Loading SAM2 predictor …")
+predictor = load_sam2_video_predictor()
+print("SAM2 predictor ready.")
+
+
+# %% SAM2 backward tracking
+# Now we track each confirmed macropinosome backward through all frames.
+#
+# Strategy per macropinosome:
+#   1. Cut a fixed spatial crop (tile_size pixels each side of the centroid)
+#      that stays at the same pixel coordinates in every frame.
+#   2. For every frame, build a 3-channel version of that crop:
+#        ch 0 = raw fluorescence
+#        ch 1 = hole score  (filled – raw, Gaussian-smoothed) — highlights dark
+#               holes with bright rings, the same signal used for detection
+#        ch 2 = raw fluorescence again
+#      This gives SAM extra contrast on the macropinosome even though it was
+#      not trained on these tiny vesicles.
+#   3. Seed SAM2 at the last frame with the hole masks of ALL macropinosomes
+#      present in the crop (not just the target), so SAM can track multiple
+#      objects and distinguish them from each other when they come close.
+#   4. Run SAM2 backward propagation.
+#   5. Identify which SAM2 track ID corresponds to our target macropinosome
+#      (the one whose mask covers the seed centroid in the last frame).
+#   6. For every earlier frame: extract that track's hole mask, reconstruct
+#      the ring via EDT with the same outer_half_step width from detection,
+#      and write both back to tracking_mask.
+
+# Context padding for fill algorithm: large enough that the hole-fill kernel
+# has enough surrounding tissue to compute an accurate filled image.
+_fill_context_pad = max(64, tile_size)
+
+for mp_idx, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
+    hole_id_target = 2 * mp_idx + 1
+    ring_id_target = 2 * mp_idx + 2
+    outer_r        = mp_outer_half_steps[mp_idx]   # ring width (px) from detection
+
+    print(f"\n--- Tracking MP#{hole_id_target} at ({mp_y},{mp_x}), ring_width={outer_r} px ---")
+
+    # Fixed spatial crop bounds (same for every frame)
+    _cy0 = max(0, mp_y - tile_size)
+    _cy1 = min(H_img, mp_y + tile_size + 1)
+    _cx0 = max(0, mp_x - tile_size)
+    _cx1 = min(W_img, mp_x + tile_size + 1)
+    cH = _cy1 - _cy0
+    cW = _cx1 - _cx0
+
+    # Build 3-channel video: shape (n_total, 3, cH, cW)
+    video_3ch = np.zeros((n_total, 3, cH, cW), dtype=np.float32)
+
+    for frame_t in range(n_total):
+        raw_crop = raw_frames[frame_t, _cy0:_cy1, _cx0:_cx1].astype(np.float32)
+
+        # Compute score on a larger crop so fill has enough context around the hole.
+        # A kernel_size smaller than the full-frame value is fine here because
+        # the context area is already limited to _fill_context_pad pixels.
+        _fy0 = max(0, _cy0 - _fill_context_pad); _fy1 = min(H_img, _cy1 + _fill_context_pad)
+        _fx0 = max(0, _cx0 - _fill_context_pad); _fx1 = min(W_img, _cx1 + _fill_context_pad)
+        raw_large    = raw_frames[frame_t, _fy0:_fy1, _fx0:_fx1]
+        filled_large = greyscale_fill_holes_kernel_2d(raw_large, kernel_size=128, kernel_overlap=25)
+        _ry0 = _cy0 - _fy0; _ry1 = _ry0 + cH
+        _rx0 = _cx0 - _fx0; _rx1 = _rx0 + cW
+        score_crop = gaussian_filter(
+            filled_large[_ry0:_ry1, _rx0:_rx1].astype(np.float32) - raw_crop,
+            sigma=3,
+        )
+
+        video_3ch[frame_t, 0] = raw_crop
+        video_3ch[frame_t, 1] = score_crop
+        video_3ch[frame_t, 2] = raw_crop
+
+    # Seed mask: binary hole pixels at last frame for ALL macropinosomes in crop.
+    # SAM will see them as separate connected components and assign distinct track IDs.
+    seed_frame_crop = hole_ring_mask[_cy0:_cy1, _cx0:_cx1]
+    det_mask = np.zeros((n_total, cH, cW), dtype=np.uint8)
+    det_mask[t] = ((seed_frame_crop % 2 == 1) & (seed_frame_crop > 0)).astype(np.uint8)
+
+    # Run SAM2 backward tracking on the 3-channel crop
+    sam_result = _run_tracking_on_region(
+        video_3ch, det_mask, predictor, max_centroid_dist=float(tile_size),
+        label=f"MP#{hole_id_target} ",
+    )
+
+    # Identify which SAM2 track ID covers our target centroid in the last frame
+    _local_y = mp_y - _cy0
+    _local_x = mp_x - _cx0
+    target_sam_id = int(sam_result[t, _local_y, _local_x])
+
+    if target_sam_id == 0:
+        print(f"  Warning: SAM2 produced no mask at seed location — skipping.")
+        continue
+    print(f"  SAM2 track ID for this macropinosome = {target_sam_id}")
+
+    # Write hole + ring for every earlier frame back to tracking_mask.
+    # The last frame is already filled from the detection step; skip it.
+    for frame_t in range(n_total):
+        if frame_t == t:
+            continue
+
+        hole_crop_t = (sam_result[frame_t] == target_sam_id)
+        if not hole_crop_t.any():
+            continue
+
+        # Fill small gaps inside the SAM mask (same as detection step)
+        hole_filled_t = binary_fill_holes(hole_crop_t).astype(np.uint8)
+
+        # Reconstruct ring via EDT: pixels within [1, outer_r] px of hole boundary
+        dist_t     = distance_transform_edt(hole_filled_t == 0)
+        ring_crop_t = ((dist_t > 0) & (dist_t <= outer_r)).astype(np.uint8)
+
+        # Write to tracking_mask without overwriting earlier detections
+        _view = tracking_mask[frame_t, _cy0:_cy1, _cx0:_cx1]
+        _view[(hole_filled_t == 1) & (_view == 0)] = hole_id_target
+        _view[(ring_crop_t  == 1) & (_view == 0)] = ring_id_target
+
+print(f"\nTracking complete.")
+print(f"Frames with at least one mask: {(tracking_mask.any(axis=(1, 2))).sum()} / {n_total}")
+
+
+# %% QC: tracked macropinosomes over time
+# Debug plot showing sample frames throughout the video with tracked holes (red)
+# and rings (blue) overlaid on the raw image. Displays up to 5 frames evenly
+# spaced across the temporal range.
+if debug and len(macropinosome_coordinates_filtered) > 0:
+    # Select up to 5 frames evenly spaced across the video
+    n_display = min(5, n_total)
+    frame_indices = np.linspace(0, n_total - 1, n_display, dtype=int)
+
+    fig, axes = plt.subplots(1, n_display, figsize=(n_display * 4, 4), squeeze=False)
 
+    for plot_idx, frame_t in enumerate(frame_indices):
+        ax = axes[0, plot_idx]
 
-# if debug:
-#     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-#     axes[0].imshow(last_frame[500:1000, 700:1200], cmap="gray")
-#     axes[0].set_title(f"t={t} tile")
-#     axes[0].axis("off")
-#     axes[1].imshow(last_frame_score[500:1000, 700:1200], cmap="magma")
-#     in_crop = (macropinosome_coordinates[:, 0] >= 500) & (macropinosome_coordinates[:, 0] < 1000) & \
-#               (macropinosome_coordinates[:, 1] >= 700) & (macropinosome_coordinates[:, 1] < 1200)
-#     crop_holes = macropinosome_coordinates[in_crop]
-#     axes[1].plot(crop_holes[:, 1] - 700, crop_holes[:, 0] - 500, 'c+', markersize=12, color='cyan')
-#     #axes[1].set_title("Segmented")
-#     #axes[1].axis("off")
-#     plt.tight_layout()
-#     plt.show()
-
-
-
-
-
-
-
-
-
-# # %% Stage 2: Find centroids from prediction map (all frames)
-# print(f"Detecting holes from prediction map (threshold={pred_threshold}) …")
-
-# mp_predictions_per_frame: list[np.ndarray] = [
-#     peak_local_max(pred_frames[t], min_distance=2, threshold_rel=0.1)
-#     for t in range(n_total)
-# ]
-# n_total_preds = sum(len(p) for p in mp_predictions_per_frame)
-# print(f"  Detected {n_total_preds} centroids across {n_total} frames.")
-
-# print(f"Detecting holes from prediction map (threshold={pred_threshold}) …")
-
-# mp_predictions_per_frame: list[np.ndarray] = [
-#     peak_local_max(pred_frames[t], min_distance=2, threshold_rel=0.1)
-#     for t in range(n_total)
-# ]
-# n_total_preds = sum(len(p) for p in mp_predictions_per_frame)
-# print(f"  Detected {n_total_preds} centroids across {n_total} frames.")
+        # Show full-frame raw
+        ax.imshow(raw_frames[frame_t], cmap="gray")
 
+        # Overlay holes (red) and rings (blue)
+        frame_mask = tracking_mask[frame_t]
+        ov = np.zeros((*raw_frames[frame_t].shape, 4), dtype=np.float32)
 
-
-
-
-# if debug:
-#     fig, ax = plt.subplots(figsize=(8, 8))
-#     ax.imshow(pred_frames[-1], cmap="hot", vmin=0, vmax=1)
-#     for y, x in mp_predictions_per_frame[-1]:
-#         ax.plot(x, y, 'c+', markersize=6)
-#     ax.set_title(f"Frame {n_total-1} — {len(mp_predictions_per_frame[-1])} detected centroids")
-#     ax.axis("off")
-#     plt.tight_layout()
-#     plt.show()
-
-# # %% Loop over all frames and segment macropinosomes (fill holes)
-# mp_mask = np.zeros_like(pred_frames, dtype=np.float32)
-
-# for t in range(n_total):
-#     for y, x in mp_predictions_per_frame[t]:
-#         x1 = max(0, x - tile_size)
-#         x2 = min(W, x + tile_size + 1)
-#         y1 = max(0, y - tile_size)
-#         y2 = min(H, y + tile_size + 1)
-#         tile = raw_frames[t, y1:y2, x1:x2]
-
-#         mp = segment_algorithmic(crop_2d=tile, edge_enhancement_radius=1.0, enforce_object_in_center=True)[0]
-
-#         mp_mask[t, y1:y2, x1:x2] = np.maximum(mp_mask[t, y1:y2, x1:x2], mp)
-#         # if debug:
-#         #     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-#         #     axes[0].imshow(tile, cmap="gray")
-#         #     axes[0].set_title(f"t={t} tile")
-#         #     axes[0].axis("off")
-#         #     axes[1].imshow(mp, cmap="Reds", alpha=0.5)
-#         #     axes[1].set_title("Segmented")
-#         #     axes[1].axis("off")
-#         #     plt.tight_layout()
-#         #     plt.show()
-
-#     mp_mask[t] = label(mp_mask[t]).astype(np.float32) # Will fuse overlapping masks on purpose
-
-# if debug:
-#     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-#     axes[0].imshow(pred_frames[-1], cmap="gray")
-#     axes[0].set_title(f"Frame {n_total-1} prediction")
-#     axes[0].axis("off")
-#     axes[1].imshow(raw_frames[-1], cmap="gray")
-#     _labeled = mp_mask[-1].astype(np.int32)
-#     _ids = np.unique(_labeled)
-#     _ids = _ids[_ids != 0]
-#     _rng = np.random.default_rng(seed=42)
-#     _colors = _rng.uniform(0.2, 1.0, size=(len(_ids), 3))
-#     _ov = np.zeros((*_labeled.shape, 4), dtype=np.float32)
-#     for _i, _uid in enumerate(_ids):
-#         _m = _labeled == _uid
-#         _ov[_m, :3] = _colors[_i]
-#         _ov[_m, 3] = 0.6
-#     axes[1].imshow(_ov)
-#     axes[1].set_title(f"Frame {n_total-1} segmented")
-#     axes[1].axis("off")
-#     plt.tight_layout()
-#     plt.show()
-
-# # %% Stage 4: Rolling 2-frame backward SAM2 tracking
-# # Algorithm:
-# #   1. Seed last frame directly from per-frame detection mask.
-# #   2. For t = n_total-2 down to 0:
-# #        a. Feed [raw[t], raw[t+1]] as a 2-frame SAM2 video, seeded with
-# #           global_mask_tyx[t+1], to get sam_pred at frame t.
-# #        b. Merge: SAM wins on overlap; new detections at t that don't
-# #           overlap sam_pred get a fresh track ID.
-# #        c. Store merged result in global_mask_tyx[t].
-
-# sam_video_predictor = load_sam2_video_predictor()
-
-# # det_mask_tyx = (mp_mask[:n_total] > 0).astype(np.uint8)
-# # global_mask_tyx = np.zeros((n_total, H, W), dtype=np.int32)
-# # next_track_id = 1
-
-# # # Seed the last frame
-# # seed_labeled = label(det_mask_tyx[n_total - 1].astype(np.uint8), connectivity=1).astype(np.int32)
-# # global_mask_tyx[n_total - 1] = seed_labeled
-# # next_track_id = int(seed_labeled.max()) + 1
-# # print(f"Seeded frame {n_total-1} with {int(seed_labeled.max())} objects.")
-
-
-
-# # t = n_total - 2 # down to 0
-# for t in range(n_total - 2, -1, -1):
-#     # Step a: propagate mask from t+1 → t via 2-frame SAM2 call
-
-#     img_next = raw_frames[t + 1]
-#     # Todo: Add a channel with output from fill holes (holescore = filled - raw)
-
-#     img_curr = raw_frames[t]
-#     # Todo: Add a channel with output from fill holes (holescore = filled - raw)
-#     mask_next = mp_mask[t + 1]
-
-
-#     ids = np.unique(mask_next).astype(np.int32)
-#     # uid = ids[37]
-#     for uid in ids:
-#         if uid == 0:
-#             continue        
-#         y, x = center_of_mass(mask_next == uid)
-#         y, x = int(round(y)), int(round(x))
-#         x1 = max(0, x - tile_size)
-#         x2 = min(W, x + tile_size + 1)
-#         y1 = max(0, y - tile_size)
-#         y2 = min(H, y + tile_size + 1)
-        
-#         filled_next = greyscale_fill_holes(img_next[y1:y2, x1:x2])
-#         score_next = filled_next - img_next[y1:y2, x1:x2]
-#         two_channel_next = np.stack([img_next[y1:y2, x1:x2].astype(np.float32), score_next], axis=0)  # (2, H, W)
-#         mask_next_crop = (mask_next[y1:y2, x1:x2]).astype(np.uint8)
-        
-
-#         filled_curr = greyscale_fill_holes(img_curr[y1:y2, x1:x2])
-#         score_curr = filled_curr - img_curr[y1:y2, x1:x2]
-#         two_channel_curr = np.stack([img_curr[y1:y2, x1:x2].astype(np.float32), score_curr], axis=0)  # (2, H, W)
-  
-
-
-#         sam_pred = predict_prev_frame(
-#             img_next=two_channel_next,
-#             img_curr=two_channel_curr,
-#             mask_next=mask_next_crop,
-#             predictor=sam_video_predictor,
-#         )
-
-#         # capture the current uid from mask_next_crop and sam_pred
-#         # plot them as contours on top of the raw images for both frames, with different colours for the SAM prediction and the original mask_next_crop
-#         predicted_x, predicted_y = center_of_mass(sam_pred == uid)
-#         if np.isnan(predicted_x) or np.isnan(predicted_y):
-#             # uid not found in sam_pred (SAM lost the object); skip this uid
-#             continue
-#         predicted_x, predicted_y = int(round(predicted_x)), int(round(predicted_y)) 
-
-#         predicted_macropinosome_mask = segment_algorithmic(crop_2d=two_channel_curr[0], edge_enhancement_radius=1.0, enforce_object_in_center=False, center=(predicted_x, predicted_y))[0]
-
-#         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-#         axes[0].imshow(two_channel_curr[0], cmap="gray")
-#         axes[0].imshow(two_channel_curr[1], cmap="Reds", alpha=0.5)
-#         axes[0].imshow(mask_next_crop > 0, cmap="Greens", alpha=0.2)
-#         axes[0].contour(mask_next_crop == uid, colors='lime', linewidths=1.5)
-        
-#         axes[0].set_title(f"t={t+1} seed for ID {int(uid)}")
-#         axes[0].axis("off") 
-#         axes[1].imshow(two_channel_next[0], cmap="gray")
-#         axes[1].imshow(two_channel_next[1], cmap="Reds", alpha=0.5)
-#         axes[1].imshow(sam_pred > 0, cmap="Blues", alpha=0.2)
-#         axes[1].contour(sam_pred == uid, colors='lime', linewidths=1.5)
-#         axes[1].contour(predicted_macropinosome_mask > 0, colors='cyan', linewidths=1.5)    
-#         axes[1].set_title(f"t={t} candidate region")
-#         axes[1].axis("off")
-#         plt.tight_layout()
-#         plt.show()
-
-
-        
-#         torch.cuda.empty_cache()
-
-
-#     # sam_pred_labeled = label(sam_pred.astype(np.uint8), connectivity=1).astype(np.int32)
-#     # loop over all labels
-#     # run segment_algorithmic on each mask center
-#     # lbl = 46
-#     for lbl in np.unique(sam_pred):           # sam_pred already has correct track IDs
-#         if lbl == 0:
-#             continue
-#         mask = (sam_pred == lbl)
-#         if not mask.any():
-#             continue
-#         cy, cx = center_of_mass(mask)
-#         cy, cx = int(round(cy)), int(round(cx))
-#         x1 = max(0, cx - tile_size)
-#         x2 = min(W, cx + tile_size + 1)
-#         y1 = max(0, cy - tile_size)
-#         y2 = min(H, cy + tile_size + 1)
-#         tile = img_curr[y1:y2, x1:x2]
-#         mp, _, _ = segment_algorithmic(crop_2d=tile, edge_enhancement_radius=1.0, enforce_object_in_center=True)
-
-#         plt.imshow(tile, cmap="gray")
-#         #plt.imshow(mp, cmap="Reds", alpha=0.5)
-#         plt.title(f"t={t} tile for label {lbl}")
-#         plt.axis("off")
-#         plt.show()
-
-#         # torch.cuda.empty_cache()
-
-
-
-
-
-
-
-#         # Write the track label (lbl) to the refined pixels only — don't zero the tile
-#         mp_mask[t, y1:y2, x1:x2][mp > 0] = float(lbl)
-    
-
-
-# if debug:
-#     _all_ids = np.unique(np.concatenate([mp_mask[-1].ravel(), mp_mask[-2].ravel()]))
-#     _all_ids = _all_ids[_all_ids != 0].astype(np.int32)
-#     _rng = np.random.default_rng(seed=42)
-#     _color_map = {int(uid): _rng.uniform(0.2, 1.0, size=3) for uid in _all_ids}
-
-#     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-#     for ax, t_idx in zip(axes, [-1, -2]):
-#         _labeled = mp_mask[t_idx].astype(np.int32)
-#         _ids = np.unique(_labeled)
-#         _ids = _ids[_ids != 0]
-#         _ov = np.zeros((*_labeled.shape, 4), dtype=np.float32)
-#         for _uid in _ids:
-#             _m = _labeled == _uid
-#             _ov[_m, :3] = _color_map[int(_uid)]
-#             _ov[_m, 3] = 0.6
-#         ax.imshow(raw_frames[t_idx], cmap="gray")
-#         ax.imshow(_ov)
-#         ax.set_title(f"Frame {n_total + t_idx} segmented")
-#         ax.axis("off")
-#     plt.tight_layout()
-#     plt.show()
-
-
-
-# del sam_video_predictor
-# torch.cuda.empty_cache()
-    
-    
-
-
-
-
-
-
-# # # %% Stage 3: flood-fill crops on raw image to get precise hole boundaries
-# # t0_stage3 = time.perf_counter()
-# # print(f"Building detection mask from centroids (parallel, {n_total} frames) …")
-
-# # frame_dets = Parallel(n_jobs=-1, prefer='threads')(
-# #     delayed(_build_det_frame)(
-# #         blobs_per_frame[t_idx], raw_frames[t_idx],
-# #         H, W, tile_size, min_hole_area, max_hole_area, min_circularity,
-# #     )
-# #     for t_idx in range(n_total)
-# # )
-# # det_mask_tyx = np.stack(frame_dets)  # (T, H, W) uint8 binary
-
-# # n_det_pixels = int(det_mask_tyx.sum())
-# # n_det_frames = int((det_mask_tyx.sum(axis=(1, 2)) > 0).sum())
-# # print(f"  Detection mask: {n_det_pixels} hole pixels across {n_det_frames}/{n_total} frames.")
-# # print(f"  Stage 3 elapsed: {time.perf_counter() - t0_stage3:.1f}s")
-
-# # if debug:
-# #     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-# #     axes[0].imshow(raw_frames[-1], cmap="gray")
-# #     axes[0].set_title(f"Frame {n_total-1} raw")
-# #     axes[0].axis("off")
-# #     axes[1].imshow(raw_frames[-1], cmap="gray")
-# #     ov = np.zeros((*det_mask_tyx[-1].shape, 4), dtype=np.float32)
-# #     ov[det_mask_tyx[-1] != 0] = [1.0, 0.0, 0.0, 0.6]
-# #     axes[1].imshow(ov)
-# #     axes[1].set_title(f"Frame {n_total-1} detection overlay")
-# #     axes[1].axis("off")
-# #     plt.tight_layout()
-# #     plt.show()
-
-
-# # # %% Stage 4: rolling 2-frame backward SAM2 tracking
-# # # -----------------------------------------------------------------------
-# # # Algorithm:
-# # #   Seed frame (T-1):
-# # #     Label CCs of det_mask_tyx[T-1] with consecutive IDs.
-# # #     Run SAM self-refinement: feed img[T-1] as both frames 0 and 1 in a
-# # #     2-frame video, so SAM's mask decoder cleans up the flood-fill shapes.
-# # #
-# # #   For each step t = T-2 … 0:
-# # #     1. sam_pred ← _predict_prev_frame(raw[t+1], raw[t], global_mask[t+1])
-# # #     2. For each CC in det_mask_tyx[t]:
-# # #          if ANY pixel overlaps sam_pred → discard (SAM already covers it)
-# # #          else → assign new track ID
-# # #     3. global_mask[t] = sam_pred + non-overlapping new detections
-# # # -----------------------------------------------------------------------
-# # print("Loading SAM2 video predictor …")
-# # predictor = load_sam2_video_predictor()
-
-# # t0_sam = time.perf_counter()
-# # _gpu_mon.reset()
-
-# # global_mask_tyx = np.zeros((n_total, H, W), dtype=np.int32)
-# # next_id = 1
-
-# # # --- Seed frame (T-1) ---
-# # seed_t = n_total - 1
-# # print(f"Seeding frame {seed_t} …")
-
-# # # Label CCs in the detection mask to get initial track IDs
-# # seed_labeled, next_id = _label_det_frame(det_mask_tyx[seed_t], next_id)
-
-# # # SAM self-refinement on the seed frame: feed the same frame twice
-# # # so SAM smooths the raw flood-fill shapes through its mask decoder.
-# # if seed_labeled.any():
-# #     seed_refined = _predict_prev_frame(
-# #         img_next=raw_frames[seed_t],
-# #         img_curr=raw_frames[seed_t],
-# #         mask_next=seed_labeled,
-# #         predictor=predictor,
-# #     )
-# #     # Fall back to flood-fill labels for any track that SAM dropped
-# #     for tid in np.unique(seed_labeled):
-# #         if tid == 0:
-# #             continue
-# #         if not (seed_refined == tid).any():
-# #             seed_refined[seed_labeled == tid] = tid
-# #     global_mask_tyx[seed_t] = seed_refined
-# # else:
-# #     global_mask_tyx[seed_t] = seed_labeled
-
-# # n_seed_tracks = int((global_mask_tyx[seed_t] > 0).sum() > 0) and int(global_mask_tyx[seed_t].max())
-# # print(f"  Seed frame: {int(global_mask_tyx[seed_t].max())} tracks seeded.")
-
-# # # --- Rolling backward loop ---
-# # for t in range(n_total - 2, -1, -1):
-# #     mask_next = global_mask_tyx[t + 1]
-
-# #     # Step 1: SAM propagation from t+1 → t
-# #     sam_pred = _predict_prev_frame(
-# #         img_next=raw_frames[t + 1],
-# #         img_curr=raw_frames[t],
-# #         mask_next=mask_next,
-# #         predictor=predictor,
-# #     )
-
-# #     # Step 2 + 3: merge with fresh per-frame detections (SAM wins on overlap)
-# #     global_mask_tyx[t], next_id = _merge_detections(
-# #         sam_pred, det_mask_tyx[t], next_id,
-# #     )
-
-# #     n_tracks_t = int(global_mask_tyx[t].max())
-# #     n_sam_px   = int((sam_pred > 0).sum())
-# #     n_new_px   = int((global_mask_tyx[t] > 0).sum()) - n_sam_px
-# #     print(f"  t={t:3d}: {n_tracks_t} total IDs, {n_sam_px} SAM px, {n_new_px} new-det px")
-
-# # n_unique_tracks = int(global_mask_tyx.max())
-# # print(f"Tracking complete. Unique tracks: {n_unique_tracks}")
-# # print(f"  Stage 4 (SAM2) elapsed: {time.perf_counter() - t0_sam:.1f}s")
-# # _gpu_mon.stop()
-# # _gpu_mon.report("Stage4-SAM2")
-
-
-# # # %% Debug: colour overlay of all tracked frames
-# # if debug:
-# #     from matplotlib import cm
-# #     unique_ids = np.unique(global_mask_tyx)
-# #     unique_ids = unique_ids[unique_ids != 0]
-# #     n_ids = len(unique_ids)
-# #     color_vol = np.zeros_like(global_mask_tyx, dtype=np.int32)
-# #     for i, tid in enumerate(unique_ids, start=1):
-# #         color_vol[global_mask_tyx == tid] = i
-# #     cmap = cm.get_cmap('tab20', max(n_ids + 1, 2))
-# #     n_cols = min(n_total, 4)
-# #     n_rows = (n_total + n_cols - 1) // n_cols
-# #     fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False)
-# #     for t in range(n_total):
-# #         ax = axes[t // n_cols][t % n_cols]
-# #         ax.imshow(raw_frames[t], cmap='gray')
-# #         ov = cmap(color_vol[t] / max(n_ids, 1))
-# #         ov[..., 3] = np.where(global_mask_tyx[t] != 0, 0.5, 0.0)
-# #         ax.imshow(ov)
-# #         ax.set_title(f"t={t}", fontsize=8)
-# #         ax.axis('off')
-# #     for t in range(n_total, n_rows * n_cols):
-# #         axes[t // n_cols][t % n_cols].axis('off')
-# #     plt.suptitle(f"Global mask — {n_unique_tracks} unique tracks", fontsize=10)
-# #     plt.tight_layout()
-# #     plt.show()
-
-
-# # # %% Save output
-# # output_path = os.path.join(output_folder, "global_mask_v8.tif")
-# # tifffile.imwrite(output_path, global_mask_tyx.astype(np.uint16))
-# # print(f"Saved global mask to {output_path}")
-# # print(f"Total elapsed: {time.perf_counter() - t0_total:.1f}s")
-# # # %%
-
-# # %%
+        # Holes: odd labels
+        hole_pixels = (frame_mask % 2 == 1) & (frame_mask > 0)
+        ov[hole_pixels] = [1.0, 0.2, 0.2, 0.5]  # red
+
+        # Rings: even labels
+        ring_pixels = (frame_mask % 2 == 0) & (frame_mask > 0)
+        ov[ring_pixels] = [0.3, 0.7, 1.0, 0.4]  # blue
+
+        ax.imshow(ov)
+
+        # Draw contours around each macropinosome's hole and ring
+        for hole_id in np.unique(frame_mask):
+            if hole_id == 0 or hole_id % 2 == 0:
+                continue  # Skip background and ring labels
+            ring_id = hole_id + 1
+            ax.contour(frame_mask == hole_id, colors="cyan", linewidths=1.0)
+            ax.contour(frame_mask == ring_id, colors="yellow", linewidths=0.8)
+
+        n_objects = len(np.unique(frame_mask)) // 2  # pairs of (hole, ring)
+        ax.set_title(f"t={frame_t}  ({n_objects} objects)", fontsize=9)
+        ax.axis("off")
+
+    fig.suptitle("Tracked macropinosomes (red=hole, blue=ring)", fontsize=11)
+    plt.tight_layout()
+    plt.show()
+
+
+# %% QC: zoomed macropinosome tracks over time
+# Grid showing each accepted macropinosome across multiple timepoints.
+# Rows = different macropinosomes; Columns = evenly spaced timepoints.
+# Each cell is a ±tile_size crop centered on the macropinosome with hole (red)
+# and ring (blue) overlays.
+if debug and len(macropinosome_coordinates_filtered) > 0:
+    n_mp = len(macropinosome_coordinates_filtered)
+    n_time_samples = min(5, n_total)
+    time_samples = np.linspace(0, n_total - 1, n_time_samples, dtype=int)
+
+    fig, axes = plt.subplots(n_mp, n_time_samples, figsize=(n_time_samples * 3, n_mp * 3), squeeze=False)
+
+    for mp_row, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
+        hole_id_mp = 2 * mp_row + 1
+        ring_id_mp = 2 * mp_row + 2
+
+        for time_col, frame_t in enumerate(time_samples):
+            ax = axes[mp_row, time_col]
+
+            # Crop bounds around this macropinosome
+            _cy0 = max(0, mp_y - tile_size)
+            _cy1 = min(H_img, mp_y + tile_size + 1)
+            _cx0 = max(0, mp_x - tile_size)
+            _cx1 = min(W_img, mp_x + tile_size + 1)
+
+            # Extract crop from raw and mask
+            raw_crop = raw_frames[frame_t, _cy0:_cy1, _cx0:_cx1]
+            mask_crop = tracking_mask[frame_t, _cy0:_cy1, _cx0:_cx1]
+
+            # Show raw image
+            ax.imshow(raw_crop, cmap="gray")
+
+            # Overlay holes and rings for this macropinosome only
+            ov = np.zeros((*raw_crop.shape, 4), dtype=np.float32)
+            hole_pixels = (mask_crop == hole_id_mp)
+            ring_pixels = (mask_crop == ring_id_mp)
+
+            ov[hole_pixels] = [1.0, 0.2, 0.2, 0.6]  # red for hole
+            ov[ring_pixels] = [0.3, 0.7, 1.0, 0.5]  # blue for ring
+
+            ax.imshow(ov)
+
+            # Contours for clarity
+            ax.contour(hole_pixels, colors="cyan", linewidths=1.0)
+            ax.contour(ring_pixels, colors="yellow", linewidths=0.8)
+
+            # Mark the centroid
+            _local_y = mp_y - _cy0
+            _local_x = mp_x - _cx0
+            if 0 <= _local_y < raw_crop.shape[0] and 0 <= _local_x < raw_crop.shape[1]:
+                ax.plot(_local_x, _local_y, "c+", markersize=10, markeredgewidth=1.5)
+
+            ax.set_title(f"MP#{hole_id_mp} t={frame_t}", fontsize=8)
+            ax.axis("off")
+
+    fig.suptitle(f"{n_mp} macropinosomes tracked across {n_time_samples} timepoints", fontsize=11)
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
 
 # %%

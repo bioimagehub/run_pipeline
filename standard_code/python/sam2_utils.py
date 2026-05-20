@@ -159,7 +159,10 @@ def _run_tracking_on_region(
     from contextlib import nullcontext
     from tqdm import tqdm
 
-    T, H, W = img_tyx.shape
+    if img_tyx.ndim == 4:
+        T, _nc, H, W = img_tyx.shape  # (T, C, H, W) multi-channel input
+    else:
+        T, H, W = img_tyx.shape       # (T, H, W) grayscale input
     device = predictor._device
 
     frame_assignments, n_tracks = assign_track_ids(det_mask_tyx, max_centroid_dist)
