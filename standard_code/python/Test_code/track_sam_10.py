@@ -1,3 +1,5 @@
+# Number of frames to process backward in Stage B (parameter)
+STAGE_B_BACKWARD_FRAMES = 5
 # %% Imports
 # Standard library and third-party imports.
 # - BioImage: reads multi-dimensional microscopy files (OME-TIFF, ND2, etc.) and
@@ -16,6 +18,8 @@ from contextlib import nullcontext
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from matplotlib.collections import PathCollection
 from bioio import BioImage
 from joblib import Parallel, delayed
 from scipy.ndimage import label as scipy_label, center_of_mass
@@ -287,8 +291,8 @@ max_hole_area     = 8000  # discard flood masks larger than this (inter-cell)
 #   - ring peak must not be at the last step (outer drop must be visible)
 
 # For debug / testing
-max_T = 10   # set to a small integer (e.g. 10) to limit frames during testing
-debug = True  # if True shows QC plots at each stage
+max_T = 15   # set to a small integer (e.g. 10) to limit frames during testing of None
+debug = False  # if True shows QC plots at each stage
 
 
 # %% Load image metadata
@@ -579,6 +583,134 @@ print(f"tracking_mask shape: {tracking_mask.shape}  dtype: {tracking_mask.dtype}
 print(f"Frame {t} seeded with {len(macropinosome_coordinates_filtered)} macropinosomes.")
 
 
+class _LiveTrackingProgressPlot:
+    """Non-blocking live XY plot of track centroids over all timepoints."""
+
+    def __init__(self, raw_stack_tyx: np.ndarray, first_track_hole_id: int) -> None:
+        self.enabled = True
+        self.first_track_hole_id = int(first_track_hole_id)
+        self._last_draw_ts = 0.0
+        self._min_draw_interval_s = 0.08
+        self._artists_by_id: dict[int, PathCollection] = {}
+        self._tile_rect: Rectangle | None = None
+
+        try:
+            self.xy_max = np.max(raw_stack_tyx, axis=0)
+            self.h, self.w = self.xy_max.shape
+
+            plt.ion()
+            self.fig, self.ax = plt.subplots(figsize=(10, 10))
+            self.ax.imshow(self.xy_max, cmap="gray")
+            self.ax.set_xlim(0, self.w - 1)
+            self.ax.set_ylim(self.h - 1, 0)
+            self.ax.set_aspect("equal")
+            self.ax.set_title("Live tracking progress (XY max projection)")
+            self.ax.set_xlabel("X")
+            self.ax.set_ylabel("Y")
+            self.fig.tight_layout()
+            plt.show(block=False)
+            plt.pause(0.001)
+            self.fig.show()
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+        except Exception as exc:
+            self.enabled = False
+            print(f"Live progress plot disabled: {exc}")
+
+    def _color_for_hole_id(self, hole_id: int) -> tuple[float, float, float, float]:
+        cmap = plt.get_cmap("tab20")
+        return cmap((hole_id // 2) % 20)
+
+    def update(
+        self,
+        track_mask_tyx: np.ndarray,
+        tile_bounds: tuple[int, int, int, int] | None = None,
+        force: bool = False,
+    ) -> None:
+        """Refresh centroid overlay and active tile box without blocking."""
+        if not self.enabled:
+            return
+
+        now = time.time()
+        if (not force) and (now - self._last_draw_ts < self._min_draw_interval_s):
+            return
+
+        odd_ids = sorted(
+            int(_id)
+            for _id in np.unique(track_mask_tyx)
+            if _id >= self.first_track_hole_id and _id % 2 == 1
+        )
+
+        active_ids = set(odd_ids)
+
+        for hole_id in odd_ids:
+            cx_list: list[float] = []
+            cy_list: list[float] = []
+
+            frames_present = np.where((track_mask_tyx == hole_id).any(axis=(1, 2)))[0]
+            for frame_t in frames_present:
+                ys, xs = np.where(track_mask_tyx[frame_t] == hole_id)
+                if ys.size == 0:
+                    continue
+                cy_list.append(float(np.mean(ys)))
+                cx_list.append(float(np.mean(xs)))
+
+            if len(cx_list) == 0:
+                offsets = np.empty((0, 2), dtype=np.float32)
+            else:
+                offsets = np.column_stack((np.array(cx_list, dtype=np.float32), np.array(cy_list, dtype=np.float32)))
+
+            if hole_id in self._artists_by_id:
+                self._artists_by_id[hole_id].set_offsets(offsets)
+            else:
+                self._artists_by_id[hole_id] = self.ax.scatter(
+                    offsets[:, 0] if offsets.size > 0 else [],
+                    offsets[:, 1] if offsets.size > 0 else [],
+                    s=10,
+                    alpha=0.9,
+                    c=[self._color_for_hole_id(hole_id)],
+                    marker="o",
+                )
+
+        stale_ids = [hole_id for hole_id in self._artists_by_id if hole_id not in active_ids]
+        for hole_id in stale_ids:
+            self._artists_by_id[hole_id].remove()
+            del self._artists_by_id[hole_id]
+
+        if self._tile_rect is not None:
+            self._tile_rect.remove()
+            self._tile_rect = None
+
+        if tile_bounds is not None:
+            y0, y1, x0, x1 = tile_bounds
+            self._tile_rect = Rectangle(
+                (x0, y0),
+                max(1, x1 - x0),
+                max(1, y1 - y0),
+                fill=False,
+                edgecolor="lime",
+                linewidth=1.5,
+            )
+            self.ax.add_patch(self._tile_rect)
+
+        n_tracks = len(odd_ids)
+        n_pts = int(sum(len(np.where((track_mask_tyx == _id).any(axis=(1, 2)))[0]) for _id in odd_ids))
+        self.ax.set_title(f"Live tracking progress (XY max projection)  tracks={n_tracks}  centroid points={n_pts}")
+
+        try:
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            plt.pause(0.001)
+        except Exception:
+            pass
+
+        self._last_draw_ts = now
+
+
+live_progress_plot = _LiveTrackingProgressPlot(raw_frames, FIRST_TRACK_HOLE_ID)
+live_progress_plot.update(tracking_mask, force=True)
+
+
 # %% Load SAM2 predictor
 # Load the SAM2 video predictor.  Device (CUDA or CPU) is auto-detected
 # inside load_sam2_video_predictor().  This only needs to happen once — the same predictor instance
@@ -712,6 +844,7 @@ def _track_single_seed_backward(
         ring_seed_id = ring_id_target if qc_seed["passes_qc"] else QC_FAIL_RING_ID
         view_seed[(qc_seed["hole_mask_crop"] == 1) & (view_seed == 0)] = hole_seed_id
         view_seed[(qc_seed["ring_mask_crop"] == 1) & (view_seed == 0)] = ring_seed_id
+        live_progress_plot.update(tracking_mask, tile_bounds=(cy0, cy1, cx0, cx1))
 
     video_3ch = _build_video_3ch_until(n_total - 1, cy0, cy1, cx0, cx1, context_pad=max(64, tile_size))
 
@@ -821,6 +954,7 @@ def _track_single_seed_backward(
             view_seed = tracking_mask[seed_t, cy0:cy1, cx0:cx1]
             view_seed[view_seed == hole_id_target] = adopted_hole_id
             view_seed[view_seed == ring_id_target] = adopted_ring_id
+            live_progress_plot.update(tracking_mask, tile_bounds=(cy0, cy1, cx0, cx1))
         break
 
     for frame_t in range(n_total):
@@ -837,6 +971,7 @@ def _track_single_seed_backward(
         view = tracking_mask[frame_t, cy0:cy1, cx0:cx1]
         view[(qc_result["hole_mask_crop"] == 1) & (view == 0)] = write_hole_id
         view[(qc_result["ring_mask_crop"] == 1) & (view == 0)] = write_ring_id
+        live_progress_plot.update(tracking_mask, tile_bounds=(cy0, cy1, cx0, cx1))
 
     return True, adopted_hole_id
 
@@ -903,14 +1038,21 @@ for mp_idx, (mp_y, mp_x) in enumerate(macropinosome_coordinates_filtered):
     )
 
 
+
 print("\nStage B: Backward discovery of new macropinosomes ...")
 new_tracks_added = 0
-for seed_t in range(t - 1, -1, -1):
+new_tracks_merged = 0
+total_candidates = 0
+total_accepted = 0
+for seed_t in range(t - 1, max(-1, t - 1 - STAGE_B_BACKWARD_FRAMES), -1):
     candidates = _detect_macropinosomes_in_frame(raw_frames[seed_t], threshold_rel=0.4)
-    if debug:
-        print(f"t={seed_t}: detected {len(candidates)} candidate(s) before overlap filtering")
-
+    n_candidates = len(candidates)
+    total_candidates += n_candidates
     accepted_new_in_frame = 0
+    merged_in_frame = 0
+    if debug:
+        print(f"[Stage B] t={seed_t}: detected {n_candidates} candidate(s) before overlap filtering")
+
     for cand in candidates:
         seed_y = int(cand["y"])
         seed_x = int(cand["x"])
@@ -963,23 +1105,30 @@ for seed_t in range(t - 1, -1, -1):
             if adopted_hole_id == hole_id_target:
                 accepted_new_in_frame += 1
                 new_tracks_added += 1
+                total_accepted += 1
                 if debug:
                     print(
-                        f"  Added new track hole_id={hole_id_target} at t={seed_t}, "
+                        f"  [Stage B] Added new track hole_id={hole_id_target} at t={seed_t}, "
                         f"center=({seed_y},{seed_x}), ring_width={outer_r}"
                     )
-            elif debug:
-                print(
-                    f"  Merged seed at t={seed_t}, center=({seed_y},{seed_x}) into existing "
-                    f"hole_id={adopted_hole_id}"
-                )
+            else:
+                merged_in_frame += 1
+                new_tracks_merged += 1
+                if debug:
+                    print(
+                        f"  [Stage B] Merged seed at t={seed_t}, center=({seed_y},{seed_x}) "
+                        f"into existing hole_id={adopted_hole_id} (was {hole_id_target})"
+                    )
 
-    if debug and accepted_new_in_frame > 0:
-        print(f"t={seed_t}: accepted {accepted_new_in_frame} new track(s)")
+    if debug:
+        print(f"[Stage B] t={seed_t}: accepted {accepted_new_in_frame} new track(s), merged {merged_in_frame}.")
 
 print(f"\nTracking complete.")
 print(f"Frames with at least one mask: {(tracking_mask.any(axis=(1, 2))).sum()} / {n_total}")
 print(f"New tracks discovered after t={t}: {new_tracks_added}")
+print(f"Total candidates processed in Stage B: {total_candidates}")
+print(f"Total new tracks accepted in Stage B: {total_accepted}")
+print(f"Total seeds merged with existing tracks in Stage B: {new_tracks_merged}")
 
 
 # %% Track repair: close one-frame dropouts
@@ -1075,6 +1224,7 @@ if debug and tracking_mask.any():
             gap_view[(repaired_hole_crop == 1) & writable] = hole_id
             gap_view[(repaired_ring_crop == 1) & writable] = ring_id
             repair_stats["gaps_repaired"] += 1
+            live_progress_plot.update(tracking_mask, tile_bounds=(y0, y1, x0, x1))
 
             if debug:
                 print(
@@ -1186,6 +1336,8 @@ if tracking_mask.any():
                         tracking_mask[k][m_h] = new_hole_id
                         tracking_mask[k][m_r] = new_ring_id
 
+                    live_progress_plot.update(tracking_mask, force=True)
+
                     split_stats["splits_made"] += 1
                     if debug:
                         print(
@@ -1221,6 +1373,8 @@ if tracking_mask.any():
                         tracking_mask[k][m_h] = new_hole_id
                         tracking_mask[k][m_r] = new_ring_id
 
+                    live_progress_plot.update(tracking_mask, force=True)
+
                     split_stats["splits_made"] += 1
                     if debug:
                         print(
@@ -1242,6 +1396,8 @@ if tracking_mask.any():
         f"motion_thr_min={split_max_motion_px:.1f}, score_thr_min={split_max_score_rel_change:.2f}, "
         f"score_abs_thr_min={split_max_score_abs_change:.1f}"
     )
+
+live_progress_plot.update(tracking_mask, force=True)
 
 
 # %% QC: tracked macropinosomes over time
@@ -1456,7 +1612,8 @@ if debug and (tracking_mask > 0).any():
 # %% QC: successful tracks only after split
 # Replot only accepted/track IDs (odd IDs >= FIRST_TRACK_HOLE_ID), excluding
 # reserved QC-fail buckets, to inspect the final post-split identities.
-if debug and (tracking_mask > 0).any():
+# Allways show this
+if (tracking_mask > 0).any():
     n_time_samples = min(10, n_total)
     time_samples = np.linspace(0, n_total - 1, n_time_samples, dtype=int)
 
@@ -1542,6 +1699,17 @@ if debug and (tracking_mask > 0).any():
         )
         plt.tight_layout()
         plt.show()
+
+
+# %% Save output mask
+os.makedirs(output_folder, exist_ok=True)
+output_mask_path = os.path.join(output_folder, "mask_v10.tif")
+tifffile.imwrite(
+    output_mask_path,
+    tracking_mask.astype(np.int32),
+    metadata={"axes": "TYX"},
+)
+print(f"Saved tracking mask to: {output_mask_path}")
 
 
 
