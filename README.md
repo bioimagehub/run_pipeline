@@ -87,7 +87,7 @@ Run the pipeline or call the script directly:
 
 ```bash
 # via pipeline runner
-run_pipeline pipeline_configs/teach_prepare.yaml
+run_pipeline.exe pipeline_configs/teach_prepare.yaml
 
 # or directly (edit --topic as needed)
 python standard_code/python/teach_prepare.py \

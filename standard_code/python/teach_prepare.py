@@ -12,11 +12,15 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def call_ollama_generate(url: str, model: str, prompt: str) -> str:
@@ -64,7 +68,6 @@ Write in conversational, engaging language suitable for audio — the student wi
 
 
 def slugify(text: str) -> str:
-    import re
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_-]+", "_", text)
@@ -90,14 +93,51 @@ def build_system_prompt(topic: str, duration: int, lecture_content: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Prepare an offline Ollama lecture before a drive",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Example YAML config for run_pipeline.exe:
+---
+run:
+- name: Prepare sound waves lecture
+  environment: uv@3.11:teach
+  commands:
+  - python
+  - '%REPO%/standard_code/python/teach_prepare.py'
+  - --topic: 'sound waves'
+  - --duration: '60'
+  - --model: 'llama3.2'
+  - --output-folder: '%YAML%/lectures'
+  - --log-level: INFO
+
+- name: Prepare quantum entanglement lecture (30 min, small model)
+  environment: uv@3.11:teach
+  commands:
+  - python
+  - '%REPO%/standard_code/python/teach_prepare.py'
+  - --topic: 'quantum entanglement'
+  - --duration: '30'
+  - --model: 'phi3:mini'
+  - --output-folder: '%YAML%/lectures'
+  - --log-level: INFO
+        """,
     )
     parser.add_argument("--topic", required=True, help="Topic to prepare a lecture about")
     parser.add_argument("--duration", type=int, default=60, help="Lecture duration in minutes")
     parser.add_argument("--model", default="llama3.2", help="Ollama model name")
     parser.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama server base URL")
     parser.add_argument("--output-folder", default="./lectures", help="Folder to save the lecture JSON file")
+    parser.add_argument(
+        "--log-level",
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging verbosity",
+    )
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
     os.makedirs(args.output_folder, exist_ok=True)
 
@@ -105,14 +145,17 @@ def main() -> None:
     print("This may take 1-3 minutes. Please wait.\n")
 
     prompt = build_lecture_prompt(args.topic, args.duration)
+    logger.info("Sending generation request to Ollama at %s", args.ollama_url)
 
     try:
         lecture_content = call_ollama_generate(args.ollama_url, args.model, prompt)
     except urllib.error.URLError as exc:
+        logger.error("Could not connect to Ollama at %s: %s", args.ollama_url, exc)
         print(f"ERROR: Could not connect to Ollama at {args.ollama_url}")
         print(f"Make sure Ollama is running and the model '{args.model}' is pulled.")
-        print(f"Details: {exc}")
         sys.exit(1)
+
+    logger.info("Lecture content generated (%d chars)", len(lecture_content))
 
     system_prompt = build_system_prompt(args.topic, args.duration, lecture_content)
 
@@ -132,6 +175,7 @@ def main() -> None:
     with open(output_path, "w", encoding="utf-8") as fh:
         json.dump(lecture, fh, indent=2, ensure_ascii=False)
 
+    logger.info("Lecture written to %s", output_path)
     print(f"Lecture saved to: {output_path}")
     print(f"\nTo start your driving session, run:")
     print(f"  python teach_chat.py --lecture {output_path}")

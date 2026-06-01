@@ -6,6 +6,10 @@ Loads a pre-generated lecture (created by teach_prepare.py) and starts an
 interactive conversation with an Ollama model. Works fully offline — no
 internet connection needed once the lecture file and model are ready.
 
+NOTE: This script is interactive and must be run directly from a terminal.
+It cannot be run via run_pipeline.exe because the pipeline runner does not
+wire stdin to subprocesses.
+
 Usage:
     python teach_chat.py --lecture ./lectures/sound_waves.json
 
@@ -20,10 +24,13 @@ Controls during chat:
 
 import argparse
 import json
+import logging
 import os
 import sys
 import urllib.error
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 
 def chat_ollama(url: str, model: str, messages: list) -> str:
@@ -56,7 +63,15 @@ def print_banner(topic: str, duration: int, model: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Offline driving-mode teaching chat",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+NOTE: This script is interactive and must be run directly from a terminal.
+It cannot be run via run_pipeline.exe because the pipeline runner does not
+wire stdin to subprocesses. See pipeline_configs/teach_chat.yaml for details.
+
+Example:
+    python standard_code/python/teach_chat.py --lecture lectures/sound_waves.json
+        """,
     )
     parser.add_argument(
         "--lecture",
@@ -68,9 +83,21 @@ def main() -> None:
         default=None,
         help="Ollama server URL (overrides the URL stored in the lecture file)",
     )
+    parser.add_argument(
+        "--log-level",
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging verbosity",
+    )
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
     if not os.path.exists(args.lecture):
+        logger.error("Lecture file not found: %s", args.lecture)
         print(f"ERROR: Lecture file not found: {args.lecture}")
         sys.exit(1)
 
@@ -93,9 +120,9 @@ def main() -> None:
     try:
         reply = chat_ollama(ollama_url, model, messages)
     except urllib.error.URLError as exc:
+        logger.error("Could not connect to Ollama at %s: %s", ollama_url, exc)
         print(f"\nERROR: Could not connect to Ollama at {ollama_url}")
         print(f"Make sure Ollama is running and model '{model}' is available.")
-        print(f"Details: {exc}")
         sys.exit(1)
 
     print(reply)
@@ -129,6 +156,7 @@ def main() -> None:
         try:
             reply = chat_ollama(ollama_url, model, messages)
         except urllib.error.URLError as exc:
+            logger.error("Ollama request failed: %s", exc)
             print(f"\nERROR: {exc}")
             messages.pop()  # remove the unsent user message
             continue
