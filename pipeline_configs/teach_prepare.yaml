@@ -1,0 +1,11 @@
+run:
+- name: Prepare lecture
+  environment: uv@3.11:teach
+  commands:
+  - python
+  - '%REPO%/standard_code/python/teach_prepare.py'
+  - --topic: 'sound waves'
+  - --duration: '60'
+  - --model: 'llama3.2'
+  - --ollama-url: 'http://localhost:11434'
+  - --output-folder: '%YAML%/lectures'

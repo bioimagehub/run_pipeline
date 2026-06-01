@@ -436,6 +436,11 @@ deep-learning = [
 	"bioio_dv",
 ]
 
+teach = [
+    # No extra packages needed — teach_prepare.py and teach_chat.py use only the Python stdlib.
+    # Requires Ollama running locally: https://ollama.com
+]
+
 # Development dependencies
 dev = [
 	"pytest>=7.0",

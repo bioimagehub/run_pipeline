@@ -67,6 +67,60 @@ Tagged releases generate:
 
 Each archive includes the built binary and supporting files needed for distribution.
 
+## Teaching Assistant (Offline Drive Mode)
+
+Two scripts let you prepare an AI-powered lecture at home and then have a conversation with it during a drive — fully offline, no internet required.
+
+### Prerequisites
+
+Install [Ollama](https://ollama.com) and pull a model once (requires internet):
+
+```bash
+ollama pull llama3.2        # ~2 GB, good quality
+# or a smaller model:
+ollama pull phi3:mini       # ~2 GB, faster on CPU
+```
+
+### Step 1 — Prepare the lecture (at home)
+
+Run the pipeline or call the script directly:
+
+```bash
+# via pipeline runner
+run_pipeline pipeline_configs/teach_prepare.yaml
+
+# or directly (edit --topic as needed)
+python standard_code/python/teach_prepare.py \
+  --topic "sound waves" \
+  --duration 60 \
+  --model llama3.2 \
+  --output-folder ./lectures
+```
+
+This calls Ollama locally, generates a structured 1-hour lecture, and saves it to `lectures/sound_waves.json`. Takes 1-3 minutes.
+
+### Step 2 — Chat during the drive (fully offline)
+
+Open a terminal and run:
+
+```bash
+python standard_code/python/teach_chat.py --lecture lectures/sound_waves.json
+```
+
+The teacher introduces the topic and guides you through the lecture conversationally.
+
+| Input | Effect |
+|-------|--------|
+| *(Enter)* | Teacher continues to the next section |
+| `hint` | Simpler explanation of the last point |
+| `quiz` | Teacher quizzes you on material so far |
+| `summary` | Recap of everything covered so far |
+| `quit` | End the session |
+
+Ollama must be running (`ollama serve`) but no internet connection is needed once the lecture file and model are downloaded.
+
+---
+
 ## Recommended Versioning Policy
 
 Use semantic versioning:

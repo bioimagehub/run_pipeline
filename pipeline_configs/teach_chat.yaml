@@ -1,0 +1,17 @@
+# teach_chat runs interactively and must be launched directly — not through
+# the pipeline runner, which does not wire stdin to subprocesses.
+#
+# Run from a terminal:
+#   python standard_code/python/teach_chat.py --lecture lectures/sound_waves.json
+#
+# The --lecture path should point to a file created by teach_prepare.yaml / teach_prepare.py.
+#
+# Optional flags:
+#   --ollama-url  Override the Ollama URL stored in the lecture file (default: http://localhost:11434)
+#
+# Controls during the session:
+#   Enter          Teacher continues to the next section
+#   hint           Simpler explanation of the last point
+#   quiz           Teacher quizzes you on material covered so far
+#   summary        Recap of what has been covered so far
+#   quit / exit    End the session
