@@ -10,6 +10,7 @@ import os
 import argparse
 import logging
 import re
+import json
 from pathlib import Path
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -27,32 +28,103 @@ logger = logging.getLogger(__name__)
 
 
 
-def project_z(data: np.ndarray, method: str) -> np.ndarray:
+def parse_channel_selection(channels: Optional[str]) -> Optional[list[int]]:
+    """Parse channel selection text into zero-based channel indices."""
+    if channels is None:
+        return None
+
+    value = channels.strip()
+    if not value or value.lower() in {"all", "none", "null"}:
+        return None
+
+    if value.lower().startswith("x"):
+        value = value[1:].strip()
+
+    parsed: list[int]
+    if value.startswith("["):
+        try:
+            raw = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid --channels JSON list: {channels}") from exc
+        if not isinstance(raw, list) or not all(isinstance(v, int) for v in raw):
+            raise ValueError("--channels JSON must be a list of integers, e.g. [0,2]")
+        parsed = [int(v) for v in raw]
+    else:
+        try:
+            parsed = [int(part.strip()) for part in value.split(",") if part.strip()]
+        except ValueError as exc:
+            raise ValueError(f"Invalid --channels value: {channels}. Use e.g. 0,2") from exc
+
+    if not parsed:
+        return None
+
+    seen: set[int] = set()
+    unique: list[int] = []
+    for idx in parsed:
+        if idx < 0:
+            raise ValueError(f"--channels cannot contain negative indices: {idx}")
+        if idx not in seen:
+            unique.append(idx)
+            seen.add(idx)
+    return unique
+
+
+def select_channels(
+    data: np.ndarray,
+    channel_names: list[str],
+    channels: Optional[list[int]],
+) -> tuple[np.ndarray, list[str]]:
+    """Select requested channel indices from a TCZYX/TCYX array."""
+    if channels is None:
+        return data, channel_names
+
+    if data.ndim < 2:
+        raise ValueError("Channel selection requires data with a channel axis")
+
+    channel_count = int(data.shape[1])
+    for idx in channels:
+        if idx < 0 or idx >= channel_count:
+            raise ValueError(
+                f"Invalid --channels index {idx}; valid range is 0-{channel_count - 1}"
+            )
+
+    selected_data = np.take(data, channels, axis=1)
+
+    if channel_names and len(channel_names) == channel_count:
+        selected_names = [channel_names[idx] for idx in channels]
+    else:
+        selected_names = [f"Channel_{idx}" for idx in channels]
+
+    return selected_data, selected_names
+
+
+def project_z(data: np.ndarray, method: str, axis: int = 0) -> np.ndarray:
     """
     Apply Z-projection to image data.
     
     Args:
         data: Input image array
         method: Projection method ('max', 'sum', 'mean', 'median', 'min', 'std')
+        axis: Axis to project along (default: 0)
     
     Returns:
         Projected image array
     """
     if method == "max":
-        return np.max(data, axis=0)
+        return np.max(data, axis=axis)
     elif method == "sum":
-        return np.sum(data, axis=0)
+        return np.sum(data, axis=axis)
     elif method == "mean":
-        return np.mean(data, axis=0)
+        return np.mean(data, axis=axis)
     elif method == "median":
-        return np.median(data, axis=0)
+        return np.median(data, axis=axis)
     elif method == "min":
-        return np.min(data, axis=0)
+        return np.min(data, axis=axis)
     elif method == "std":
-        return np.std(data, axis=0)
+        return np.std(data, axis=axis)
     else:
         logger.warning(f"Unknown projection method '{method}', using max")
-        return np.max(data, axis=0)
+        return np.max(data, axis=axis)
 
 
 def get_scene_dimensions(img: BioImage, scene_id: str) -> tuple[int, int]:
@@ -189,6 +261,7 @@ def convert_single_file(
     scene_filter: str = "largest",
     scene_filter_strings: Optional[list[str]] = None,
     scene_merge_channel: bool = False,
+    channels: Optional[list[int]] = None,
 ) -> bool:
     """
     Convert a single image file to OME-TIFF or standard TIFF.
@@ -206,6 +279,7 @@ def convert_single_file(
         scene_filter_strings: Filter strings used with 'includes' / 'excludes'.
         scene_merge_channel: If True, group filtered scenes by timestamp in scene name
             and merge each timestamp-group into channel dimension (C).
+        channels: Optional zero-based channel indices to keep, e.g. [0, 2].
 
     Returns:
         True if successful, False otherwise
@@ -348,27 +422,48 @@ def convert_single_file(
                 f"{os.path.basename(scene_output_path)}"
             )
 
+            if channels is not None:
+                merged_data, merged_channel_names = select_channels(
+                    merged_data,
+                    merged_channel_names,
+                    channels,
+                )
+                logger.info(
+                    "Applied channel selection %s -> %d channel(s)",
+                    channels,
+                    merged_data.shape[1],
+                )
+
             # Apply projection if requested
             if projection_method:
                 logger.info(f"Applying {projection_method} projection")
                 
                 # Check if Z dimension exists and is > 1
                 if merged_data.ndim >= 3:
-                    # Project along Z axis (assuming axis 2 for standard TCZYX)
+                    # Project along Z axis for TCZYX-like data.
                     z_axis = None
+                    has_z_axis = False
+                    did_project = False
                     try:
                         # Try to determine Z axis from dims
                         dim_order = img.dims.order
-                        z_axis = dim_order.index('Z') if 'Z' in dim_order else 2
-                    except:
-                        z_axis = 2  # Default to axis 2
-                    
-                    if merged_data.shape[z_axis] > 1:
-                        merged_data = np.apply_along_axis(
-                            lambda x: project_z(x, projection_method),
-                            z_axis,
-                            merged_data
-                        )
+                        if 'Z' in dim_order:
+                            z_axis = dim_order.index('Z')
+                            has_z_axis = True
+                    except Exception:
+                        has_z_axis = False
+
+                    if has_z_axis and z_axis is not None and z_axis < merged_data.ndim:
+                        if merged_data.shape[z_axis] > 1:
+                            # Use vectorized reductions; apply_along_axis is extremely slow here.
+                            merged_data = project_z(merged_data, projection_method, axis=z_axis)
+                            did_project = True
+                        else:
+                            logger.info("Skipping projection because Z dimension size is 1")
+                    else:
+                        logger.info("Skipping projection because no Z dimension was detected")
+
+                    if did_project:
                         logger.info(f"After projection, data shape: {merged_data.shape}, ndim: {merged_data.ndim}")
             
             logger.info(
@@ -445,6 +540,11 @@ def convert_single_file(
                 
             else:
                 # Standard save mode (single file)
+                save_data = merged_data
+                if save_data.ndim == 4:
+                    # Keep TCZYX semantics after projection by inserting singleton Z.
+                    save_data = save_data[:, :, np.newaxis, :, :]
+
                 # Build kwargs for saving with metadata
                 save_kwargs = {}
                 if physical_pixel_sizes is not None:
@@ -458,7 +558,7 @@ def convert_single_file(
                     logger.info("Saving as standard TIFF (NIS-Elements compatible)")
                 
                 # Save with metadata
-                rp.save_with_output_format(merged_data, scene_output_path, output_format, **save_kwargs)
+                rp.save_with_output_format(save_data, scene_output_path, output_format, **save_kwargs)
                 logger.info(f"Saved: {scene_output_path}")
             
             # Save metadata if requested
@@ -482,6 +582,7 @@ def convert_single_file(
                     metadata["Convert to tif"] = {
                         "Scene_names": [str(s) for s in scene_ids_in_group],
                         "Merged_channel_names": merged_channel_names,
+                        "Selected_channel_indices": channels or [],
                         "Scene_merge_channel": scene_merge_channel,
                         "Scene_group_key": group_key,
                         "Scene_index": scene_idx + 1,
@@ -537,6 +638,7 @@ def process_files(
     scene_filter: str = "largest",
     scene_filter_strings: Optional[list[str]] = None,
     scene_merge_channel: bool = False,
+    channels: Optional[list[int]] = None,
 ) -> None:
     """
     Process multiple files matching a pattern.
@@ -558,6 +660,7 @@ def process_files(
         scene_filter_strings: Filter strings used with 'includes' / 'excludes'.
         scene_merge_channel: If True, group filtered scenes by timestamp and merge
             each group into channel dimension.
+        channels: Optional zero-based channel indices to keep.
     """
     # Find files
     search_subfolders = '**' in input_pattern
@@ -606,6 +709,7 @@ def process_files(
             print(f"[DRY RUN] Projection method: {projection_method}")
         print(f"[DRY RUN] Scene filter: {scene_filter} (strings={scene_filter_strings})")
         print(f"[DRY RUN] Scene merge channel: {scene_merge_channel}")
+        print(f"[DRY RUN] Channels: {channels if channels is not None else 'all'}")
         for src, dst in file_pairs:
             print(f"[DRY RUN] {src} -> {dst}")
         return
@@ -614,10 +718,12 @@ def process_files(
     if no_parallel or len(file_pairs) == 1:
         # Sequential processing
         for src, dst in file_pairs:
-            convert_single_file(
+            success = convert_single_file(
                 src, dst, output_format, projection_method, save_metadata, standard_tif, split,
-                scene_filter, scene_filter_strings, scene_merge_channel,
+                scene_filter, scene_filter_strings, scene_merge_channel, channels,
             )
+            if not success:
+                logger.error(f"Failed: {src}")
     else:
         # Parallel processing
         max_workers = rp.resolve_maxcores(maxcores, len(file_pairs))
@@ -628,7 +734,7 @@ def process_files(
                 executor.submit(
                     convert_single_file, src, dst, output_format, projection_method, save_metadata,
                     standard_tif, split, scene_filter, scene_filter_strings,
-                    scene_merge_channel,
+                    scene_merge_channel, channels,
                 ): (src, dst)
                 for src, dst in file_pairs
             }
@@ -780,10 +886,10 @@ run:
     parser.add_argument(
         "--scene-filter",
         type=str,
-        default="largest",
+        default="all",
         choices=["all", "largest", "smallest", "includes", "excludes"],
         help=(
-            "Scene selection strategy for multi-scene files (default: largest). "
+            "Scene selection strategy for multi-scene files (default: all). "
             "'all' keeps every scene. "
             "'largest'/'smallest' selects by YX pixel count. "
             "'includes' keeps scenes whose name contains any --scene-filter-strings value. "
@@ -809,6 +915,16 @@ run:
         help=(
             "Group filtered scenes by HH:MM:SS timestamp in scene name and merge "
             "each timestamp-group into the channel dimension"
+        ),
+    )
+
+    parser.add_argument(
+        "--channels",
+        type=str,
+        default=None,
+        help=(
+            "Optional zero-based channel indices to keep. Examples: '0,2', 'x0,2', '[0,2]'. "
+            "Default keeps all channels."
         ),
     )
 
@@ -843,6 +959,8 @@ run:
     
     
     # Process files
+    selected_channels = parse_channel_selection(args.channels)
+
     process_files(
         input_pattern=args.input_search_pattern,
         output_folder=args.output_folder,
@@ -859,6 +977,7 @@ run:
         scene_filter=args.scene_filter,
         scene_filter_strings=args.scene_filter_strings,
         scene_merge_channel=args.scene_merge_channel,
+        channels=selected_channels,
     )
 
 if __name__ == "__main__":
