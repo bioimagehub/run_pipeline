@@ -1,7 +1,8 @@
 """
 Utilities for centroid U-Net training:
-  - CentroidDataset : reads paired .tif from input/target dirs
-  - UNet            : 4-level encoder-decoder (32-32-64-128-256), mirrors centroid-unet
+  - CentroidDataset    : reads paired .tif from input/target dirs (legacy, integer-named files)
+  - PairedPathDataset  : reads paired .tif from explicit (input_path, target_path) lists
+  - UNet               : 4-level encoder-decoder (32-32-64-128-256), mirrors centroid-unet
   - get_train_transform / get_val_transform : homographic augmentation
 """
 
@@ -73,6 +74,43 @@ class CentroidDataset(Dataset):
         if self.transform is not None:
             img, tgt = self.transform(img, tgt)
             img = img.squeeze(0)  # remove extra batch dim Kornia adds: (1,1,H,W) -> (1,H,W)
+            tgt = tgt.squeeze(0)
+
+        return img, tgt
+
+
+class PairedPathDataset(Dataset):
+    """Reads paired .tif files from explicit (input_path, target_path) lists.
+
+    Unlike CentroidDataset, files are matched by the caller (e.g. via
+    ``rp.get_grouped_files_to_process``) rather than by integer filename stem.
+    Both images are returned as float32 tensors with shape (1, H, W).
+    """
+
+    def __init__(
+        self,
+        pairs: list[tuple[str | Path, str | Path]],
+        transform: nn.Module | None = None,
+    ) -> None:
+        self.pairs = [(Path(i), Path(t)) for i, t in pairs]
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.pairs)
+
+    def __getitem__(self, idx: int):
+        input_path, target_path = self.pairs[idx]
+        img = tifffile.imread(str(input_path)).astype(np.float32)
+        tgt = tifffile.imread(str(target_path)).astype(np.float32)
+
+        img = scale(contrast(img, 0.1, 99.9))
+
+        img = torch.from_numpy(img).unsqueeze(0)
+        tgt = torch.from_numpy(tgt).unsqueeze(0)
+
+        if self.transform is not None:
+            img, tgt = self.transform(img, tgt)
+            img = img.squeeze(0)
             tgt = tgt.squeeze(0)
 
         return img, tgt
