@@ -5,7 +5,6 @@ Saves metadata and ROIs as YAML sidecars.
 
 MIT License - BIPHUB, University of Oslo
 """
-
 import os
 import argparse
 import logging
@@ -529,12 +528,11 @@ Examples:
     parser.add_argument('--log-level', type=str, default='WARNING',
                     choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                     help='Logging level (default: INFO)')
-    
-
-
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-    
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     # Setup logging
     logging.basicConfig(
         level=getattr(logging, args.log_level),

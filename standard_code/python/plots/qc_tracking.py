@@ -8,7 +8,6 @@ Colors failed QC files in red for easy identification.
 Author: BIPHUB - Bioimage Informatics Hub, University of Oslo
 License: MIT
 """
-
 import os
 import argparse
 import numpy as np
@@ -459,9 +458,11 @@ run:
                        help='Figure width in inches (auto-calculated if not specified)')
     parser.add_argument('--height', type=float, default=None,
                        help='Figure height in inches (auto-calculated if not specified)')
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-    
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     # Setup logging
     logging.basicConfig(
         level=logging.WARNING,

@@ -4,7 +4,6 @@ Corrects photobleaching artifacts by matching intensity distributions across tim
 
 MIT License - BIPHUB, University of Oslo
 """
-
 import os
 import argparse
 import logging
@@ -396,9 +395,11 @@ run:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: WARNING)"
     )
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-    
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     if args.version:
         version_file = Path(__file__).parent.parent.parent / "VERSION"
         try:

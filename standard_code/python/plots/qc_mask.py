@@ -8,7 +8,6 @@ unique color for easy identification.
 Author: BIPHUB - Bioimage Informatics Hub, University of Oslo
 License: MIT
 """
-
 import os
 import argparse
 import numpy as np
@@ -1044,10 +1043,11 @@ run:
     parser.add_argument('--yaml-search-pattern', type=str, default=None,
                        help='Optional glob pattern for metadata YAML files. If provided, ROI positions will be extracted '
                             'and displayed as markers on the plots.')
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-
-
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     # Setup logging - use INFO level to see ROI extraction details
     logging.basicConfig(
         level=logging.INFO,

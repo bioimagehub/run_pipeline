@@ -136,8 +136,11 @@ run:
     parser.add_argument("--no-parallel", action="store_true", help="Disable parallel processing (currently unused; processing is sequential).")
     parser.add_argument("--maxcores", type=int, default=None, help="Maximum CPU cores to use for parallel processing (currently unused; processing is sequential). Ignored if --no-parallel is set.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     parsed_args = parser.parse_args()
-
+    if parsed_args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = parsed_args.input_dims_order
     logging.basicConfig(
         level=getattr(logging, parsed_args.log_level),
         format='%(asctime)s - %(levelname)s - %(message)s'

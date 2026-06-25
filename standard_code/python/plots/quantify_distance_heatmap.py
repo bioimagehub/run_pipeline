@@ -7,7 +7,6 @@ measuring signal spread (distance) and decay (time) using region growing segment
 Author: BIPHUB - Bioimage Informatics Hub, University of Oslo
 License: MIT
 """
-
 import os
 import sys
 import argparse
@@ -1547,9 +1546,11 @@ run:
                        help='Disable parallel processing. By default, files are processed in parallel when saving to output folder.')
     parser.add_argument('--maxcores', type=int, default=None,
                        help='Maximum CPU cores to use for parallel processing (default: all available CPU cores minus 1). Ignored if --no-parallel is set.')
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-    
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,

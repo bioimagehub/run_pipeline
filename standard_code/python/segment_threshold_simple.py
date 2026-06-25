@@ -645,9 +645,11 @@ run:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: WARNING)"
     )
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-    
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     # Configure logging
     log_level = "INFO" if args.verbose and args.log_level == "WARNING" else args.log_level
     logging.basicConfig(

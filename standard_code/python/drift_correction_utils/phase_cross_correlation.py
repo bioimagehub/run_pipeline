@@ -352,8 +352,11 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output", help="Output image path", default=None)
     parser.add_argument("-c", "--channel", type=int, default=0, help="Channel index")
     parser.add_argument("--gpu", action="store_true", help="Use GPU acceleration")
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-    
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     img = rp.load_tczyx_image(args.input)
     registered, shifts = register_image_xy(img, reference='first', channel=args.channel, no_gpu=not args.gpu)
     

@@ -6,7 +6,6 @@ import yaml
 
 from nd2reader import ND2Reader
 import os
-
 import bioimage_pipeline_utils as rp
 
 logger = logging.getLogger(__name__)
@@ -120,9 +119,11 @@ if __name__ == "__main__":
     parser.add_argument("--input-file", type=str, required=True, help="Path to the input BioImage file")
     parser.add_argument("--output-file", type=str, required=False, help="Path to save the metadata YAML file")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
-
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format='%(asctime)s - %(levelname)s - %(message)s'

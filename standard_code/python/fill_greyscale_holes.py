@@ -1334,9 +1334,11 @@ Notes:
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
         help='Logging level (default: WARNING)'
     )
-    
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     if args.kernel_size is not None and args.kernel_size < 1:
         raise ValueError(f"--kernel-size must be >= 1, got {args.kernel_size}")
     if args.kernel_size is None and str(args.kernel_overlap).strip().lower() != 'half':

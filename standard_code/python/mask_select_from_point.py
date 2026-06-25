@@ -410,9 +410,11 @@ run:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: WARNING)",
     )
-
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s - %(levelname)s - %(message)s",

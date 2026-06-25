@@ -1,4 +1,4 @@
-from typing import Union, Optional
+from typing import Union, Optional, Any
 from bioio import BioImage
 import os
 import tempfile
@@ -304,7 +304,77 @@ def save_with_output_format(img: Union[BioImage, np.ndarray], path: str, output_
         save_ilastik_h5(img, path)
 
 
-def load_tczyx_image(path: str) -> BioImage:
+def _default_input_dims_order_for_ndim(ndim: int) -> str:
+    """Return conservative defaults for array-only formats."""
+    defaults = {
+        1: "X",
+        2: "YX",
+        3: "ZYX",
+        4: "CZYX",
+        5: "TCZYX",
+    }
+    if ndim not in defaults:
+        raise ValueError(f"Unsupported array ndim={ndim}; expected 1-5 dimensions")
+    return defaults[ndim]
+
+
+def _to_tczyx(arr: np.ndarray, input_dims_order: Optional[str] = None) -> np.ndarray:
+    """Convert array from user-provided order into TCZYX."""
+    if arr.ndim < 1 or arr.ndim > 5:
+        raise ValueError(f"Unsupported array shape {arr.shape}; expected 1D-5D array")
+
+    if input_dims_order is None:
+        order = _default_input_dims_order_for_ndim(arr.ndim)
+    else:
+        order = input_dims_order.strip().upper()
+
+    if len(order) != arr.ndim:
+        raise ValueError(
+            f"input_dims_order '{order}' length must match array ndim {arr.ndim}"
+        )
+    if any(dim not in "TCZYX" for dim in order):
+        raise ValueError(
+            f"input_dims_order '{order}' contains invalid dims; only T,C,Z,Y,X are allowed"
+        )
+    if len(set(order)) != len(order):
+        raise ValueError(f"input_dims_order '{order}' contains duplicate dimensions")
+
+    arr_work = np.asarray(arr)
+    current_order = order
+
+    for dim in "TCZYX":
+        if dim not in current_order:
+            arr_work = np.expand_dims(arr_work, axis=0)
+            current_order = dim + current_order
+
+    perm = [current_order.index(dim) for dim in "TCZYX"]
+    return np.transpose(arr_work, perm)
+
+
+def _extract_array_from_npy_payload(payload: Any, path: str) -> np.ndarray:
+    """Extract image/mask array from npy payload, including Cellpose dict outputs."""
+    if isinstance(payload, np.ndarray) and payload.dtype == object and payload.shape == ():
+        payload = payload.item()
+
+    if isinstance(payload, dict):
+        # Cellpose *_seg.npy stores a dict with a 'masks' key.
+        for preferred_key in ("masks", "labels", "mask", "segmentation"):
+            if preferred_key in payload:
+                return np.asarray(payload[preferred_key])
+        raise ValueError(
+            f"Could not find mask/image array in dict-based npy file '{path}'. "
+            f"Available keys: {list(payload.keys())}"
+        )
+
+    arr = np.asarray(payload)
+    if arr.dtype == object:
+        raise ValueError(
+            f"Unsupported object array payload in '{path}'. Provide input_dims_order and a numeric array payload."
+        )
+    return arr
+
+
+def load_tczyx_image(path: str, input_dims_order: Optional[str] = None):
     """
     Load an image as a BioImage object, ensuring the data is always 5D (TCZYX).
     The file format is determined by the file extension. This function standardizes
@@ -325,6 +395,13 @@ def load_tczyx_image(path: str) -> BioImage:
     img.get_image_data("CZYX", T=0)  # returns 4D CZYX numpy array
 
     """
+    # Optional global override so existing CLIs can support array dim remapping
+    # without adding new argparse flags in every module.
+    if input_dims_order is None:
+        env_dims = os.environ.get("RP_INPUT_DIMS_ORDER", "").strip()
+        if env_dims:
+            input_dims_order = env_dims
+
     # Load the image using the appropriate reader based on the file extension
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
@@ -407,6 +484,27 @@ def load_tczyx_image(path: str) -> BioImage:
         import bioio_ilastik_h5
         img = BioImage(path, reader=bioio_ilastik_h5.IlastikH5Reader)
         return img
+    elif lower_path.endswith(".npy"):
+        payload = np.load(path, allow_pickle=True)
+        arr = _extract_array_from_npy_payload(payload, path)
+        arr_tczyx = _to_tczyx(arr, input_dims_order=input_dims_order)
+        return BioImage(arr_tczyx)
+    elif lower_path.endswith(".npz"):
+        with np.load(path, allow_pickle=True) as archive:
+            selected_key = None
+            for preferred_key in ("masks", "labels", "mask", "segmentation"):
+                if preferred_key in archive:
+                    selected_key = preferred_key
+                    break
+            if selected_key is None:
+                keys = list(archive.keys())
+                if not keys:
+                    raise ValueError(f"Empty npz archive: {path}")
+                selected_key = keys[0]
+            arr = _extract_array_from_npy_payload(archive[selected_key], path)
+
+        arr_tczyx = _to_tczyx(arr, input_dims_order=input_dims_order)
+        return BioImage(arr_tczyx)
     # The bioformats-based reader is now the universal fallback for any format, including .ims, to ensure maximum compatibility.
     # elif lower_path.endswith(".ims"):
     #     # Try custom bioio_imaris reader first (faster, pure Python)

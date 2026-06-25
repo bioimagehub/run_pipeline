@@ -312,9 +312,11 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Print planned actions but do not write any files.")
     parser.add_argument("--version", action="store_true", help="Print version and exit.")
     parser.add_argument("--log-level", type=str, default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level (default: WARNING)")
-
+    parser.add_argument('--input-dims-order', type=str, default=None, help='Optional input dimensions order for array-like inputs (for example ZYX or CZYX).')
     args = parser.parse_args()
-
+    if args.input_dims_order:
+        import os
+        os.environ['RP_INPUT_DIMS_ORDER'] = args.input_dims_order
     if args.version:
         # Print version from VERSION file if present, else fallback
         version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "VERSION")
